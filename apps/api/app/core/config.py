@@ -1,0 +1,81 @@
+"""Centralized, strictly validated application configuration.
+
+All settings come from environment variables prefixed with ``EASA_`` or from
+an optional ``.env`` file in the working directory. Invalid or unknown values
+fail application startup instead of being silently ignored.
+"""
+
+from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+API_ROOT = Path(__file__).resolve().parents[2]
+
+# Database drivers the application is designed and tested for.
+ALLOWED_DATABASE_DRIVERS = frozenset({"sqlite", "sqlite+pysqlite", "postgresql+psycopg"})
+
+
+def _default_database_url() -> SecretStr:
+    # Local SQLite file under apps/api/var/, which is git-ignored.
+    return SecretStr(f"sqlite:///{(API_ROOT / 'var' / 'easa.db').as_posix()}")
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="EASA_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="forbid",
+        frozen=True,
+        # Never echo raw input (e.g. a database URL with a password) in errors.
+        hide_input_in_errors=True,
+    )
+
+    environment: Literal["development", "test", "production"] = "development"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    database_url: SecretStr = Field(default_factory=_default_database_url)
+    cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, value: SecretStr) -> SecretStr:
+        try:
+            url = make_url(value.get_secret_value())
+        except ArgumentError:
+            raise ValueError("database_url is not a valid database URL") from None
+        if url.drivername not in ALLOWED_DATABASE_DRIVERS:
+            allowed = ", ".join(sorted(ALLOWED_DATABASE_DRIVERS))
+            raise ValueError(f"database_url driver must be one of: {allowed}")
+        return value
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _validate_cors_origins(cls, origins: list[str]) -> list[str]:
+        for origin in origins:
+            parts = urlsplit(origin)
+            if (
+                parts.scheme not in {"http", "https"}
+                or not parts.hostname
+                or "*" in origin
+                or parts.path not in {"", "/"}
+                or parts.query
+                or parts.fragment
+            ):
+                raise ValueError(
+                    "each CORS origin must be an explicit http(s)://host[:port] "
+                    "without wildcards, paths, queries or fragments"
+                )
+        return [origin.rstrip("/") for origin in origins]
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+
+def load_settings() -> Settings:
+    return Settings()

@@ -1,0 +1,58 @@
+[project]
+name = "easa-api"
+version = "0.1.0"
+description = "EASA backend API (FastAPI)."
+requires-python = ">=3.14"
+dependencies = [
+    # Web framework and request/response validation.
+    "fastapi>=0.162",
+    # ASGI server; [standard] adds watchfiles for --reload and faster parsers.
+    "uvicorn[standard]>=0.54",
+    # Strictly validated configuration from environment variables / .env.
+    "pydantic-settings>=2.16",
+    # Database access behind an abstraction (SQLite now, PostgreSQL later).
+    "sqlalchemy>=2.1",
+]
+
+[dependency-groups]
+dev = [
+    # Required by Starlette/FastAPI TestClient (successor to httpx).
+    "httpx2>=2.16",
+    "pytest>=9.2",
+    "ruff>=0.17",
+]
+
+[tool.uv]
+# The app is run from source, not installed as a package.
+package = false
+# Use the installed system Python 3.14; never download a managed interpreter.
+python-preference = "only-system"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "N",        # pep8-naming
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "S",        # bandit (security)
+    "SIM",      # simplify
+    "PT",       # pytest style
+    "T20",      # no print()
+    "ASYNC",    # async pitfalls
+    "RUF",      # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is the pytest idiom
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+filterwarnings = ["error"]
