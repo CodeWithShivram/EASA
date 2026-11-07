@@ -16,6 +16,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import CorrelationIdMiddleware, UnhandledErrorMiddleware
 from app.db.engine import create_db_engine
+from app.db.session import create_session_factory
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.engine = engine
+    app.state.session_factory = create_session_factory(engine)
 
     register_exception_handlers(app)
     app.include_router(api_router)

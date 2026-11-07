@@ -12,6 +12,8 @@ dependencies = [
     "pydantic-settings>=2.16",
     # Database access behind an abstraction (SQLite now, PostgreSQL later).
     "sqlalchemy>=2.1",
+    # Versioned schema migrations.
+    "alembic>=1.20",
 ]
 
 [dependency-groups]

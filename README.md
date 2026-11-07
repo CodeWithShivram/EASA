@@ -3,16 +3,16 @@
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
 > **Status: Phase 1 (Foundation and Architecture), in progress.**
-> The backend skeleton exists: configuration, logging, error handling and health endpoints. The frontend, database migrations and documentation are not built yet.
+> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend and architecture documentation are not built yet.
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
 ## Structure
 
 ```
 easa/
-  apps/api/   FastAPI backend (Python 3.14, uv)          [M1: skeleton]
+  apps/api/   FastAPI backend (Python 3.14, uv)          [M1–M2]       
   apps/web/   Next.js frontend (TypeScript, Tailwind)    [not yet created]
-  docs/       Architecture, security and API documents   [not yet created]
+  docs/       Progress tracking (architecture docs: M4)  [PROGRESS.md]
   scripts/    Development and check scripts              [not yet created]
 ```
 
@@ -53,11 +53,27 @@ Endpoints:
 
 Every response carries a server-generated `X-Correlation-ID` header. That ID also appears in the JSON logs and in error bodies (`{"error": {"code", "message", "correlation_id"}}`).
 
+### Database migrations
+
+The database URL comes from the same validated settings as the app (`EASA_DATABASE_URL`, defaulting to the git-ignored `apps/api/var/easa.db`). `alembic.ini` contains no URL.
+
+```powershell
+uv run alembic upgrade head      # apply migrations (currently only the empty baseline)
+uv run alembic current           # show the applied revision
+uv run alembic check             # fail if ORM models and migrations have drifted
+uv run alembic downgrade base    # revert all migrations
+uv run alembic upgrade head --sql  # print SQL without connecting
+```
+
 Configuration uses `EASA_*` environment variables or `apps/api/.env`; see [apps/api/.env.example](apps/api/.env.example). Invalid values and unknown keys in `.env` stop the app at startup.
 
 ## Local data
 
 Runtime data, including the SQLite database, is stored in `var/` directories. Git ignores these directories, as well as all `*.db` / `*.sqlite*` files and `.env` files.
+
+## Progress
+
+Milestone status, verification results and commit hashes are tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Project guide
 
