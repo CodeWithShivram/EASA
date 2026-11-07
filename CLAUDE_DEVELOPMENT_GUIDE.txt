@@ -1,0 +1,462 @@
+CLAUDE CODE DEVELOPMENT GUIDE Project: Enterprise AI Support Agent
+Version: 1.0 Purpose: Master development instructions for Claude Code
+
+====================================================================== 1.
+PROJECT MISSION
+======================================================================
+
+Build an enterprise-oriented AI Support Agent that allows authorized
+employees to ask questions about company knowledge, retrieve relevant
+information from approved documents, receive answers with citations, and
+perform permitted actions through controlled tools.
+
+The application must demonstrate:
+
+-   Retrieval-Augmented Generation (RAG)
+-   Semantic and hybrid search
+-   Document intelligence and ingestion
+-   LLM integration
+-   Agent workflows and tool calling
+-   Role-Based Access Control (RBAC)
+-   Document-level authorization
+-   Evaluation and observability
+-   Secure API and application design
+-   Automated testing and CI/CD
+
+This is a learning and portfolio project. Use synthetic/sample company
+documents and fictional employee data only. Never place confidential
+company information, credentials, customer data, or proprietary source
+code into this repository or an external AI service.
+
+======================================================================
+2. CURRENT DEVELOPMENT ENVIRONMENT
+======================================================================
+
+Known environment:
+
+-   Operating system: Windows 11
+-   Git: 2.55.0.windows.3
+-   Node.js: v24.13.0
+-   npm: 11.6.2
+-   Python launcher: Python 3.14 (64-bit)
+-   RAM: 16 GB
+-   GPU: AMD or Intel; do not assume CUDA/NVIDIA support
+-   PostgreSQL CLI: currently unavailable
+-   Ollama: currently not installed
+-   Development device: company laptop with installation restrictions
+
+Environment rules:
+
+1.  Do not install system-level software without explicit permission.
+2.  Do not modify global Python installations.
+3.  Use the Python launcher (py -3.14) where appropriate.
+4.  Use a project virtual environment for Python dependencies.
+5.  Check package compatibility with Python 3.14 before adding packages.
+6.  If a dependency is incompatible, report the exact error and propose
+    a compatible alternative. Do not force installation.
+7.  Use SQLite for the initial local development stage if PostgreSQL is
+    unavailable.
+8.  Keep database access behind repository/service abstractions so
+    PostgreSQL can be introduced later.
+9.  Treat CPU inference as the baseline. Do not assume GPU acceleration.
+10. Ollama and external model APIs are optional future integrations.
+11. Do not add paid services or require paid API keys.
+12. Ask before introducing software that requires administrator access.
+
+======================================================================
+3. APPROVED TECHNOLOGY DIRECTION
+======================================================================
+
+Frontend: - Next.js - React - TypeScript - Tailwind CSS - Accessible,
+responsive components
+
+Backend: - Python - FastAPI - Pydantic / Pydantic Settings - SQLAlchemy
+2 - Alembic when migrations are introduced - HTTPX for HTTP integrations
+
+Data: - SQLite for initial development - PostgreSQL for the later shared
+database environment - pgvector for later vector search - Store document
+metadata, permissions, audit records, and chat data with clear ownership
+and tenant boundaries
+
+AI and retrieval (introduce only in the relevant phase): - Ollama or
+another approved model provider behind a model interface - Local
+embedding model behind an embedding interface - Document parsing and
+chunking pipeline - Vector retrieval - Hybrid retrieval and reranking
+where justified - LangGraph for agent workflows when the basic RAG path
+is verified
+
+Quality: - Pytest - Ruff - Frontend unit tests using a suitable
+TypeScript test runner - Playwright for end-to-end tests when
+appropriate - GitHub Actions for CI
+
+Do not add every technology at the beginning. Introduce dependencies
+only when a phase requires them and explain why they are needed.
+
+======================================================================
+4. ARCHITECTURE PRINCIPLES
+======================================================================
+
+Follow these principles:
+
+-   Separation of concerns
+-   Modular design
+-   Dependency inversion at external-system boundaries
+-   Typed interfaces and schemas
+-   Small, cohesive modules
+-   Explicit configuration
+-   Testable business logic
+-   API versioning where appropriate
+-   Secure defaults
+-   Clear error handling
+-   Structured logging
+-   Database migrations for schema changes
+-   Documentation for important design decisions
+
+Keep the frontend, API, business services, persistence, retrieval, model
+providers, and tool execution logically separated.
+
+Do not put business logic in route handlers.
+
+Do not couple application business logic directly to one LLM vendor,
+embedding provider, vector database, or model runtime.
+
+Do not claim the application is production-ready merely because it runs
+locally. Document what has and has not been implemented.
+
+======================================================================
+5. SECURITY REQUIREMENTS
+======================================================================
+
+Security is a core feature, not a final polishing task.
+
+Authentication and authorization: - Enforce authorization on the server
+for every protected operation. - Never trust a role, user ID, tenant ID,
+or permission supplied only by the browser. - Resolve identity from a
+verified authentication context. - Deny access by default. - Check
+document permissions before retrieval and before returning document
+content. - Apply tenant and ownership filters inside the trusted
+backend. - Do not rely on prompt instructions as an authorization
+mechanism.
+
+Document handling: - Validate file type, extension, size, and content. -
+Treat uploaded documents as untrusted data. - Do not execute uploaded
+files. - Avoid path traversal and unsafe filenames. - Store files
+outside public web directories. - Keep document metadata and access
+permissions associated with each document and its chunks. - Prevent
+unauthorized users from discovering document names, snippets, citations,
+or existence where policy requires concealment.
+
+AI and tool calling: - Treat retrieved content as untrusted input, not
+instructions. - Defend against prompt injection in documents and user
+messages. - Use allowlisted tools with strict input schemas. - Validate
+tool arguments on the server. - Re-check user permissions immediately
+before tool execution. - Require confirmation for consequential or
+irreversible actions. - Never let the model directly execute arbitrary
+SQL, shell commands, filesystem operations, or unrestricted network
+requests. - Record tool name, requesting user, authorization result,
+outcome, and relevant correlation ID in audit logs. - Do not expose
+secrets or internal prompts in model responses.
+
+General: - Keep secrets in environment variables or an approved secret
+store. - Commit only safe .env.example files. - Never log passwords,
+tokens, API keys, or sensitive document text. - Apply request size
+limits and rate limits where appropriate. - Use parameterized database
+operations. - Configure CORS narrowly. - Return safe error messages
+without stack traces to clients. - Use synthetic data for development
+and tests.
+
+======================================================================
+6. DEVELOPMENT WORKFLOW — REQUIRED FOR EVERY TASK
+======================================================================
+
+Before changing code:
+
+1.  Read this file.
+2.  Inspect the current repository and relevant files.
+3.  Identify the active implementation phase.
+4.  Read relevant architecture and API documentation.
+5.  Check existing tests and current behavior.
+6.  Summarize the task and propose a small implementation plan.
+7.  Identify files expected to be created or modified.
+8.  Identify risks, dependencies, and compatibility concerns.
+
+During implementation:
+
+1.  Implement only the requested scope.
+2.  Follow existing naming and architecture conventions.
+3.  Avoid unrelated refactoring.
+4.  Add or update tests with the implementation.
+5.  Validate inputs and handle expected failures.
+6.  Update documentation when behavior or architecture changes.
+7.  Do not silently replace real functionality with mocks.
+8.  Clearly label mocks, fixtures, sample data, and placeholders.
+9.  Do not add dependencies without explaining their purpose.
+10. Do not change environment or system configuration without approval.
+
+After implementation:
+
+1.  Run relevant formatters and linters.
+2.  Run unit tests.
+3.  Run integration tests if the required services are available.
+4.  Run frontend checks if frontend files changed.
+5.  Inspect the final diff.
+6.  Check for accidental secrets or generated files.
+7.  Report exact commands and actual results.
+8.  List failures and unresolved issues honestly.
+9.  State whether the feature is complete, partial, or blocked.
+
+Never say tests passed unless you executed them and observed success.
+Never invent command output, benchmark numbers, coverage, or test
+results.
+
+======================================================================
+7. PHASED IMPLEMENTATION ROADMAP
+======================================================================
+
+PHASE 1 — FOUNDATION AND ARCHITECTURE
+
+Goals: - Initialize and inspect the monorepo. - Establish frontend and
+backend applications. - Establish configuration and environment
+validation. - Add health endpoint and API error handling. - Add database
+connection abstraction. - Use SQLite initially if PostgreSQL is
+unavailable. - Add initial schemas and migrations foundation. - Add
+tests, linting, and development scripts. - Create architecture and
+security documentation. - Establish a clean initial dashboard shell.
+
+Required documents: - docs/HLD.md - docs/LLD.md -
+docs/DATABASE_DESIGN.md - docs/API_SPECIFICATION.md - docs/SECURITY.md -
+docs/DEVELOPMENT_GUIDE.md - docs/ARCHITECTURE_DECISIONS.md
+
+Do not implement RAG, embeddings, document ingestion, or agent tools
+during Phase 1.
+
+PHASE 2 — DOCUMENT INTELLIGENCE
+
+Goals: - Upload PDF, DOCX, and TXT files. - Validate file type and
+size. - Extract text and page-level metadata. - Normalize extracted
+content. - Implement configurable chunking strategies. - Preserve
+document ID, page, section, tenant, and access metadata. - Track
+document processing status and failures. - Make ingestion idempotent. -
+Add tests using synthetic sample documents.
+
+PHASE 3 — EMBEDDINGS AND RETRIEVAL
+
+Goals: - Define provider-independent embedding interfaces. - Generate
+and persist embeddings. - Introduce PostgreSQL and pgvector when
+available. - Implement semantic similarity search. - Implement metadata
+and authorization filters. - Add keyword search and hybrid retrieval. -
+Evaluate chunk size, overlap, top-k, and retrieval quality. - Add
+citations with document and page references. - Ensure unauthorized
+content cannot enter model context.
+
+PHASE 4 — GROUNDED RAG ANSWERING
+
+Goals: - Build the question-answering pipeline. - Retrieve relevant
+authorized chunks. - Construct bounded, clearly separated context. -
+Instruct the model to answer from evidence. - Return citations and
+source metadata. - Handle insufficient evidence by saying so. - Avoid
+unsupported claims. - Add conversation context carefully. - Test
+hallucination and retrieval failure cases.
+
+PHASE 5 — AGENT AND CONTROLLED TOOL CALLING
+
+Goals: - Introduce LangGraph only when justified. - Define typed tool
+contracts. - Add an allowlist of tools. - Validate arguments and user
+permissions. - Add approval steps for consequential actions. - Handle
+timeouts, retries, and tool failures. - Record tool execution audit
+events. - Test prompt injection and unauthorized tool attempts.
+
+Possible demonstration tools: - Search an approved knowledge base. -
+Retrieve a support ticket. - Create a draft support ticket. - Check a
+fictional ticket status. Use synthetic systems and data.
+
+PHASE 6 — AUTHENTICATION AND RBAC
+
+Goals: - Define employee, manager, and administrator roles. - Implement
+secure identity handling. - Enforce server-side role and resource
+authorization. - Add document-level permissions. - Add tenant isolation
+if multi-tenancy is implemented. - Add audit logs for protected
+operations. - Test horizontal and vertical privilege escalation. -
+Verify that retrieval respects the same access policy.
+
+PHASE 7 — FRONTEND AND INTEGRATION
+
+Goals: - Build a responsive chat interface. - Display citations and
+source details. - Add document management for authorized
+administrators. - Add conversation history. - Add loading, empty, and
+error states. - Integrate streaming if supported reliably. - Add admin
+views for users, documents, and audit events. - Ensure frontend
+permissions are never treated as security controls.
+
+PHASE 8 — EVALUATION, RELIABILITY, AND DELIVERY
+
+Goals: - Build a versioned evaluation dataset. - Measure retrieval
+quality using appropriate metrics. - Measure answer relevance and
+groundedness. - Track latency and token usage where available. - Add
+structured logs and correlation IDs. - Add unit, integration, security,
+and end-to-end tests. - Add CI checks and dependency review. - Perform
+load and failure testing within available resources. - Document
+limitations and operational procedures. - Prepare a reproducible demo
+with synthetic data.
+
+======================================================================
+8. REQUIRED TESTING STRATEGY
+======================================================================
+
+For every feature, consider:
+
+Unit tests: - Business rules - Validation - Chunking - Metadata
+transformations - Permission decisions - Tool argument validation
+
+Integration tests: - API and database - Document ingestion and
+persistence - Retrieval and metadata filtering - Authentication and
+authorization - Tool execution boundaries
+
+Security tests: - Unauthenticated access - Unauthorized role access -
+Cross-user document access - Cross-tenant access if applicable -
+Malicious filenames and uploads - Prompt injection - Unauthorized tool
+invocation - Secret leakage
+
+AI evaluation: - Relevant document retrieval - Correct citation
+mapping - Insufficient-context behavior - Contradictory source
+handling - Hallucination resistance - Regression testing against a fixed
+dataset
+
+Use deterministic fixtures and mock external model services in ordinary
+unit tests. Keep a separate evaluation path for actual model behavior.
+
+======================================================================
+9. DATABASE AND DATA MODEL GUIDELINES
+======================================================================
+
+Design for entities such as:
+
+-   users
+-   roles
+-   permissions
+-   user_roles
+-   documents
+-   document_permissions
+-   document_chunks
+-   conversations
+-   messages
+-   tool_executions
+-   audit_logs
+
+Do not create every table before its requirements are understood.
+
+Use: - Primary keys - Foreign keys - Unique constraints - Appropriate
+indexes - Created and updated timestamps - Explicit ownership and tenant
+relationships where needed - Migrations for schema changes
+
+For vector data, document the embedding model, dimensions, and version.
+Do not mix embeddings from incompatible models in the same search space
+without explicit versioning and migration strategy.
+
+======================================================================
+10. API DESIGN GUIDELINES
+======================================================================
+
+Use consistent API conventions.
+
+Potential endpoint groups:
+
+-   /api/v1/health
+-   /api/v1/auth
+-   /api/v1/users
+-   /api/v1/documents
+-   /api/v1/chat
+-   /api/v1/conversations
+-   /api/v1/admin
+-   /api/v1/audit
+
+For each endpoint document: - Purpose - Authentication requirement -
+Authorization requirement - Request schema - Response schema - Error
+responses - Validation rules - Relevant audit behavior
+
+Do not expose internal database models directly as public API contracts.
+Use explicit request and response schemas.
+
+======================================================================
+11. CODE QUALITY RULES
+======================================================================
+
+Python: - Use type hints. - Use Pydantic for external data validation. -
+Keep route handlers thin. - Use clear service and repository
+boundaries. - Use async only where it provides a real benefit. - Avoid
+broad exception swallowing. - Keep configuration centralized. - Use Ruff
+and Pytest.
+
+TypeScript: - Enable strict typing. - Avoid any unless explicitly
+justified. - Separate UI components from API access. - Validate
+untrusted API responses where appropriate. - Provide accessible controls
+and useful error states. - Keep secrets out of browser bundles.
+
+General: - Prefer readable code over clever code. - Avoid premature
+microservices. - Start with a modular monolith. - Add queues, caching,
+and distributed infrastructure only when requirements and measurements
+justify them. - Do not claim support for millions of requests per second
+without measured evidence and an appropriate architecture.
+
+======================================================================
+12. DOCUMENTATION EXPECTATIONS
+======================================================================
+
+Keep documentation aligned with the implementation.
+
+For every important architectural decision, record: - Context - Options
+considered - Decision - Trade-offs - Consequences
+
+For every phase, maintain: - Scope - Implementation checklist - Commands
+to run - Tests and results - Known limitations - Exit criteria
+
+Update README.md with accurate setup instructions. Do not document
+commands that have not been verified on the current environment.
+
+======================================================================
+13. PHASE COMPLETION REPORT FORMAT
+======================================================================
+
+At the end of each task or phase, provide:
+
+1.  Summary
+2.  Requirements completed
+3.  Files created
+4.  Files modified
+5.  Dependencies added and reasons
+6.  Architecture decisions
+7.  Commands executed
+8.  Actual test and lint results
+9.  Security considerations
+10. Known issues and limitations
+11. Manual verification steps
+12. Recommended next task
+
+Use the following status labels: - COMPLETE: implemented and verified. -
+PARTIAL: implemented but some verification or scope remains. - BLOCKED:
+cannot proceed because of a dependency or permission. - NOT STARTED: not
+implemented.
+
+======================================================================
+14. CURRENT TASK INSTRUCTION
+======================================================================
+
+Current active phase: PHASE 1 — FOUNDATION AND ARCHITECTURE.
+
+First inspect the repository and environment. Do not assume that
+previously described setup commands succeeded.
+
+Confirm: - Current working directory - Existing files and project
+structure - Git status - Node and npm versions - Python launcher and
+virtual environment status - Whether backend dependencies are
+installed - Whether frontend dependencies are installed - Whether the
+frontend and backend can start - Which system services are unavailable
+
+Then propose a small, safe implementation plan.
+
+Do not install system-level software. Do not deploy. Do not implement
+RAG or agent functionality. Do not overwrite working files without
+inspection. Do not proceed with major changes until the user approves
+the plan.
+
+END OF CLAUDE CODE DEVELOPMENT GUIDE
