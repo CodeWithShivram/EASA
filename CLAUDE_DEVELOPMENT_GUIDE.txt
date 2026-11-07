@@ -204,6 +204,10 @@ After implementation:
 7.  Report exact commands and actual results.
 8.  List failures and unresolved issues honestly.
 9.  State whether the feature is complete, partial, or blocked.
+10. If the approved task or milestone is complete and all required
+    acceptance checks pass, create one meaningful Git commit for that
+    task before reporting completion. Follow the commit protocol in
+    Sections 15 and 16 below.
 
 Never say tests passed unless you executed them and observed success.
 Never invent command output, benchmark numbers, coverage, or test
@@ -458,5 +462,130 @@ Do not install system-level software. Do not deploy. Do not implement
 RAG or agent functionality. Do not overwrite working files without
 inspection. Do not proceed with major changes until the user approves
 the plan.
+
+======================================================================
+15. MANDATORY GIT COMMIT PROTOCOL — EVERY DEVELOPMENT TASK
+======================================================================
+
+A completed, approved development task or milestone must end with its
+own verified Git commit. This applies to every implementation step,
+not just major releases.
+
+Before committing:
+
+1.  Confirm the repository root, current branch and Git status.
+2.  Review the complete diff, including untracked files.
+3.  Confirm every changed file belongs to the approved task.
+4.  Check that no secrets, credentials, .env files, local databases,
+    virtual environments, caches, logs, build output or unrelated user
+    changes are included. Commit safe templates such as .env.example
+    only when they belong to the task.
+5.  Run all required format, lint, type, test, migration and build
+    checks relevant to the task. Report checks that cannot run.
+6.  Update the relevant documentation and progress/implementation
+    tracking files before staging.
+
+Commit rules:
+
+1.  Stage only files belonging to the approved task. Prefer explicit
+    file paths; do not blindly stage the entire repository.
+2.  Create exactly one focused commit for the completed task, using a
+    clear Conventional Commit message, for example:
+    feat(api): add database session management (M2)
+3.  Do not amend, rebase, reset, force-push or rewrite existing history
+    unless the user explicitly authorizes that specific action.
+4.  Do not push to any remote unless the user explicitly authorizes
+    pushing and the remote URL has been checked with the user.
+5.  After committing, verify the commit with git show and verify the
+    final git status. Report the commit hash and whether the working
+    tree is clean.
+6.  Keep each milestone/step in a separate commit. Do not combine
+    multiple completed milestones into one commit.
+
+If acceptance criteria or required checks fail, do not create a
+completion commit. Preserve the work, report the blocker and failing
+commands, and wait for direction. Never claim a commit, push, clean
+working tree or successful check unless the command output confirms it.
+
+At the end of every development prompt, stop after the current approved
+task, report the commit hash and verification results, and ask for
+approval before starting the next milestone.
+
+======================================================================
+16. MANDATORY GIT COMMIT WORKFLOW — EVERY DEVELOPMENT MILESTONE
+======================================================================
+
+A completed development milestone must have its own verified Git commit.
+This is a required part of the Definition of Done, not an optional
+administrative task.
+
+A. Before implementation
+1. Confirm the repository root, current branch and Git status.
+2. Inspect recent commits and the files relevant to the milestone.
+3. Preserve all existing user changes. Never use reset, clean, checkout
+   or other destructive Git commands to discard work.
+4. Confirm the exact milestone scope and acceptance criteria.
+5. Do not begin implementation if the working tree contains unexplained
+   changes. Identify them and ask the user how to handle them.
+
+B. During implementation
+1. Work only on the approved milestone.
+2. Add or update tests alongside the implementation.
+3. Update documentation and progress records where applicable.
+4. Do not stage or commit unrelated changes.
+
+C. Required pre-commit verification
+1. Run the relevant formatter and linter.
+2. Run unit and integration tests relevant to the changed code.
+3. Run type checks, build checks and smoke tests where applicable.
+4. Report the exact commands and actual results. Never claim a check
+   passed unless it was executed successfully.
+5. Inspect the complete diff, including staged and unstaged changes.
+6. Check for credentials, tokens, private keys, personal data,
+   .env files, databases, virtual environments, caches, build output
+   and other generated artifacts.
+7. Confirm that only files belonging to the current milestone will be
+   committed.
+8. If required checks fail, acceptance criteria remain unmet, or the
+   diff contains unexplained changes, do not create a completion commit.
+   Preserve the work, report the blocker and ask for direction.
+
+D. Mandatory commit
+1. Stage only the reviewed files belonging to the current milestone.
+2. Create exactly one meaningful commit for the completed milestone.
+3. Use a Conventional Commit message, for example:
+   - chore: initialize repository hygiene (M0)
+   - feat(api): backend skeleton with config, correlation IDs, errors,
+     health checks (M1)
+   - feat(api): add database session management (M2)
+4. Do not amend or rewrite earlier milestone commits unless the user
+   explicitly requests it.
+5. Do not configure or change global Git identity. If repository-local
+   identity is missing, ask the user for the exact name and email.
+6. Do not push, publish, create a pull request, or otherwise modify a
+   remote repository unless the user explicitly authorizes that action.
+
+E. Post-commit verification
+1. Record the full commit hash and commit subject.
+2. Verify the commit contents with git show and confirm no unrelated
+   files were included.
+3. Run git status and report whether the working tree is clean.
+4. If changes remain uncommitted, explain exactly why; do not describe
+   the milestone as fully committed.
+5. Update the phase/progress documentation with the milestone status,
+   verification results and commit hash.
+
+F. Milestone gate
+1. Stop after the current milestone.
+2. Provide the completion report with changed files, dependencies,
+   architecture decisions, commands, actual test results, security
+   review, limitations and commit hash.
+3. State the next recommended milestone, but do not start it.
+4. Wait for the user's explicit approval before continuing.
+
+This commit workflow applies to every development milestone and every
+focused implementation step throughout the project. It supplements
+the development workflow and phase completion report above. If any
+older instruction conflicts with this section, follow this section.
 
 END OF CLAUDE CODE DEVELOPMENT GUIDE
