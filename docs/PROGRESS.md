@@ -11,8 +11,8 @@ Status labels: **COMPLETE** (implemented and verified), **PARTIAL**, **BLOCKED**
 | M0 | Repository hygiene: `.gitignore`, `.gitattributes`, `.editorconfig`, README draft | COMPLETE | `c3cc9d3` |
 | M1 | Backend skeleton: strict config, correlation IDs, JSON logs, standard errors, liveness/readiness | COMPLETE | `344e424` |
 | (guide) | Development guide: mandatory commit protocol/workflow (sections 15–16) | COMPLETE | `6ebf95f` |
-| M2 | Database sessions, settings-driven Alembic, empty baseline migration | COMPLETE | the commit that adds this row |
-| M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | NOT STARTED | |
+| M2 | Database sessions, settings-driven Alembic, empty baseline migration | COMPLETE | `77f692f` |
+| M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | COMPLETE | the commit that adds this row |
 | M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | NOT STARTED | |
 | M5 | Dev/check scripts and GitHub Actions CI | NOT STARTED | |
 
@@ -57,3 +57,64 @@ Status labels: **COMPLETE** (implemented and verified), **PARTIAL**, **BLOCKED**
 - Migrations are run by hand. The app does not migrate on startup, by design.
 
 **Exit criteria:** met. Sessions and migrations work against SQLite, the migration history has a single head, models and migrations are in sync, and no domain tables exist.
+
+## M3: Frontend dashboard shell
+
+**Scope:** Next.js app in `apps/web` with strict TypeScript, Tailwind, a Zod-validated API client and Vitest. There is no chat, document, authentication or backend work.
+
+**Implemented**
+
+- Scaffolded with `create-next-app@16.4.5` (App Router, `src/`, ESLint, Tailwind, npm). Install was skipped at first so the files could be reviewed.
+  - Removed: Google-hosted fonts (no external fetch at build time), template SVGs, template README and demo page.
+  - Changed: package renamed to `easa-web`, `poweredByHeader: false`, and `apps/web/.gitignore` now allows `.env.example`.
+- TypeScript: `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`.
+- `src/lib/config.ts`: `NEXT_PUBLIC_API_BASE_URL` is validated with Zod. It must be http(s) with no path, query or fragment, and defaults to `http://localhost:8000`. An invalid value fails the build.
+- `src/lib/api/`:
+  - `schemas.ts`: Zod schemas for readiness and the standard error format.
+  - `client.ts`: `apiGet` makes a GET without credentials and with a timeout, and checks every accepted body against its schema. Failures become typed `ApiError` kinds (`network`, `timeout`, `http`, `invalid_response`) carrying the status, code and correlation ID. Aborts by the caller are passed through unchanged.
+  - `health.ts`: `getReadiness` treats a 503 `not_ready` body as a valid result.
+- UI:
+  - `AppHeader`, and `SideNav`: labelled navigation, Dashboard marked as the current page, future features shown as disabled text rather than links.
+  - Skip link and landmarks.
+  - `ApiStatusCard`: loading, ready, not ready and error states. Errors show the correlation ID, the card has a Retry button and a live status region, and the request is aborted when the card unmounts. The data loader is injected, so the UI never calls `fetch` directly.
+- Tests (Vitest 5, jsdom 29, Testing Library) cover config, the client, the status card and navigation. Fake `fetch` functions and loaders are labelled as test doubles.
+
+**Dependencies**
+
+- Runtime: next 16.4.5, react/react-dom 19.3.0, zod ^4.6.7.
+- Dev: typescript 5.9.3, eslint 9 with eslint-config-next 16.4.5, tailwindcss 4 with @tailwindcss/turbopack, @types/node ^24, vitest ^5.1, @vitejs/plugin-react ^6.2, jsdom ~29.1.1, @testing-library/react, dom, jest-dom and user-event.
+
+**Compatibility decisions**
+
+- `@types/node` raised from the template's `^20` to `^24`, which matches the Node runtime and is required by Vitest 5's peer range. npm refused the original combination (ERESOLVE). Nothing was forced.
+- jsdom pinned to `~29.1.1`: jsdom 30 and 31 require Node `^24.15.0`, and this machine has 24.13.0. Upgrading Node is a system change, so it was not done.
+- TypeScript stays on 5.x, as pinned by the template. TypeScript 7 was not adopted.
+- ESLint stays on 9, as pinned by the template. npm reports 9.x as out of support.
+- `RootLayout` uses an explicit props type instead of Next's generated global `LayoutProps`, so `tsc --noEmit` works without a prior build.
+
+**Verification (executed 2026-11-07)**
+
+| Command | Result |
+|---|---|
+| `npm ci` (clean install from lockfile) | 442 packages added; all checks below repeated afterwards with the same results |
+| `npm run typecheck` | exit 0 |
+| `npm run lint` | exit 0; 17 files linted, 0 errors and 0 warnings |
+| `npm test` | 4 files, 27 tests passed |
+| `npm run build` | Compiled successfully; `/` prerendered as static |
+| `next start` + `curl /` | Shell, skip link, navigation landmark and loading state present; no `X-Powered-By` header |
+| CORS preflight from `http://localhost:3000` to the API | 200, with `Access-Control-Allow-Origin: http://localhost:3000` |
+| Real `getReadiness` against the running API (throwaway script outside the repo) | `ready` with a correlation ID; real 404 mapped to `code: not_found`; closed port reported as a `network` error |
+
+Fixed during the work:
+
+- `LayoutProps` is only defined after a Next build, so it was replaced with an explicit type.
+- The Zod `.refine` crashed on unparseable URLs. It now checks `URL.canParse` first.
+
+**Known limitations**
+
+- The Chrome extension was not connected, so there was no visual check in a real browser. In-browser behavior is covered by the jsdom component tests, the served-HTML check and the CORS preflight.
+- `cacheComponents` and `partialPrefetching` are left on, as create-next-app's defaults.
+- No Playwright end-to-end tests yet (planned for later).
+- Two optional `sharp` binaries appear as "extraneous" in the local `node_modules`. This affects neither the lockfile nor the build.
+
+**Exit criteria:** met. The shell builds and is accessible, and every API response is validated at runtime with all failure paths tested.

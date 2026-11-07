@@ -3,7 +3,7 @@
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
 > **Status: Phase 1 (Foundation and Architecture), in progress.**
-> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend and architecture documentation are not built yet.
+> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend is a dashboard shell with an API status card. The architecture documentation is not written yet.
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
 ## Structure
@@ -11,7 +11,7 @@ A learning and portfolio project. The goal is an enterprise-style AI support age
 ```
 easa/
   apps/api/   FastAPI backend (Python 3.14, uv)          [M1–M2]       
-  apps/web/   Next.js frontend (TypeScript, Tailwind)    [not yet created]
+  apps/web/   Next.js frontend (TypeScript, Tailwind)    [M3: shell]
   docs/       Progress tracking (architecture docs: M4)  [PROGRESS.md]
   scripts/    Development and check scripts              [not yet created]
 ```
@@ -66,6 +66,24 @@ uv run alembic upgrade head --sql  # print SQL without connecting
 ```
 
 Configuration uses `EASA_*` environment variables or `apps/api/.env`; see [apps/api/.env.example](apps/api/.env.example). Invalid values and unknown keys in `.env` stop the app at startup.
+
+## Frontend (apps/web)
+
+All commands run from `apps/web`. Requires Node.js 24 (verified on 24.13.0).
+
+```powershell
+cd apps/web
+npm ci             # install exactly what package-lock.json specifies
+npm run lint       # ESLint (Next.js core-web-vitals and TypeScript rules)
+npm run typecheck  # tsc --noEmit (strict, noUncheckedIndexedAccess)
+npm test           # Vitest + Testing Library (jsdom)
+npm run build      # production build
+npm run start      # serve the build on http://localhost:3000
+```
+
+With the API running on port 8000, the dashboard's **API status** card calls `GET /api/v1/health/ready` from the browser and shows a ready, not ready or error state, including the correlation ID when there is an error. Every API response is validated at runtime with Zod before the UI uses it.
+
+The API base URL is set by `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`); see [apps/web/.env.example](apps/web/.env.example). The value is embedded in the browser bundle, so it must never be a secret. An invalid URL fails the build.
 
 ## Local data
 
