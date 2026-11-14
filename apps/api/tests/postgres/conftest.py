@@ -5,6 +5,9 @@ whose user may create databases, for example the Compose service (see
 docs/DEVELOPMENT_GUIDE.md). Otherwise they are skipped. Each test session
 creates throwaway databases, migrates them with Alembic and drops them
 afterwards; the database named in the URL itself is never written to.
+
+With EASA_REQUIRE_POSTGRES_TESTS=1 (set in CI) a missing URL fails the tests
+instead of skipping them, so a green run proves they ran.
 """
 
 import hashlib
@@ -32,19 +35,27 @@ from app.repositories.embeddings import EmbeddingRepository
 # Read at import time: the autouse fixture in tests/conftest.py removes EASA_*
 # variables before each test.
 ADMIN_URL = os.environ.get("EASA_TEST_POSTGRES_URL")
+REQUIRED = os.environ.get("EASA_REQUIRE_POSTGRES_TESTS") == "1"
+
+
+def require_admin_url() -> str:
+    if not ADMIN_URL:
+        if REQUIRED:
+            pytest.fail("EASA_REQUIRE_POSTGRES_TESTS=1 but EASA_TEST_POSTGRES_URL is not set")
+        pytest.skip("EASA_TEST_POSTGRES_URL is not set")
+    return ADMIN_URL
 
 
 @contextmanager
 def throwaway_database() -> Iterator[str]:
-    if not ADMIN_URL:
-        pytest.skip("EASA_TEST_POSTGRES_URL is not set")
+    admin_url = require_admin_url()
     name = f"easa_test_{uuid.uuid4().hex[:12]}"  # generated, never user input
-    admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as connection:
             connection.execute(text(f'CREATE DATABASE "{name}"'))
         try:
-            yield make_url(ADMIN_URL).set(database=name).render_as_string(hide_password=False)
+            yield make_url(admin_url).set(database=name).render_as_string(hide_password=False)
         finally:
             with admin.connect() as connection:
                 connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))

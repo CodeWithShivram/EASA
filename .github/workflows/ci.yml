@@ -61,6 +61,8 @@ jobs:
       - name: Tests (including PostgreSQL)
         env:
           EASA_TEST_POSTGRES_URL: ${{ env.PG_URL }}
+          # Fail instead of skipping if the PostgreSQL tests cannot run.
+          EASA_REQUIRE_POSTGRES_TESTS: "1"
         run: uv run pytest
 
       - name: Migrations apply and match models

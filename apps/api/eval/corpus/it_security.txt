@@ -1,0 +1,35 @@
+Larkspur Analytics - Information Security Policy
+
+Every employee helps protect company and customer information. This policy sets the minimum security practices for accounts, devices and incidents.
+
+Passwords and sign-in
+
+Passwords must be at least 14 characters long. A passphrase made of several unrelated words is recommended. Passwords must never be reused across services or shared with colleagues, including managers and IT staff.
+
+Multi-factor authentication is mandatory for email, the HR portal, the finance system and remote access. The approved authenticator app is issued by IT during onboarding. SMS codes are only allowed as a temporary fallback.
+
+All employees store work passwords in the company password manager, Vaultline. Browsers must not be used to save work passwords.
+
+Devices
+
+Company laptops are encrypted with full-disk encryption and managed centrally. Employees must install security updates within seven days of release. Personal devices may only access email through the approved mobile app, which separates work data from personal data.
+
+USB storage devices are blocked on company laptops. Files are shared through the company file storage service instead.
+
+Phishing
+
+Suspicious emails should be reported with the Report Phish button in the email client, or forwarded to phish@larkspur.example. Do not click links or open attachments in a suspicious message. IT runs simulated phishing exercises every quarter.
+
+Security incidents
+
+A lost or stolen laptop or phone must be reported to the IT service desk within one hour, so the device can be locked and wiped remotely. Incidents are logged under ticket category SEC-77.
+
+Any suspected data breach, such as customer data sent to the wrong recipient, must be reported to the security team immediately. Do not try to investigate or fix the problem yourself.
+
+Access reviews
+
+Managers review the system access of their team members every six months. Access that is no longer needed is removed. When an employee changes role, access from the previous role is revoked within five working days.
+
+Training
+
+All staff complete security awareness training when they join and refresh it every year. Completion is tracked in the learning platform.

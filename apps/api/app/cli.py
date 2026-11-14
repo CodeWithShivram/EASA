@@ -4,22 +4,59 @@ Run from apps/api:
     uv run python -m app.cli download-embedding-model
     uv run python -m app.cli embed-missing [--limit N]
     uv run python -m app.cli rebuild-keyword-index
+    uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
+    uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
+
+The evaluation commands use the PostgreSQL URL in EASA_EVAL_POSTGRES_URL (a
+user that may create databases); they create and drop throwaway databases.
 """
 
 import argparse
 import logging
+import os
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
-from app.core.config import load_settings
+from app.core.config import API_ROOT, load_settings
 from app.core.logging import configure_logging
 from app.db.engine import create_db_engine
 from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder, download_model
 from app.embeddings.registry import DEFAULT_MODEL
+from app.evaluation.dataset import load_dataset, validate_dataset
+from app.evaluation.hnsw import hnsw_report_to_markdown, run_hnsw_benchmark
+from app.evaluation.report import report_to_json, report_to_markdown
+from app.evaluation.runner import (
+    ALL_CONFIGS,
+    DEFAULT_CONFIG,
+    DatabaseFactory,
+    postgres_database,
+    run_evaluation,
+    sqlite_database,
+)
 from app.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger("app.cli")
+
+EVAL_OUTPUT_DIR = API_ROOT / "var" / "eval"
+
+
+def _postgres_factory() -> DatabaseFactory | None:
+    url = os.environ.get("EASA_EVAL_POSTGRES_URL")
+    if not url:
+        logger.error("set EASA_EVAL_POSTGRES_URL to a PostgreSQL URL that may create databases")
+        return None
+    return postgres_database(url)
+
+
+def _write(output_dir: Path, stem: str, files: dict[str, str]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for suffix, content in files.items():
+        path = output_dir / f"{stem}.{suffix}"
+        path.write_text(content, encoding="utf-8")
+        logger.info("evaluation output written", extra={"path": str(path)})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +74,27 @@ def main(argv: list[str] | None = None) -> int:
         "rebuild-keyword-index",
         help="rebuild the SQLite FTS5 keyword index from document_chunks (e.g. after VACUUM)",
     )
+    evaluate = commands.add_parser(
+        "evaluate", help="measure retrieval quality on the labelled synthetic dataset (eval/)"
+    )
+    evaluate.add_argument("--backend", choices=("sqlite", "postgres"), default="sqlite")
+    evaluate.add_argument(
+        "--configs",
+        choices=("default", "all"),
+        default="default",
+        help="default: the application chunking setting; all: 6 chunking settings",
+    )
+    evaluate.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
+    hnsw = commands.add_parser(
+        "evaluate-hnsw", help="compare exact and HNSW vector search on PostgreSQL"
+    )
+    hnsw.add_argument("--vectors", type=int, default=50_000)
+    hnsw.add_argument("--tenants", type=int, default=10)
+    hnsw.add_argument("--queries", type=int, default=100)
+    hnsw.add_argument(
+        "--noise", type=float, default=0.1, help="isotropic noise; higher is harder for HNSW"
+    )
+    hnsw.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -47,6 +105,49 @@ def main(argv: list[str] | None = None) -> int:
         logger.info(
             "embedding model downloaded",
             extra={"model_id": DEFAULT_MODEL.model_id, "path": str(path)},
+        )
+        return 0
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    if args.command == "evaluate-hnsw":
+        factory = _postgres_factory()
+        if factory is None:
+            return 1
+        hnsw_report = run_hnsw_benchmark(
+            factory,
+            vectors=args.vectors,
+            tenants=args.tenants,
+            queries=args.queries,
+            noise=args.noise,
+        )
+        _write(
+            args.output_dir,
+            f"{stamp}-hnsw-{args.tenants}t-noise{args.noise}",
+            {"md": hnsw_report_to_markdown(hnsw_report)},
+        )
+        return 0
+
+    if args.command == "evaluate":
+        dataset = load_dataset()
+        problems = validate_dataset(dataset)
+        if problems:
+            logger.error("evaluation dataset is invalid", extra={"problems": problems})
+            return 1
+        embedder = build_embedder(settings)
+        if not embedder.is_available():
+            logger.error("embedding model not available; run download-embedding-model first")
+            return 1
+        factory = sqlite_database if args.backend == "sqlite" else _postgres_factory()
+        if factory is None:
+            return 1
+        configs = ALL_CONFIGS if args.configs == "all" else (DEFAULT_CONFIG,)
+        report = run_evaluation(
+            dataset, embedder, backend=args.backend, database=factory, configs=configs
+        )
+        _write(
+            args.output_dir,
+            f"{stamp}-{args.backend}-{args.configs}",
+            {"json": report_to_json(report), "md": report_to_markdown(report)},
         )
         return 0
 

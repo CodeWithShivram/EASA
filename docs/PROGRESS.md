@@ -500,8 +500,8 @@ Decisions approved 2026-11-14:
 | P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | `2691620` |
 | P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | `d6e8781` |
 | P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | COMPLETE | `97a2b93` |
-| P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | COMPLETE | the commit that adds this row |
-| P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | NOT STARTED | |
+| P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | COMPLETE | `2b28388` |
+| P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | COMPLETE | the commit that adds this row |
 
 ## P3-M1: Embeddings
 
@@ -666,3 +666,79 @@ Fixed during the work:
 - Converting an existing PostgreSQL database deletes its vectors; run `embed-missing` afterwards.
 
 **Exit criteria:** met. The full application runs on PostgreSQL + pgvector with the same API and migrations, results match the SQLite implementation up to float rounding, and CI tests both backends.
+
+**Post-push note:** CI passed for `2b28388`, but GitHub job logs need authentication, so whether the 44 PostgreSQL tests ran or were skipped could not be confirmed. P3-M5 adds a guard that makes CI fail if they are skipped.
+
+## P3-M5: Retrieval evaluation and Phase 3 report
+
+**Scope:** a synthetic labelled dataset, retrieval metrics, an evaluation runner and CLI, a comparison of search modes and chunk settings on SQLite and PostgreSQL, an exact-versus-HNSW benchmark, `docs/EVALUATION.md`, a CI guard for the PostgreSQL tests, and the Phase 3 report. No application behaviour changes, no new dependencies, no downloads.
+
+**Implemented**
+
+- CI guard: with `EASA_REQUIRE_POSTGRES_TESTS=1` (set in CI) a missing `EASA_TEST_POSTGRES_URL` fails the PostgreSQL tests instead of skipping them (verified locally: 46 failures/errors without the URL).
+- Dataset in `apps/api/eval/`: 12 synthetic "Larkspur Analytics" policy documents (24 KB) and 60 labelled queries (24 paraphrase, 15 exact, 21 keyword), each with an evidence phrase; validated by a unit test.
+- `app/evaluation/`: `dataset.py`, `metrics.py` (recall@k, reciprocal rank), `runner.py` (fresh migrated database per chunk setting, upload through `DocumentService`, search through `SearchService`, vector-completeness check), `report.py` (JSON and Markdown), `hnsw.py` (synthetic-vector benchmark).
+- `app/db/migrate.py` `upgrade_to_head(url)`; `migrations/env.py` accepts a URL in `config.attributes` and then leaves logging to the caller.
+- CLI: `evaluate [--backend] [--configs]` and `evaluate-hnsw [--vectors] [--tenants] [--queries] [--noise]`; PostgreSQL URL from `EASA_EVAL_POSTGRES_URL`.
+- Tests: 17 unit (metrics, dataset validation), 5 integration (runner, reports, missing-vector refusal, CLI), 2 PostgreSQL (semantic parity with SQLite, small HNSW benchmark).
+- Docs: `docs/EVALUATION.md` (new), ADR-022, LLD section 2.6g, DEVELOPMENT_GUIDE section 6d, SECURITY, DATABASE_DESIGN section 9, HLD, README.
+
+**Results:** see [EVALUATION.md](EVALUATION.md). In short: hybrid is the most robust mode (default chunking: R@1 0.817, R@3 0.967, MRR 0.887 on SQLite); keyword fails on paraphrases and semantic misses codes; smaller chunks help semantic and hurt keyword; semantic results are identical on PostgreSQL, whose keyword ranking is weaker on exact terms; HNSW is not adopted (ADR-022).
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `uv run ruff format --check .` / `uv run ruff check .` | Clean |
+| `uv run pytest` with `EASA_TEST_POSTGRES_URL` | 397 passed (212 unit, 136 integration, 3 real-model, 46 PostgreSQL); no throwaway databases left |
+| `uv run pytest` without PostgreSQL | 351 passed, 46 skipped |
+| `uv run pytest tests/postgres` with `EASA_REQUIRE_POSTGRES_TESTS=1` and no URL | Fails (2 failed, 44 errors), as intended |
+| `python -m app.cli evaluate --configs all` (real model) | Exit 0 in 56 s; results in EVALUATION.md section 4 |
+| `python -m app.cli evaluate --backend postgres --configs all` | Exit 0 in 69 s; semantic metrics identical to SQLite for all 6 settings |
+| `python -m app.cli evaluate-hnsw --tenants 10` and `--tenants 1` | Exit 0; results in EVALUATION.md section 6 |
+| First HNSW benchmark design | Rejected after two runs: tightly clustered vectors with queries copied from stored points produced near-tied exact top-10 lists, so recall (0.16–0.67, lower with less noise) measured tie-breaking. Replaced by low-intrinsic-dimension data with fresh queries |
+| First small HNSW test | Failed on `index_used`: with 2,000 vectors the planner correctly prefers an exact scan. The test now asserts that recall is 1.0 whenever the index is not used |
+
+**Known limitations**
+
+- The evaluation is optimistic (same author for corpus and labels, small clean corpus, one answer per query) and small (60 queries). See EVALUATION.md section 8.
+- Overlap was not varied separately (150 characters for fixed windows).
+- HNSW numbers use synthetic vectors; latencies come from a laptop with Docker and varied 2–3 times between runs.
+
+**Exit criteria:** met. Retrieval quality is measured with a reproducible, validated dataset; modes, chunk settings, backends and HNSW are compared, and the decisions are recorded.
+
+## Phase 3 completion report
+
+**Status: COMPLETE.** Phase 3 delivered local embeddings, tenant-isolated semantic, keyword and hybrid search with citations on SQLite and PostgreSQL + pgvector, and a retrieval evaluation.
+
+**Phase 3 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 3) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Provider-independent embedding interfaces | `Embedder` protocol; pinned local ONNX model (bge-small-en-v1.5) and a deterministic test embedder | P3-M1 |
+| Generate and persist embeddings | Embedding during processing, versioned `model_id`, backfill command, readiness check | P3-M1 |
+| Introduce PostgreSQL and pgvector when available | Docker Compose service, portable vector column, PostgreSQL migration, pgvector search, CI service container | P3-M4 |
+| Semantic similarity search | `POST /api/v1/search`, exact search on both backends | P3-M2, P3-M4 |
+| Metadata and authorization filters | Tenant, document status, model and dimension filters inside every search query; tested on both backends. Role- and document-level permissions arrive with RBAC (Phase 6) | P3-M2 to P3-M4 |
+| Keyword search and hybrid retrieval | FTS5 BM25 (SQLite), PostgreSQL full-text search, reciprocal rank fusion; injection-safe query building | P3-M3, P3-M4 |
+| Evaluate chunk size, overlap, top-k and retrieval quality | 6 chunk settings × 3 modes × 60 labelled queries, recall@1/3/5/10 and MRR; overlap only at one value | P3-M5 |
+| Citations with document and page references | Filename, document ID, chunk index, page, section and offsets on every result | P3-M2 |
+| Unauthorized content cannot enter model context | Other tenants' and unprocessed documents are filtered before scoring and never returned (tests in every mode and backend). No model context exists yet; Phase 4 must only use these results | P3-M2 to P3-M4 |
+
+**Commits:** P3-M1 `2691620`, P3-M2 `d6e8781`, P3-M3 `97a2b93`, P3-M4 `2b28388`, P3-M5 the commit that adds this report.
+
+**Dependencies added in Phase 3:** `fastembed` (ONNX Runtime embeddings), `psycopg[binary]` (PostgreSQL driver), `pgvector` (vector type). Container image: `pgvector/pgvector:0.8.7-pg18`. Model: `Qdrant/bge-small-en-v1.5-onnx-Q` at a pinned revision (64 MB, downloaded once on request).
+
+**Architecture decisions:** ADR-018 (embeddings), ADR-019 (vector index interface), ADR-020 (keyword and hybrid search), ADR-021 (PostgreSQL + pgvector), ADR-022 (exact search over HNSW for now).
+
+**Tests:** 397 backend (212 unit, 136 integration, 3 real-model, 46 PostgreSQL) plus 27 frontend = 424, up from 266 at the end of Phase 2.
+
+**Security considerations:** see [SECURITY.md](SECURITY.md). Main residual risks: SQLite BM25 statistics span tenants (not PostgreSQL); the development identity is still the only identity; the container image is pinned by tag.
+
+**Manual verification steps** (from `apps/api`, with the API running and the model downloaded):
+
+1. Upload a synthetic document: `curl.exe -F "file=@<synthetic.txt>" http://127.0.0.1:8000/api/v1/documents`.
+2. Search in each mode with a JSON body file, as in DEVELOPMENT_GUIDE section 3: `{"query": "...", "top_k": 3, "mode": "hybrid"}` → results with citations.
+3. Run `uv run python -m app.cli evaluate` → a report in `var/eval/`.
+
+**Recommended next phase:** Phase 4, grounded RAG answering. Open decisions to settle in its plan: the model provider (a free local option such as Ollama, which is not installed), whether the API's default search mode becomes `hybrid`, and the chunk size, judged by answer quality.

@@ -219,7 +219,9 @@ On **PostgreSQL**, migration `e4353f12b34f` creates `ix_document_chunks_text_tsv
 
 Verified on PostgreSQL: upgrade to head, `alembic check` (no drift), downgrade to base and upgrade again, and the full application (upload, processing, embedding, all search modes, `embed-missing`), both through tests and live.
 
-Not done yet: an approximate index (HNSW) and its recall/latency trade-off (P3-M5), connection-pool tuning, backups.
+An approximate HNSW index was evaluated in P3-M5 and **not** adopted: with tenant filters its recall drops sharply unless iterative scans are enabled, and exact search is fast at EASA's size ([EVALUATION.md](EVALUATION.md) section 6, [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022)).
+
+Not done yet: connection-pool tuning, backups.
 
 ## 10. Data handling
 

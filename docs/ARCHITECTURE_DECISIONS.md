@@ -26,6 +26,7 @@
 | [ADR-019](#adr-019) | Vector-index interface with exact brute-force search first | P3-M2 |
 | [ADR-020](#adr-020) | SQLite FTS5 keyword search and reciprocal-rank-fusion hybrid | P3-M3 |
 | [ADR-021](#adr-021) | PostgreSQL + pgvector as a second backend with exact search | P3-M4 |
+| [ADR-022](#adr-022) | Keep exact vector search; criteria for adopting HNSW | P3-M5 |
 
 ---
 
@@ -278,12 +279,28 @@
 
 ---
 
+<a id="adr-022"></a>
+## ADR-022: Keep exact vector search; criteria for adopting HNSW
+
+- **Status:** Accepted (P3-M5, 2026-11-14), based on [EVALUATION.md](EVALUATION.md) section 6
+- **Context:** pgvector offers approximate HNSW indexes. EASA's searches are always filtered by tenant, model and document status, and the corpus is about 100 chunks today.
+- **Options considered:** keep exact search; add a partial HNSW expression index per model now; HNSW with iterative scans.
+- **Measurements** (50,000 synthetic vectors with intrinsic dimension 32, laptop + Docker):
+  - Without a filter, HNSW recall@10 was 0.89 (`ef_search = 40`) and 0.97 (100).
+  - Filtered to one of 10 tenants, recall@10 was 0.41 at the defaults, 0.83 with `ef_search = 100`, and 0.91–0.94 with `hnsw.iterative_scan = relaxed_order`.
+  - HNSW median latency was about 7–11 ms versus 62–77 ms for exact search; the index took 84–94 s to build.
+- **Decision:** keep exact search. Adopt HNSW only when a tenant reaches roughly 100,000 chunks or exact search exceeds the latency budget, and then: a partial index on `(vector::vector(<dims>))` per model, `hnsw.iterative_scan = relaxed_order`, `ef_search` of at least 100, and a recall check on real embeddings with `python -m app.cli evaluate-hnsw` and `evaluate`.
+- **Trade-offs:** exact search costs grow linearly with a tenant's chunks, but results are always correct and need no tuning, build time or extra memory. HNSW's default settings would silently drop more than half of the correct results for filtered queries.
+- **Consequences:** no schema change. The benchmark stays in the code base so the decision can be re-checked with new data.
+
+---
+
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
-| Approximate pgvector index (HNSW) versus exact search, based on measured recall and latency | 3 (P3-M5) |
+| Default search mode of the API (`semantic` today; evaluation recommends `hybrid`) and chunk size, judged with answer quality | 4 |
 | Model provider (Ollama or another free option) behind the model interface | 4 |
 | Whether LangGraph is justified for agent workflows | 5 |

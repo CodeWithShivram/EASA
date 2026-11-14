@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -133,7 +133,9 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 - The Compose service binds to `127.0.0.1:5433` only, so it is not reachable from the network.
 - Its password comes from `EASA_POSTGRES_PASSWORD` in the git-ignored root `.env` (Compose refuses to start without it); `.env.example` holds only a placeholder. The local password was generated randomly and never printed or committed. The API's `EASA_DATABASE_URL`, which contains it, is a `SecretStr`.
 - CI uses a fixed throwaway password for a service container that exists only for the job; it protects nothing and is not a secret.
-- PostgreSQL tests create and drop their own databases and never write to the database named in `EASA_TEST_POSTGRES_URL`.
+- PostgreSQL tests and evaluation runs create and drop their own databases (`easa_test_*`, `easa_eval_*`, random generated names) and never write to the database named in `EASA_TEST_POSTGRES_URL` or `EASA_EVAL_POSTGRES_URL`. The evaluation reads that URL from the environment, not from command-line arguments, so the password does not end up in shell history.
+- In CI, `EASA_REQUIRE_POSTGRES_TESTS=1` turns skipped PostgreSQL tests into failures, so the isolation tests above cannot silently stop running.
+- The evaluation corpus and queries (`apps/api/eval/`) are synthetic, written for this project; reports are written to the git-ignored `var/eval/`.
 - The database holds only synthetic data. Connections are unencrypted, which is acceptable only on localhost.
 - Foreign keys enforced on SQLite connections.
 - Schema changes only through reviewed Alembic migrations.
@@ -186,7 +188,7 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 373 backend tests; 3 real-model tests skip without the model and 44 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 397 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.

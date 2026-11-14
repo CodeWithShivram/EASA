@@ -1,0 +1,35 @@
+Larkspur Analytics - Data Retention Policy
+
+Larkspur keeps information only for as long as it is needed for business, legal or regulatory reasons. This policy sets retention periods and explains how data is deleted.
+
+Retention periods
+
+Financial records, including invoices and expense claims, are kept for ten years. Employee personnel files are kept for six years after employment ends. Recruitment records for unsuccessful candidates are deleted after six months unless the candidate agrees to a longer period.
+
+Customer data
+
+When a customer contract ends, customer data is deleted from production systems within 90 days. Customers can ask for an export of their data before deletion. Deletion is confirmed to the customer in writing.
+
+Backups
+
+Backups are retained for 35 days and then overwritten automatically. Deleted data may therefore remain in backups for up to 35 days, but backups are never used to restore data that was deleted on purpose.
+
+Email
+
+Emails are kept for three years and then deleted automatically, unless they are moved into a records folder because they document a business decision or a contractual commitment.
+
+Legal hold
+
+When litigation or an investigation is expected, the legal team can place a legal hold on relevant data. A legal hold suspends all deletion for the data concerned until the legal team lifts it, even when the normal retention period has expired.
+
+Deletion methods
+
+Electronic data is deleted using methods that prevent recovery. Paper records containing personal data are destroyed with cross-cut shredding or through the locked confidential waste bins on every floor.
+
+Responsibilities
+
+Each department appoints a records coordinator who keeps the department's retention schedule up to date. The data protection officer reviews the schedules once a year.
+
+Requests from individuals
+
+Requests from individuals to access or delete their personal data are forwarded to the data protection officer, who must respond within one month.

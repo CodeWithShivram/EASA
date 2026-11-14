@@ -146,7 +146,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 373 tests: 3 real-model tests skip without the model, 44 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
+uv run pytest                 # 397 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -223,7 +223,20 @@ uv run pytest tests/postgres
 $env:EASA_TEST_POSTGRES_URL = $null
 ```
 
-Stop the container with `docker compose stop` (keeps data) or `docker compose down -v` (deletes the data volume). CI runs the same tests against a `pgvector/pgvector:0.8.7-pg18` service container.
+Stop the container with `docker compose stop` (keeps data) or `docker compose down -v` (deletes the data volume). CI runs the same tests against a `pgvector/pgvector:0.8.7-pg18` service container, with `EASA_REQUIRE_POSTGRES_TESTS=1` so that skipped PostgreSQL tests fail the build.
+
+## 6d. Retrieval evaluation
+
+```powershell
+uv run python -m app.cli evaluate                        # SQLite, default chunking, real model
+uv run python -m app.cli evaluate --configs all          # 6 chunking settings, about 1 minute
+$env:EASA_EVAL_POSTGRES_URL = "postgresql+psycopg://easa:<password>@127.0.0.1:5433/easa"
+uv run python -m app.cli evaluate --backend postgres --configs all
+uv run python -m app.cli evaluate-hnsw --tenants 10      # exact vs HNSW, 50,000 synthetic vectors
+$env:EASA_EVAL_POSTGRES_URL = $null
+```
+
+The dataset is in `apps/api/eval/`; reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
 
 ## 7. Adding dependencies
 

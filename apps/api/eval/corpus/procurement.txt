@@ -1,0 +1,33 @@
+Larkspur Analytics - Procurement Policy
+
+This policy governs how Larkspur buys goods and services. It aims to achieve value for money, fair treatment of suppliers and clear accountability.
+
+Spending thresholds
+
+Purchases up to 2,500 euros can be approved by a budget holder and paid with a corporate card or a purchase order. Purchases between 2,500 and 10,000 euros require a purchase order approved by the department head.
+
+For purchases above 10,000 euros, the buyer must obtain at least three written quotes from different suppliers and document why the chosen offer gives the best value. Purchases above 50,000 euros also need approval from the chief financial officer.
+
+New suppliers
+
+A new supplier is registered with vendor onboarding form PRC-8. The form collects bank details, tax information and confirmation that the supplier accepts the supplier code of conduct. Finance verifies bank details by phone before the first payment.
+
+Contracts
+
+Contracts longer than one year or worth more than 25,000 euros are reviewed by the legal team before signature. Only employees listed in the signing authority matrix may sign contracts on behalf of the company.
+
+Software purchases
+
+All software, including free trials and browser extensions that process company data, must be approved by IT security before use. This prevents unmanaged tools from handling confidential information.
+
+Splitting orders
+
+Splitting a purchase into several smaller orders to stay below an approval threshold is not allowed and is treated as a breach of this policy.
+
+Paying suppliers
+
+Invoices are paid within 30 days of receipt, provided a matching purchase order exists. Invoices without a purchase order are returned to the supplier.
+
+Sustainability
+
+When offers are otherwise comparable, preference is given to suppliers with a published environmental policy and recognised sustainability certification.

@@ -2,6 +2,8 @@
 
 The database URL comes from the application's validated settings, never from
 alembic.ini, so migrations and the running API always target the same database.
+Code that migrates a database of its own (app.db.migrate) passes the URL in
+``config.attributes["database_url"]`` instead and keeps its logging setup.
 """
 
 from typing import Any
@@ -18,9 +20,11 @@ from app.db.models import Base
 from app.db.types import EmbeddingVector, UtcDateTime
 
 settings = load_settings()
-configure_logging(settings.log_level)
+url_override = context.config.attributes.get("database_url")
+if url_override is None:
+    configure_logging(settings.log_level)
 
-database_url = settings.database_url.get_secret_value()
+database_url = url_override or settings.database_url.get_secret_value()
 target_metadata = Base.metadata
 # SQLite cannot ALTER most constraints; batch mode recreates tables instead.
 render_as_batch = make_url(database_url).get_backend_name() == "sqlite"

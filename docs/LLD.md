@@ -25,7 +25,9 @@ easa/
       retrieval/           base.py (VectorIndex, KeywordIndex protocols), brute_force.py (exact search),
                            pgvector_index.py (PostgreSQL), keyword.py (FTS5 and PostgreSQL
                            full-text search), hybrid.py (reciprocal rank fusion), factory.py
+      evaluation/          dataset.py, metrics.py, runner.py, report.py, hnsw.py (P3-M5)
       storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
+    eval/                  synthetic evaluation corpus (corpus/*.txt) and labelled queries.json
     migrations/            Alembic env.py, script template, versions/
     tests/                 unit/, integration/, model/ (real embedding model), postgres/
     alembic.ini, pyproject.toml, uv.lock, .env.example
@@ -190,6 +192,18 @@ stateDiagram-v2
 - [retrieval/keyword.py](../apps/api/app/retrieval/keyword.py): `query_terms` (shared token extraction); `build_tsquery` quotes each token and joins with ` | `. `PostgresKeywordIndex` runs `POSTGRES_KEYWORD_SQL`: `to_tsquery('english', :match)` cross-joined once, `to_tsvector('english', dc.text) @@ query` (the GIN index expression), tenant and status filters, `ORDER BY ts_rank_cd(...) DESC, dc.id`. Each implementation raises `503 keyword_search_unavailable` on the other backend.
 - [retrieval/factory.py](../apps/api/app/retrieval/factory.py) `build_indexes(session)`: `(PgvectorIndex, PostgresKeywordIndex)` on PostgreSQL, `(BruteForceVectorIndex, SqliteKeywordIndex)` otherwise.
 
+### 2.6g Retrieval evaluation (P3-M5)
+
+See [EVALUATION.md](EVALUATION.md) for method and results.
+
+- [evaluation/dataset.py](../apps/api/app/evaluation/dataset.py): `load_dataset()` reads `eval/corpus/*.txt` and `eval/queries.json` into `Dataset(documents, queries)`; `validate_dataset` reports duplicate IDs, unknown categories or documents, and evidence phrases that are not normalized single lines, do not occur exactly once in their document, or also occur in another document.
+- [evaluation/metrics.py](../apps/api/app/evaluation/metrics.py): `evidence_ranks(ranked_texts, evidence)` (1-based rank of the first chunk containing each phrase), `recall_at_k`, `reciprocal_rank`, `mean`.
+- [evaluation/runner.py](../apps/api/app/evaluation/runner.py) `run_evaluation(dataset, embedder, *, backend, database, configs)`: per `EvalConfig` (strategy, max_chars, overlap 150), a fresh database from the `database` factory (`sqlite_database` or `postgres_database(admin_url)`, which creates and drops `easa_eval_<random>`), `upgrade_to_head`, upload through `DocumentService`, a check that every chunk has a vector, then every query in every `SearchMode` through `SearchService` (top 10). `EvaluationReport.summary()` gives R@1/3/5/10, MRR@10 and mean latency per config, mode and category.
+- [evaluation/report.py](../apps/api/app/evaluation/report.py): JSON (every outcome) and Markdown tables.
+- [evaluation/hnsw.py](../apps/api/app/evaluation/hnsw.py) `run_hnsw_benchmark`: loads synthetic vectors with `COPY` (pgvector's psycopg adapter), measures exact search with `PgvectorIndex`, builds a partial HNSW expression index and measures recall and latency for four `ef_search` / `iterative_scan` settings, recording whether `EXPLAIN` shows the index.
+- [db/migrate.py](../apps/api/app/db/migrate.py) `upgrade_to_head(url)`: runs Alembic with the URL in `config.attributes["database_url"]`; `env.py` uses it instead of the settings URL and leaves logging to the caller.
+- CLI: `evaluate [--backend sqlite|postgres] [--configs default|all] [--output-dir]` and `evaluate-hnsw [--vectors] [--tenants] [--queries] [--noise]`; PostgreSQL URL from `EASA_EVAL_POSTGRES_URL`.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -254,9 +268,9 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 195 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building |
-| Backend integration | `apps/api/tests/integration/` | 131 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
-| PostgreSQL | `apps/api/tests/postgres/` | 44 | Run only with `EASA_TEST_POSTGRES_URL`; throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), and the full app (upload, embeddings, readiness, all search modes). Always run in CI |
+| Backend unit | `apps/api/tests/unit/` | 212 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation |
+| Backend integration | `apps/api/tests/integration/` | 136 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| PostgreSQL | `apps/api/tests/postgres/` | 46 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite) and a small HNSW benchmark. Always run in CI |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
