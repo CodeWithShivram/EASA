@@ -20,6 +20,7 @@
 | [ADR-013](#adr-013) | PowerShell developer scripts and GitHub Actions CI | M5 |
 | [ADR-014](#adr-014) | Development-only identity until authentication exists | Phase 2 |
 | [ADR-015](#adr-015) | Content-addressed file storage and tenant-scoped document data | P2-M1 |
+| [ADR-016](#adr-016) | In-request document processing with pypdf and python-docx | P2-M3 |
 
 ---
 
@@ -172,6 +173,16 @@
 - **Decision:** Bytes are stored on disk by SHA-256 (`<root>/ab/cd/<sha256>`, atomic writes) behind a `BlobStore` protocol; only validated hex digests become paths. `documents` is unique per `(tenant_id, sha256)`, which makes uploads idempotent. `DocumentRepository` takes `tenant_id` in every method, and `document_chunks` carries `tenant_id` for later retrieval filters. Allowed-value columns use explicit, convention-named check constraints, and timestamps use a UTC-enforcing column type.
 - **Trade-offs:** Blobs are shared across tenants with identical content, so deleting a document cannot simply delete its blob (reference counting is not implemented). Local disk only; object storage would be another `BlobStore` implementation.
 - **Consequences:** Filenames are display metadata only. Cross-tenant reads by guessed IDs return nothing at the repository level, which tests verify.
+
+<a id="adr-016"></a>
+## ADR-016: In-request document processing with pypdf and python-docx
+
+- **Status:** Accepted (P2-M3, 2026-11-14; processing model and UTF-8-only TXT approved in Phase 2 planning)
+- **Context:** Uploaded documents must become normalized text with page and section metadata. The machine is CPU-only, files are limited to 10 MiB by default, and there is no queue infrastructure.
+- **Options considered:** Processing: within the upload request; FastAPI background tasks; a job queue. PDF: `pypdf` (pure Python); `pdfplumber` (pulls in six more packages including `cryptography` and `pypdfium2`); PyMuPDF (AGPL licence). DOCX: `python-docx`; hand-parsing the XML. TXT: UTF-8 only; encoding detection with `charset-normalizer`.
+- **Decision:** Process within the request after the row is inserted, recording `processing` → `processed`/`failed` on the document. Use `pypdf` (page-level text, encrypted PDFs rejected, page limit) and `python-docx` (headings as sections, tables as text). Accept TXT only as UTF-8. Normalize every block deterministically.
+- **Trade-offs:** Upload latency includes parsing, and a slow or hostile file occupies a worker thread; parsing runs in the API process without separate CPU/memory limits. `pypdf`'s layout handling is basic (no OCR, simple text order). Treating every exception from opening a DOCX package as `corrupt_file` is broad, but it is limited to that one call on untrusted input.
+- **Consequences:** Simple to test and reason about; no background infrastructure. Moving to background processing later only changes where `_process` is called, because the status field already models it. Isolating parsers in a separate process is recorded as a security follow-up.
 
 ---
 

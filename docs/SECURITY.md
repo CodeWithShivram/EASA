@@ -69,9 +69,20 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | DOCX zip-bomb limits (entries, total uncompressed size, per-entry compression ratio) checked from the archive directory before any decompression; encrypted entries rejected | [uploads.py](../apps/api/app/services/uploads.py) — tested |
 | TXT must be UTF-8 without NUL bytes | [uploads.py](../apps/api/app/services/uploads.py) — tested |
 | Filenames sanitized for display (path components, control and reserved characters removed) and never used as paths; bytes stored by SHA-256 outside any web root | [uploads.py](../apps/api/app/services/uploads.py), [blob_store.py](../apps/api/app/storage/blob_store.py) — tested |
-| Uploaded files are never executed or extracted; nothing is parsed at upload time beyond the zip directory | — |
+| Validation reads only file signatures and the zip directory; full parsing happens afterwards, in processing (next section) | [uploads.py](../apps/api/app/services/uploads.py) |
 | Identity comes from server configuration only; document endpoints are not mounted in production | [dependencies.py](../apps/api/app/api/dependencies.py), [main.py](../apps/api/app/main.py) — tested |
 | Another tenant's document answers like a missing one (no existence disclosure) | [documents.py](../apps/api/app/services/documents.py) — tested |
+
+### Parsing (Phase 2, P2-M3)
+
+| Control | Where |
+|---|---|
+| Files are parsed in memory only; nothing is written to disk, extracted or executed | [extraction.py](../apps/api/app/services/extraction.py) |
+| DOCX XML is parsed by `python-docx` with `resolve_entities=False` (no XML external entity resolution); zip-bomb limits were already enforced at upload | `python-docx` 1.2.0 (verified in its source) |
+| PDF decompression is bounded by `pypdf`'s built-in limits (75 MB per stream by default); pages above `EASA_MAX_PDF_PAGES` (default 500) are rejected before text extraction | `pypdf` 7.1.0, [extraction.py](../apps/api/app/services/extraction.py) — tested |
+| Encrypted PDFs are rejected, never decrypted | [extraction.py](../apps/api/app/services/extraction.py) — tested |
+| Any failure while parsing marks the document `failed` with a generic code; exception text never reaches the client, and a document cannot be left in `processing` | [documents.py](../apps/api/app/services/documents.py) — tested |
+| Processing logs contain metadata only (ID, status, error code, page and block counts), never document text | [documents.py](../apps/api/app/services/documents.py) — verified on a live server |
 
 ### Database
 
@@ -95,12 +106,11 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | Role-based and resource-level authorization; deny by default | Phase 6 |
 | Document-level permissions applied before retrieval and before returning content | Phases 2, 3, 6 |
 | Tenant and ownership filters inside the backend | Phase 6 |
-| Content-level document checks during parsing (encrypted or malformed PDFs, parser resource limits) | P2-M3 |
 | Prompt-injection defences; retrieved text kept separate from instructions | Phases 4, 5 |
 | Allowlisted tools with strict schemas, permission re-check before execution, confirmation for consequential actions | Phase 5 |
 | Audit logs for protected operations and tool executions (tool, user, authorization result, outcome, correlation ID) | Phases 5, 6 |
 | Rate limiting | Before any shared deployment |
-| Upload-time detection of encrypted PDFs (needs PDF parsing) | P2-M3 |
+| Running parsers in a separate process with CPU/memory/time limits (parsing currently runs in the API process) | Before handling untrusted uploads from real users |
 | Security response headers on the API (e.g. CSP, `X-Content-Type-Options`) | Phase 7 / 8 |
 | TLS | Any non-local deployment |
 | Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs | Phase 8 |
@@ -119,7 +129,9 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 ## 6. Security testing
 
-**Automated today** (part of the 171 tests):
+**Automated today** (part of the 201 tests):
+
+- Parsing: encrypted, corrupt and over-long PDFs, structurally invalid DOCX packages, text-less documents and a simulated parser crash all end as `failed` with the right code and without leaking exception text.
 
 - Documents: repository reads are tenant-scoped (another tenant gets nothing for a known document ID); the file store rejects path-traversal and malformed hashes and never uses filenames for paths.
 - Uploads: malicious filenames (`../`, `..\`, reserved characters, control characters, dot-prefixed), disallowed extensions, executables disguised as PDFs, mismatched content, empty and oversized files, non-UTF-8 text, corrupt, encrypted and zip-bomb DOCX files; oversized request bodies with and without `Content-Length`; another tenant's document returns 404; document routes absent in production.

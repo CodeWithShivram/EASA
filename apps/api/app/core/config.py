@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     # Largest accepted uploaded file. The whole request body may exceed this by
     # a small multipart overhead (see app.core.middleware.BodySizeLimitMiddleware).
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
+    # PDFs with more pages are rejected during processing (bounds parsing work).
+    max_pdf_pages: int = Field(default=500, ge=1, le=5000)
     # Development-only identity (ADR-014). Synthetic values; never taken from
     # requests. Document endpoints are not mounted in production.
     dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")

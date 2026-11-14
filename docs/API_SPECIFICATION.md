@@ -121,9 +121,9 @@ Document object (`DocumentResponse`):
 | `media_type` | string | `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` or `text/plain`, decided by the server from the extension **and** content (the client's declared type is ignored) |
 | `size_bytes` | integer | |
 | `sha256` | string | Hex digest of the content |
-| `status` | string | `uploaded`, `processing`, `processed`, `failed`. Upload currently leaves `uploaded`; processing arrives in P2-M3 |
+| `status` | string | `uploaded`, `processing`, `processed`, `failed`. A new upload is processed within the request, so the response normally shows `processed` or `failed` (section 3.4.4) |
 | `error_code` | string or null | Set when `status` is `failed` |
-| `page_count` | integer or null | Set by processing (P2-M3) |
+| `page_count` | integer or null | Number of PDF pages after successful processing; `null` for DOCX and TXT (no pages) and for failed documents |
 | `created_at`, `updated_at` | string | ISO 8601 UTC, e.g. `2026-11-14T09:58:28.943659Z` |
 
 Tenant and owner IDs are not returned.
@@ -154,7 +154,7 @@ Upload error codes (all use the error envelope):
 | 422 | `archive_limits_exceeded` | DOCX exceeds entry, size or compression-ratio limits (zip-bomb protection) |
 | 422 | `validation_error` | No `file` field |
 
-Encrypted PDFs are detected during processing (P2-M3), because that requires parsing the PDF.
+Encrypted PDFs are detected during processing, because that requires parsing the PDF: the upload succeeds (`201`) and the document is stored as `failed` with `encrypted_file` (section 3.4.4).
 
 #### 3.4.2 `GET /api/v1/documents` — list
 
@@ -173,6 +173,21 @@ Encrypted PDFs are detected during processing (P2-M3), because that requires par
 | Path | `document_id`: UUID |
 | Response `200` | Document object |
 | Errors | `404 document_not_found` (missing or another tenant's); `422 validation_error` for a malformed UUID |
+
+#### 3.4.4 Processing outcome
+
+A newly created document is processed (text extraction and normalization) before the upload response is sent. Processing problems do **not** fail the HTTP request: the upload returns `201` and the document records the outcome. An identical re-upload returns the existing document without reprocessing it.
+
+| Final `status` | `error_code` | Meaning |
+|---|---|---|
+| `processed` | `null` | Text extracted |
+| `failed` | `encrypted_file` | Password-protected PDF (all encrypted PDFs are rejected) |
+| `failed` | `corrupt_file` | The PDF or DOCX cannot be parsed |
+| `failed` | `too_many_pages` | PDF has more than `EASA_MAX_PDF_PAGES` pages (default 500) |
+| `failed` | `no_extractable_text` | No text found, e.g. a scanned PDF without a text layer (OCR is not supported) or a whitespace-only TXT |
+| `failed` | `processing_error` | Unexpected parser failure; details are logged server-side only |
+
+`processing` is visible only while a request is in progress.
 
 ## 4. Headers
 

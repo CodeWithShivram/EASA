@@ -16,6 +16,10 @@ dependencies = [
     "alembic>=1.20",
     # Multipart form parsing for file uploads (required by FastAPI's UploadFile).
     "python-multipart>=0.0.33",
+    # PDF text extraction, page by page (pure Python; built-in decompression limits).
+    "pypdf>=7.1",
+    # DOCX paragraph, heading and table extraction (lxml parser, entities not resolved).
+    "python-docx>=1.2",
 ]
 
 [dependency-groups]

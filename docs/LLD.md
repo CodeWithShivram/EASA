@@ -113,6 +113,26 @@ With `--reload`, the reloader supervisor process logs in plain text because it r
 - [services/uploads.py](../apps/api/app/services/uploads.py): `sanitize_filename` and `validate_upload` → `ValidatedUpload(filename, media_type)` or `UploadRejectedError` (an `AppError` with a specific code and status). `DocxLimits` holds the zip-bomb limits.
 - [services/documents.py](../apps/api/app/services/documents.py): `DocumentService.upload` validates, hashes, returns the existing document for known content, otherwise stores the blob **then** inserts the row and commits (an orphan blob is harmless; a row without a blob is not). A unique-constraint race with a concurrent identical upload is resolved by returning the winner. `get` raises `DocumentNotFoundError` (404) for missing and foreign documents alike.
 
+### 2.6b Processing — extraction and normalization (P2-M3)
+
+`DocumentService.upload` calls `_process` for every newly created document (identical re-uploads are not reprocessed):
+
+```mermaid
+stateDiagram-v2
+    [*] --> uploaded: row inserted
+    uploaded --> processing: committed
+    processing --> processed: text extracted
+    processing --> failed: ExtractionError code or unexpected error
+```
+
+- [services/extraction.py](../apps/api/app/services/extraction.py) `extract_document(media_type, data, max_pdf_pages)` returns an `ExtractionResult`: ordered `TextBlock`s (`text`, `kind`, `page_number`, `section`) plus `page_count`. `ExtractionResult.text` joins blocks with a blank line; this canonical text is what chunk offsets (P2-M4) refer to.
+  - **PDF** (`pypdf`): rejects encrypted files and files over the page limit, then one `page` block per page that has text (1-based `page_number`; text-less pages are skipped but counted). `PdfReadError` → `corrupt_file`.
+  - **DOCX** (`python-docx`): walks paragraphs and tables in document order. `Title`/`Heading*` paragraphs become `heading` blocks and set the current `section`; paragraphs and tables (cells joined with ` | `, rows with newlines) inherit it. Any exception from opening the package → `corrupt_file`.
+  - **TXT**: UTF-8 (BOM removed), split into `paragraph` blocks at blank lines.
+  - No blocks at all → `no_extractable_text`.
+- [services/normalization.py](../apps/api/app/services/normalization.py) `normalize_text`: NFC; `\r\n`/`\r` → `\n`; zero-width characters and BOM removed; all other whitespace except newlines → single spaces; control characters removed; lines trimmed; hyphenated line breaks between lowercase letters joined (`infor-\nmation` → `information`); three or more newlines → two. Deterministic and idempotent.
+- Outcome handling: `ExtractionError` → `failed` with its code; any other exception → logged with traceback and `failed` with `processing_error`; success → `processed` and `page_count`. One `document processed` log line per document with metadata only.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -177,8 +197,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 86 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation |
-| Backend integration | `apps/api/tests/integration/` | 58 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 112 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction |
+| Backend integration | `apps/api/tests/integration/` | 62 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).

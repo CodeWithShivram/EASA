@@ -220,8 +220,8 @@ Decisions approved 2026-11-14: development-only identity from server configurati
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
 | P2-M1 | Data model (`documents`, `document_chunks`), tenant-scoped repository, content-addressed file store | COMPLETE | `1d549ee` |
-| P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity, request body limit | COMPLETE | the commit that adds this row |
-| P2-M3 | Text extraction (PDF, DOCX, TXT) and normalization | NOT STARTED | |
+| P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity, request body limit | COMPLETE | `6704107` |
+| P2-M3 | Text extraction (PDF, DOCX, TXT) and normalization, in-request processing with status | COMPLETE | the commit that adds this row |
 | P2-M4 | Chunking strategies and chunk persistence | NOT STARTED | |
 | P2-M5 | Security hardening tests, documentation, phase report | NOT STARTED | |
 
@@ -309,3 +309,51 @@ Fixed during the work:
 - Blob deletion is not implemented.
 
 **Exit criteria:** met. Uploads are validated, idempotent and tenant-scoped, oversized requests are rejected early, and all behaviour is tested automatically and confirmed against a live server.
+
+## P2-M3: Extraction and normalization
+
+**Scope:** text extraction for PDF, DOCX and TXT; normalization; processing within the upload request with status and error codes. Chunking and chunk persistence are P2-M4.
+
+**Dependencies added:**
+- `pypdf` 7.1.0 (pure Python): PDF text per page. It has built-in decompression limits (75 MB per stream).
+- `python-docx` 1.2.0, with `lxml` 6.1.3 (native wheel for Python 3.14): DOCX paragraphs, headings and tables. Its XML parser uses `resolve_entities=False`, which I confirmed in the installed source.
+
+**Implemented**
+
+- [app/services/extraction.py](../apps/api/app/services/extraction.py): `extract_document` returns ordered `TextBlock`s with page and section metadata plus `page_count`.
+  - PDF: page blocks; encrypted files and files over `EASA_MAX_PDF_PAGES` are rejected.
+  - DOCX: headings set sections; paragraphs and tables keep document order.
+  - TXT: paragraphs separated by blank lines.
+  - Failure codes: `encrypted_file`, `corrupt_file`, `too_many_pages`, `no_extractable_text`.
+- [app/services/normalization.py](../apps/api/app/services/normalization.py): deterministic, idempotent `normalize_text` (NFC, line endings, invisible and control characters, whitespace, hyphenated line breaks, blank-line runs).
+- `DocumentService._process`: `uploaded` → `processing` (committed) → `processed` (with `page_count`) or `failed` (with `error_code`). An unexpected parser exception becomes `processing_error`, is logged with its traceback, never reaches the client, and never leaves a document in `processing`. The `document processed` log line carries metadata only.
+- Setting `EASA_MAX_PDF_PAGES` (default 500; range 1–5000).
+- Test fixtures are now real synthetic documents: a handwritten generator for multi-page text PDFs with computed cross-references, a `python-docx`-built handbook with headings and a table, and an encrypted PDF with a random runtime password.
+- Docs: API spec (processing outcome and codes), SECURITY (parsing controls; parser isolation as a follow-up), LLD (processing design and state diagram), DATABASE_DESIGN (status lifecycle), HLD, DEVELOPMENT_GUIDE, `.env.example`, and ADR-016.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `uv run ruff format --check .` / `uv run ruff check .` | Clean |
+| `uv run pytest` | 174 passed (112 unit, 62 integration); 30 new tests |
+| Live server (scratch database): `curl.exe -F file=@travel.pdf` | 201, `processed`, `page_count` 2 (2 text blocks) |
+| Live: `handbook.docx` | 201, `processed` (7 blocks: headings, paragraphs, table) |
+| Live: encrypted `locked.pdf` | 201, `failed`, `encrypted_file` |
+| Live: server log | One `document processed` line per upload with metadata only; a search for document phrases found none. Server tree stopped, port closed |
+
+Fixed during the work:
+
+- `python-docx` raised an undocumented `AttributeError` for a malformed package. Any exception from opening a DOCX package now maps to `corrupt_file`; this is confined to that one call.
+- My file-writing tool had turned `\u…` escapes into literal invisible characters in one test and in the normalization regex. Both now use escape sequences; a scan confirms all Python sources are ASCII.
+- Encryption test fixtures no longer hardcode a password (ruff S106); a random one is generated at runtime.
+
+**Known limitations**
+
+- No OCR: scanned PDFs fail with `no_extractable_text`.
+- Parsing runs in the API process without separate CPU, memory or time limits. Isolating it is recorded in SECURITY.md.
+- PDF text order and layout depend on `pypdf`'s extraction; tables in PDFs are not structured.
+- Extracted text is not stored yet. Chunks (P2-M4) will hold it.
+- There is no endpoint to reprocess a `failed` document; re-uploading identical content returns the existing record.
+
+**Exit criteria:** met. All three formats extract to normalized, page- and section-aware blocks; every outcome is recorded on the document; failures are safe and tested.

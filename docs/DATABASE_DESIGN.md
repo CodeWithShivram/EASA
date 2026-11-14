@@ -29,9 +29,9 @@ Tables are added only when a phase defines their requirements ([ADR-004](ARCHITE
 | `media_type` | varchar(100) | no | `application/pdf`, DOCX (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) or `text/plain` (`ck_documents_media_type_allowed`) |
 | `size_bytes` | integer | no | `> 0` (`ck_documents_size_positive`) |
 | `sha256` | varchar(64) | no | Hex digest of the content; key into the file store |
-| `status` | varchar(20) | no | `uploaded`, `processing`, `processed`, `failed` (`ck_documents_status_allowed`); default `uploaded` |
+| `status` | varchar(20) | no | `uploaded`, `processing`, `processed`, `failed` (`ck_documents_status_allowed`); default `uploaded`. Lifecycle: inserted as `uploaded` → `processing` (committed) → `processed` or `failed` within the same request |
 | `error_code` | varchar(64) | yes | Machine-readable failure reason; never raw exception text |
-| `page_count` | integer | yes | `>= 0` when set (`ck_documents_page_count_non_negative`) |
+| `page_count` | integer | yes | `>= 0` when set (`ck_documents_page_count_non_negative`); PDF page count after successful processing, otherwise null |
 | `created_at`, `updated_at` | timestamp with time zone | no | UTC, set by the app (`updated_at` on every update) |
 
 Unique `(tenant_id, sha256)` (`uq_documents_tenant_id_sha256`): the same content uploaded twice in one tenant is one document (idempotency); different tenants may hold the same content. The constraint's index also serves tenant-scoped lookups, so there is no separate `tenant_id` index.

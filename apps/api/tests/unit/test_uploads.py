@@ -11,7 +11,7 @@ from app.services.uploads import (
     sanitize_filename,
     validate_upload,
 )
-from tests.fixtures import DOCX_BYTES, PDF_BYTES, TXT_BYTES, make_docx_bytes
+from tests.fixtures import DOCX_BYTES, PDF_BYTES, TXT_BYTES, make_minimal_docx_zip
 
 MAX = 1024 * 1024
 
@@ -85,7 +85,7 @@ def test_unsupported_extensions(filename: str) -> None:
         ("fake.txt", PDF_BYTES),
         ("fake.txt", DOCX_BYTES),
         ("binary.txt", b"text\x00with NUL"),
-        ("not-word.docx", make_docx_bytes(minimal=False, extra_entries={"a.txt": b"x"})),
+        ("not-word.docx", make_minimal_docx_zip(minimal=False, extra_entries={"a.txt": b"x"})),
     ],
 )
 def test_content_must_match_extension(filename: str, data: bytes) -> None:
@@ -109,21 +109,21 @@ def test_corrupt_docx() -> None:
 
 
 def test_docx_with_too_many_entries() -> None:
-    data = make_docx_bytes(extra_entries={f"word/media/{i}.xml": b"x" for i in range(5)})
+    data = make_minimal_docx_zip(extra_entries={f"word/media/{i}.xml": b"x" for i in range(5)})
 
     code = rejection_code("many.docx", data, docx_limits=DocxLimits(max_entries=3))
     assert code == "archive_limits_exceeded"
 
 
 def test_docx_that_expands_too_much() -> None:
-    data = make_docx_bytes(extra_entries={"word/big.xml": b"0" * 200_000})
+    data = make_minimal_docx_zip(extra_entries={"word/big.xml": b"0" * 200_000})
 
     limits = DocxLimits(max_total_uncompressed_bytes=100_000)
     assert rejection_code("bomb.docx", data, docx_limits=limits) == "archive_limits_exceeded"
 
 
 def test_docx_with_extreme_compression_ratio() -> None:
-    data = make_docx_bytes(extra_entries={"word/zeros.xml": b"\x00" * 1_000_000})
+    data = make_minimal_docx_zip(extra_entries={"word/zeros.xml": b"\x00" * 1_000_000})
 
     code = rejection_code("ratio.docx", data, docx_limits=DocxLimits(max_compression_ratio=50))
     assert code == "archive_limits_exceeded"

@@ -14,7 +14,7 @@ from app.db.models import Base
 from app.main import create_app
 from app.repositories.documents import DocumentRepository
 from tests.conftest import make_settings
-from tests.fixtures import DOCX_BYTES, PDF_BYTES, TXT_BYTES
+from tests.fixtures import DOCX_BYTES, PDF_BYTES, TXT_BYTES, make_encrypted_pdf
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 OTHER_TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000bb")
@@ -54,7 +54,10 @@ def test_upload_creates_a_document(client: TestClient, settings: Settings) -> No
     assert body["media_type"] == "text/plain"
     assert body["size_bytes"] == len(TXT_BYTES)
     assert body["sha256"] == hashlib.sha256(TXT_BYTES).hexdigest()
-    assert body["status"] == "uploaded"
+    # Processing runs within the request.
+    assert body["status"] == "processed"
+    assert body["error_code"] is None
+    assert body["page_count"] is None
     assert response.headers["Location"] == f"/api/v1/documents/{body['id']}"
     # Tenant and owner IDs are not exposed.
     assert "tenant_id" not in body
@@ -106,7 +109,7 @@ def test_filename_is_sanitized(client: TestClient) -> None:
         ("malware.exe", b"MZ fake", 415, "unsupported_file_type"),
         ("fake.pdf", TXT_BYTES, 415, "file_content_mismatch"),
         ("empty.txt", b"", 422, "empty_file"),
-        ("latin1.txt", "café".encode("latin-1"), 422, "invalid_text_encoding"),
+        ("latin1.txt", "caf\u00e9".encode("latin-1"), 422, "invalid_text_encoding"),
         (".txt", TXT_BYTES, 400, "invalid_filename"),
     ],
 )
@@ -195,3 +198,46 @@ def test_document_routes_are_not_mounted_in_production(tmp_path: Path) -> None:
         assert client.get("/api/v1/documents").status_code == 404
         assert upload(client, "a.txt", TXT_BYTES).status_code == 404
         assert client.get("/api/v1/health").status_code == 200
+
+
+def test_pdf_upload_is_processed_with_page_count(client: TestClient) -> None:
+    response = upload(client, "travel.pdf", PDF_BYTES, "application/pdf")
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "processed"
+    assert response.json()["page_count"] == 2
+
+
+def test_encrypted_pdf_is_stored_as_failed(client: TestClient) -> None:
+    response = upload(client, "locked.pdf", make_encrypted_pdf(), "application/pdf")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error_code"] == "encrypted_file"
+    assert client.get(f"/api/v1/documents/{body['id']}").json()["status"] == "failed"
+
+
+def test_document_without_text_is_stored_as_failed(client: TestClient) -> None:
+    response = upload(client, "blank.txt", b"  \n\n\t  ")
+
+    assert response.json()["status"] == "failed"
+    assert response.json()["error_code"] == "no_extractable_text"
+
+
+def test_unexpected_parser_failure_fails_the_document_not_the_request(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def crash(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated parser bug with secret text")
+
+    monkeypatch.setattr("app.services.documents.extract_document", crash)
+
+    response = upload(client, "policy.txt", TXT_BYTES)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error_code"] == "processing_error"
+    assert "secret text" not in response.text
+    assert any(r.getMessage() == "document processing crashed" for r in caplog.records)

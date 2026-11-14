@@ -33,4 +33,5 @@ def get_document_service(
         session,
         request.app.state.blob_store,
         max_upload_bytes=request.app.state.settings.max_upload_bytes,
+        max_pdf_pages=request.app.state.settings.max_pdf_pages,
     )

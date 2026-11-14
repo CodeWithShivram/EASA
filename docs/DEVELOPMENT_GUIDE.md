@@ -103,6 +103,7 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_CORS_ALLOWED_ORIGINS` | API | `["http://localhost:3000"]` | JSON list; no wildcards |
 | `EASA_STORAGE_DIR` | API | `apps/api/var/uploads` | Uploaded file contents (content-addressed); git-ignored |
 | `EASA_MAX_UPLOAD_BYTES` | API | `10485760` (10 MiB) | Largest accepted file (1 byte to 100 MiB); the request body limit is this plus 64 KiB |
+| `EASA_MAX_PDF_PAGES` | API | `500` | PDFs with more pages fail processing with `too_many_pages` (1–5000) |
 | `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
@@ -129,7 +130,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 144 tests; warnings are treated as errors
+uv run pytest                 # 174 tests; warnings are treated as errors
 ```
 
 **Frontend** (from `apps/web`):
