@@ -241,3 +241,99 @@ def test_unexpected_parser_failure_fails_the_document_not_the_request(
     assert body["error_code"] == "processing_error"
     assert "secret text" not in response.text
     assert any(r.getMessage() == "document processing crashed" for r in caplog.records)
+
+
+def test_processed_upload_stores_chunks_with_metadata(client: TestClient) -> None:
+    pdf = upload(client, "travel.pdf", PDF_BYTES, "application/pdf").json()
+    docx_doc = upload(client, "handbook.docx", DOCX_BYTES, DOCX_TYPE).json()
+
+    assert pdf["chunking_config"] == {
+        "strategy": "structured",
+        "max_chars": 1200,
+        "overlap_chars": 150,
+    }
+
+    pdf_chunks = client.get(f"/api/v1/documents/{pdf['id']}/chunks").json()
+    assert pdf_chunks["document_id"] == pdf["id"]
+    assert pdf_chunks["total"] == 2
+    assert [c["page_number"] for c in pdf_chunks["items"]] == [1, 2]
+    assert "Economy class" in pdf_chunks["items"][0]["text"]
+
+    docx_chunks = client.get(f"/api/v1/documents/{docx_doc['id']}/chunks").json()
+    assert [c["section"] for c in docx_chunks["items"]] == [
+        "EASA Employee Handbook",
+        "Leave",
+        "Remote Work",
+    ]
+    assert [c["chunk_index"] for c in docx_chunks["items"]] == [0, 1, 2]
+    for chunk in docx_chunks["items"]:
+        assert chunk["char_end"] - chunk["char_start"] == len(chunk["text"])
+
+
+def test_chunk_listing_is_paginated(client: TestClient) -> None:
+    document = upload(client, "handbook.docx", DOCX_BYTES, DOCX_TYPE).json()
+
+    page = client.get(
+        f"/api/v1/documents/{document['id']}/chunks", params={"limit": 2, "offset": 1}
+    )
+
+    body = page.json()
+    assert body["total"] == 3
+    assert [c["chunk_index"] for c in body["items"]] == [1, 2]
+    assert (
+        client.get(f"/api/v1/documents/{document['id']}/chunks", params={"limit": 501}).status_code
+        == 422
+    )
+
+
+def test_failed_document_has_no_chunks(client: TestClient) -> None:
+    document = upload(client, "locked.pdf", make_encrypted_pdf(), "application/pdf").json()
+
+    chunks = client.get(f"/api/v1/documents/{document['id']}/chunks").json()
+
+    assert document["status"] == "failed"
+    assert document["chunking_config"] is None
+    assert chunks["items"] == []
+    assert chunks["total"] == 0
+
+
+def test_chunks_of_unknown_or_foreign_documents_are_not_found(
+    client: TestClient, app: FastAPI
+) -> None:
+    with app.state.session_factory() as session:
+        other = DocumentRepository(session).add(
+            Document(
+                tenant_id=OTHER_TENANT,
+                owner_id=uuid.uuid4(),
+                filename="other.txt",
+                media_type=DocumentMediaType.TXT,
+                size_bytes=5,
+                sha256=hashlib.sha256(b"other chunks").hexdigest(),
+            )
+        )
+        session.commit()
+        other_id = other.id
+
+    for document_id in (other_id, uuid.uuid4()):
+        response = client.get(f"/api/v1/documents/{document_id}/chunks")
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "document_not_found"
+
+
+def test_chunking_settings_are_applied(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path, chunk_strategy="fixed", chunk_max_chars=100, chunk_overlap_chars=10
+    )
+    app = create_app(settings)
+    Base.metadata.create_all(app.state.engine)
+
+    with TestClient(app) as client:
+        document = upload(client, "travel.pdf", PDF_BYTES, "application/pdf").json()
+        chunks = client.get(f"/api/v1/documents/{document['id']}/chunks").json()
+
+    assert document["chunking_config"] == {
+        "strategy": "fixed",
+        "max_chars": 100,
+        "overlap_chars": 10,
+    }
+    assert all(len(c["text"]) <= 100 for c in chunks["items"])

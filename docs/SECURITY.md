@@ -82,7 +82,8 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | PDF decompression is bounded by `pypdf`'s built-in limits (75 MB per stream by default); pages above `EASA_MAX_PDF_PAGES` (default 500) are rejected before text extraction | `pypdf` 7.1.0, [extraction.py](../apps/api/app/services/extraction.py) — tested |
 | Encrypted PDFs are rejected, never decrypted | [extraction.py](../apps/api/app/services/extraction.py) — tested |
 | Any failure while parsing marks the document `failed` with a generic code; exception text never reaches the client, and a document cannot be left in `processing` | [documents.py](../apps/api/app/services/documents.py) — tested |
-| Processing logs contain metadata only (ID, status, error code, page and block counts), never document text | [documents.py](../apps/api/app/services/documents.py) — verified on a live server |
+| Processing logs contain metadata only (ID, status, error code, page, block and chunk counts), never document text | [documents.py](../apps/api/app/services/documents.py) — verified on a live server |
+| Chunk text is returned only through the tenant-scoped chunks endpoint; the document is resolved for the tenant first, so a foreign document's chunks answer 404 | [documents.py](../apps/api/app/services/documents.py) — tested |
 
 ### Database
 
@@ -129,7 +130,9 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 ## 6. Security testing
 
-**Automated today** (part of the 201 tests):
+**Automated today** (part of the 232 tests):
+
+- Chunks: another tenant's (or a missing) document's chunks return 404; failed documents have no chunks.
 
 - Parsing: encrypted, corrupt and over-long PDFs, structurally invalid DOCX packages, text-less documents and a simulated parser crash all end as `failed` with the right code and without leaking exception text.
 

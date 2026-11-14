@@ -8,12 +8,13 @@ never commit; services own transactions.
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.documents import Document, DocumentChunk
 
 MAX_PAGE_SIZE = 200
+MAX_CHUNK_PAGE_SIZE = 500
 
 
 class DocumentRepository:
@@ -53,13 +54,32 @@ class DocumentRepository:
         )
         return list(self._session.scalars(statement))
 
-    def list_chunks(self, tenant_id: uuid.UUID, document_id: uuid.UUID) -> list[DocumentChunk]:
+    def list_chunks(
+        self,
+        tenant_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DocumentChunk]:
+        if limit is not None and not 1 <= limit <= MAX_CHUNK_PAGE_SIZE:
+            raise ValueError(f"limit must be between 1 and {MAX_CHUNK_PAGE_SIZE}")
+        if offset < 0:
+            raise ValueError("offset must not be negative")
         statement = (
             select(DocumentChunk)
             .where(DocumentChunk.document_id == document_id, DocumentChunk.tenant_id == tenant_id)
             .order_by(DocumentChunk.chunk_index)
+            .offset(offset)
+            .limit(limit)
         )
         return list(self._session.scalars(statement))
+
+    def count_chunks(self, tenant_id: uuid.UUID, document_id: uuid.UUID) -> int:
+        statement = select(func.count()).where(
+            DocumentChunk.document_id == document_id, DocumentChunk.tenant_id == tenant_id
+        )
+        return self._session.scalar(statement) or 0
 
     def replace_chunks(self, document: Document, chunks: Sequence[DocumentChunk]) -> None:
         """Replace all chunks of a document (used when a document is reprocessed)."""

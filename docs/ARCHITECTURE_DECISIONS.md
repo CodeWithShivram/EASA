@@ -21,6 +21,7 @@
 | [ADR-014](#adr-014) | Development-only identity until authentication exists | Phase 2 |
 | [ADR-015](#adr-015) | Content-addressed file storage and tenant-scoped document data | P2-M1 |
 | [ADR-016](#adr-016) | In-request document processing with pypdf and python-docx | P2-M3 |
+| [ADR-017](#adr-017) | Character-based, structure-aware chunking with exact offsets | P2-M4 |
 
 ---
 
@@ -183,6 +184,16 @@
 - **Decision:** Process within the request after the row is inserted, recording `processing` → `processed`/`failed` on the document. Use `pypdf` (page-level text, encrypted PDFs rejected, page limit) and `python-docx` (headings as sections, tables as text). Accept TXT only as UTF-8. Normalize every block deterministically.
 - **Trade-offs:** Upload latency includes parsing, and a slow or hostile file occupies a worker thread; parsing runs in the API process without separate CPU/memory limits. `pypdf`'s layout handling is basic (no OCR, simple text order). Treating every exception from opening a DOCX package as `corrupt_file` is broad, but it is limited to that one call on untrusted input.
 - **Consequences:** Simple to test and reason about; no background infrastructure. Moving to background processing later only changes where `_process` is called, because the status field already models it. Isolating parsers in a separate process is recorded as a security follow-up.
+
+<a id="adr-017"></a>
+## ADR-017: Character-based, structure-aware chunking with exact offsets
+
+- **Status:** Accepted (P2-M4, 2026-11-14)
+- **Context:** Retrieval (Phase 3) needs chunks that fit model context, keep citations (page, section) and can be traced back to the source text. Phase 3 must also compare chunk sizes and overlap, so chunking has to be configurable and reproducible.
+- **Options considered:** Size unit: characters; tokens (needs a tokenizer tied to an embedding model not chosen yet). Strategy: fixed windows only; structure-aware merging only; both, selectable. Offsets: none; offsets into the raw file; offsets into the normalized canonical text.
+- **Decision:** Character-based limits with two strategies selected by configuration: `structured` (default: whole blocks, never across pages or sections, headings start chunks, oversized blocks split into windows) and `fixed` (overlapping windows that break at whitespace). Offsets refer to the canonical normalized text, and every chunk's text equals that slice exactly. The configuration used is stored on each document (`chunking_config`).
+- **Trade-offs:** Character counts only approximate token counts, so `max_chars` must leave headroom once the embedding model is known. A chunk spanning blocks reports the page and section where it starts. The canonical text is not stored, so the offsets are reproducible only by re-extracting with the same code.
+- **Consequences:** Chunking is deterministic and fully unit-testable through the slice invariant. Phase 3 can re-chunk with other settings and compare retrieval quality per configuration. Token-based limits can be added as another strategy without changing storage.
 
 ---
 

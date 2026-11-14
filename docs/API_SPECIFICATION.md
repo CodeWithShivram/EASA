@@ -124,6 +124,7 @@ Document object (`DocumentResponse`):
 | `status` | string | `uploaded`, `processing`, `processed`, `failed`. A new upload is processed within the request, so the response normally shows `processed` or `failed` (section 3.4.4) |
 | `error_code` | string or null | Set when `status` is `failed` |
 | `page_count` | integer or null | Number of PDF pages after successful processing; `null` for DOCX and TXT (no pages) and for failed documents |
+| `chunking_config` | object or null | Chunking settings used for the stored chunks, e.g. `{"strategy": "structured", "max_chars": 1200, "overlap_chars": 150}`; `null` when the document has no chunks (failed) |
 | `created_at`, `updated_at` | string | ISO 8601 UTC, e.g. `2026-11-14T09:58:28.943659Z` |
 
 Tenant and owner IDs are not returned.
@@ -176,7 +177,7 @@ Encrypted PDFs are detected during processing, because that requires parsing the
 
 #### 3.4.4 Processing outcome
 
-A newly created document is processed (text extraction and normalization) before the upload response is sent. Processing problems do **not** fail the HTTP request: the upload returns `201` and the document records the outcome. An identical re-upload returns the existing document without reprocessing it.
+A newly created document is processed (text extraction, normalization and chunking) before the upload response is sent. Processing problems do **not** fail the HTTP request: the upload returns `201` and the document records the outcome. An identical re-upload returns the existing document without reprocessing it.
 
 | Final `status` | `error_code` | Meaning |
 |---|---|---|
@@ -188,6 +189,30 @@ A newly created document is processed (text extraction and normalization) before
 | `failed` | `processing_error` | Unexpected parser failure; details are logged server-side only |
 
 `processing` is visible only while a request is in progress.
+
+#### 3.4.5 `GET /api/v1/documents/{document_id}/chunks` — chunks
+
+| Item | Specification |
+|---|---|
+| Purpose | Return a document's chunks in order, with their location metadata |
+| Authentication / authorization | As for all document endpoints: development identity, tenant isolation |
+| Path | `document_id`: UUID |
+| Query | `limit` integer 1–500 (default 100); `offset` integer ≥ 0 (default 0) |
+| Response `200` | `{"document_id": UUID, "items": [Chunk, ...], "total": n, "limit": n, "offset": n}`; `items` is empty for documents that failed processing |
+| Errors | `404 document_not_found` (missing or another tenant's); `422 validation_error` for a malformed UUID or out-of-range `limit`/`offset` |
+| Audit | No audit record yet; standard request log line |
+
+Chunk object:
+
+| Field | Type | Notes |
+|---|---|---|
+| `chunk_index` | integer | 0-based, consecutive per document |
+| `text` | string | Normalized chunk text |
+| `page_number` | integer or null | 1-based PDF page where the chunk starts; `null` for DOCX and TXT |
+| `section` | string or null | Nearest preceding heading (DOCX); `null` when unknown |
+| `char_start`, `char_end` | integer | Offsets into the document's canonical normalized text (blocks joined by a blank line); `char_end - char_start` equals the text length |
+
+Chunk text is document content: it is returned only to the owning tenant and is never written to logs.
 
 ## 4. Headers
 
@@ -205,7 +230,7 @@ A newly created document is processed (text extraction and normalization) before
 |---|---|---|
 | `/api/v1/auth` | Sign-in and identity | 6 |
 | `/api/v1/users` | User and role management | 6 |
-| `/api/v1/documents` | Upload, list and get **implemented** (section 3.4); chunks, delete and processing status details to follow | 2 |
+| `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
 | `/api/v1/chat` | Grounded question answering with citations | 4 |
 | `/api/v1/conversations` | Conversation history | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |

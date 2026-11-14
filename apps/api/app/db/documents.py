@@ -8,8 +8,18 @@ repository layer enforces this.
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    Enum,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -75,6 +85,10 @@ class Document(Base):
     # Machine-readable failure reason when status is FAILED; never raw exception text.
     error_code: Mapped[str | None] = mapped_column(String(64))
     page_count: Mapped[int | None]
+    # Chunking settings used for the stored chunks, e.g.
+    # {"strategy": "structured", "max_chars": 1200, "overlap_chars": 150}.
+    # Kept so retrieval quality can be compared across configurations (Phase 3).
+    chunking_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 

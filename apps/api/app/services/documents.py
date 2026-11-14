@@ -1,4 +1,4 @@
-"""Document use cases: upload (with in-request processing), list and get."""
+"""Document use cases: upload (with in-request processing and chunking), list, get, chunks."""
 
 import hashlib
 import logging
@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.core.identity import Identity
-from app.db.documents import Document, DocumentStatus
+from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.repositories.documents import DocumentRepository
+from app.services.chunking import ChunkingConfig, chunk_document
 from app.services.extraction import ExtractionError, ExtractionResult, extract_document
 from app.services.uploads import DocxLimits, validate_upload
 from app.storage.blob_store import BlobStore
@@ -43,6 +44,7 @@ class DocumentService:
         *,
         max_upload_bytes: int,
         max_pdf_pages: int = 500,
+        chunking: ChunkingConfig | None = None,
         docx_limits: DocxLimits | None = None,
     ) -> None:
         self._session = session
@@ -50,6 +52,7 @@ class DocumentService:
         self._blob_store = blob_store
         self._max_upload_bytes = max_upload_bytes
         self._max_pdf_pages = max_pdf_pages
+        self._chunking = chunking or ChunkingConfig()
         self._docx_limits = docx_limits
 
     def upload(self, identity: Identity, raw_filename: str | None, data: bytes) -> UploadResult:
@@ -88,7 +91,7 @@ class DocumentService:
         return UploadResult(document=document, created=True)
 
     def _process(self, document: Document, data: bytes) -> ExtractionResult | None:
-        """Extract text in the request and record the outcome on the document.
+        """Extract and chunk text in the request; record the outcome on the document.
 
         The document always ends in PROCESSED or FAILED; it is never left in
         PROCESSING, even if a parser fails unexpectedly on hostile input.
@@ -97,21 +100,42 @@ class DocumentService:
         self._session.commit()
 
         result: ExtractionResult | None = None
+        chunk_count = 0
         try:
             result = extract_document(document.media_type, data, max_pdf_pages=self._max_pdf_pages)
+            chunks = chunk_document(result, self._chunking)
+            self._repository.replace_chunks(
+                document,
+                [
+                    DocumentChunk(
+                        chunk_index=chunk.index,
+                        text=chunk.text,
+                        page_number=chunk.page_number,
+                        section=chunk.section,
+                        char_start=chunk.char_start,
+                        char_end=chunk.char_end,
+                    )
+                    for chunk in chunks
+                ],
+            )
+            chunk_count = len(chunks)
         except ExtractionError as exc:
             document.status = DocumentStatus.FAILED
             document.error_code = exc.code
         except Exception:
-            # Unexpected parser failure: log server-side (no document text) and
-            # fail the document with a generic code instead of a 500.
+            # Unexpected failure in parsing or chunking: discard any partial chunks,
+            # log server-side (no document text) and fail the document with a
+            # generic code instead of a 500.
+            self._session.rollback()
             logger.exception("document processing crashed", extra={"document_id": str(document.id)})
+            result = None
             document.status = DocumentStatus.FAILED
             document.error_code = "processing_error"
         else:
             document.status = DocumentStatus.PROCESSED
             document.error_code = None
             document.page_count = result.page_count
+            document.chunking_config = self._chunking.as_record()
         self._session.commit()
 
         # Metadata only: document text is never logged.
@@ -123,6 +147,7 @@ class DocumentService:
                 "error_code": document.error_code,
                 "page_count": document.page_count,
                 "block_count": len(result.blocks) if result else 0,
+                "chunk_count": chunk_count,
             },
         )
         return result
@@ -135,3 +160,13 @@ class DocumentService:
         if document is None:
             raise DocumentNotFoundError()
         return document
+
+    def list_chunks(
+        self, identity: Identity, document_id: uuid.UUID, *, limit: int, offset: int
+    ) -> tuple[list[DocumentChunk], int]:
+        """Chunks of one of the tenant's documents, plus the total chunk count."""
+        document = self.get(identity, document_id)
+        chunks = self._repository.list_chunks(
+            identity.tenant_id, document.id, limit=limit, offset=offset
+        )
+        return chunks, self._repository.count_chunks(identity.tenant_id, document.id)

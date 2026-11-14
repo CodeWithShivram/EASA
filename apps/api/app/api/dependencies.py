@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.identity import Identity
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
+from app.services.chunking import ChunkingConfig, ChunkingStrategy
 from app.services.documents import DocumentService
 from app.services.health import HealthService
 
@@ -29,9 +30,15 @@ def get_identity(request: Request) -> Identity:
 def get_document_service(
     request: Request, session: Annotated[Session, Depends(get_db_session)]
 ) -> DocumentService:
+    settings = request.app.state.settings
     return DocumentService(
         session,
         request.app.state.blob_store,
-        max_upload_bytes=request.app.state.settings.max_upload_bytes,
-        max_pdf_pages=request.app.state.settings.max_pdf_pages,
+        max_upload_bytes=settings.max_upload_bytes,
+        max_pdf_pages=settings.max_pdf_pages,
+        chunking=ChunkingConfig(
+            strategy=ChunkingStrategy(settings.chunk_strategy),
+            max_chars=settings.chunk_max_chars,
+            overlap_chars=settings.chunk_overlap_chars,
+        ),
     )

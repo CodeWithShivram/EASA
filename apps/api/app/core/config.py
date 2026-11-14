@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
     # PDFs with more pages are rejected during processing (bounds parsing work).
     max_pdf_pages: int = Field(default=500, ge=1, le=5000)
+    # Chunking (P2-M4). See app.services.chunking for the strategies.
+    chunk_strategy: Literal["fixed", "structured"] = "structured"
+    chunk_max_chars: int = Field(default=1200, ge=100, le=20000)
+    chunk_overlap_chars: int = Field(default=150, ge=0)
     # Development-only identity (ADR-014). Synthetic values; never taken from
     # requests. Document endpoints are not mounted in production.
     dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -83,6 +87,12 @@ class Settings(BaseSettings):
                     "without wildcards, paths, queries or fragments"
                 )
         return [origin.rstrip("/") for origin in origins]
+
+    @model_validator(mode="after")
+    def _validate_chunking(self) -> Settings:
+        if self.chunk_overlap_chars >= self.chunk_max_chars // 2:
+            raise ValueError("chunk_overlap_chars must be less than half of chunk_max_chars")
+        return self
 
     @property
     def is_production(self) -> bool:

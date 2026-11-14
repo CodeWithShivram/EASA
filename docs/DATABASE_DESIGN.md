@@ -12,7 +12,7 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored) |
 | Tables | `documents`, `document_chunks` (plus Alembic's `alembic_version`) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks (head) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -32,6 +32,7 @@ Tables are added only when a phase defines their requirements ([ADR-004](ARCHITE
 | `status` | varchar(20) | no | `uploaded`, `processing`, `processed`, `failed` (`ck_documents_status_allowed`); default `uploaded`. Lifecycle: inserted as `uploaded` → `processing` (committed) → `processed` or `failed` within the same request |
 | `error_code` | varchar(64) | yes | Machine-readable failure reason; never raw exception text |
 | `page_count` | integer | yes | `>= 0` when set (`ck_documents_page_count_non_negative`); PDF page count after successful processing, otherwise null |
+| `chunking_config` | JSON | yes | Chunking settings used for the stored chunks (`strategy`, `max_chars`, `overlap_chars`); null when there are no chunks. Lets retrieval quality be compared across configurations (Phase 3) |
 | `created_at`, `updated_at` | timestamp with time zone | no | UTC, set by the app (`updated_at` on every update) |
 
 Unique `(tenant_id, sha256)` (`uq_documents_tenant_id_sha256`): the same content uploaded twice in one tenant is one document (idempotency); different tenants may hold the same content. The constraint's index also serves tenant-scoped lookups, so there is no separate `tenant_id` index.
@@ -50,7 +51,7 @@ Unique `(tenant_id, sha256)` (`uq_documents_tenant_id_sha256`): the same content
 | `char_start`, `char_end` | integer | no | Offsets into the document's normalized text; `0 <= char_start <= char_end` (`ck_document_chunks_offsets_valid`) |
 | `created_at` | timestamp with time zone | no | UTC |
 
-Access to a chunk is decided through its document (tenant now; document permissions in Phase 6). Embedding columns arrive in Phase 3 (section 8).
+Chunks are written in the same transaction that marks the document `processed`; a failure discards partial chunks. Reprocessing would replace all chunks of a document (`replace_chunks`). Access to a chunk is decided through its document (tenant now; document permissions in Phase 6). Embedding columns arrive in Phase 3 (section 8).
 
 ### 1.3 File storage
 

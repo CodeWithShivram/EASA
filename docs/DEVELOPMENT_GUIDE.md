@@ -87,6 +87,7 @@ Uploading a document from PowerShell (uses the development identity; `curl.exe`,
 ```powershell
 curl.exe -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
 curl.exe "http://127.0.0.1:8000/api/v1/documents?limit=10"
+curl.exe "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
 ```
 
 Use synthetic documents only.
@@ -104,6 +105,9 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_STORAGE_DIR` | API | `apps/api/var/uploads` | Uploaded file contents (content-addressed); git-ignored |
 | `EASA_MAX_UPLOAD_BYTES` | API | `10485760` (10 MiB) | Largest accepted file (1 byte to 100 MiB); the request body limit is this plus 64 KiB |
 | `EASA_MAX_PDF_PAGES` | API | `500` | PDFs with more pages fail processing with `too_many_pages` (1–5000) |
+| `EASA_CHUNK_STRATEGY` | API | `structured` | `structured` (whole blocks, page/section-aware) or `fixed` (overlapping windows) |
+| `EASA_CHUNK_MAX_CHARS` | API | `1200` | Largest chunk in characters (100–20000) |
+| `EASA_CHUNK_OVERLAP_CHARS` | API | `150` | Overlap between consecutive windows; must be less than half of `EASA_CHUNK_MAX_CHARS` |
 | `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
@@ -130,7 +134,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 174 tests; warnings are treated as errors
+uv run pytest                 # 205 tests; warnings are treated as errors
 ```
 
 **Frontend** (from `apps/web`):

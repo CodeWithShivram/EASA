@@ -7,8 +7,13 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from app.api.dependencies import get_document_service, get_identity
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
-from app.repositories.documents import MAX_PAGE_SIZE
-from app.schemas.documents import DocumentListResponse, DocumentResponse
+from app.repositories.documents import MAX_CHUNK_PAGE_SIZE, MAX_PAGE_SIZE
+from app.schemas.documents import (
+    ChunkListResponse,
+    ChunkResponse,
+    DocumentListResponse,
+    DocumentResponse,
+)
 from app.services.documents import DocumentService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -68,3 +73,22 @@ def get_document(
 ) -> DocumentResponse:
     """Get one of the current tenant's documents."""
     return DocumentResponse.model_validate(service.get(identity, document_id))
+
+
+@router.get("/{document_id}/chunks", response_model=ChunkListResponse, responses=_ERRORS)
+def list_document_chunks(
+    document_id: uuid.UUID,
+    service: ServiceDep,
+    identity: IdentityDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_CHUNK_PAGE_SIZE)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ChunkListResponse:
+    """List a document's chunks in order. Empty for documents that failed processing."""
+    chunks, total = service.list_chunks(identity, document_id, limit=limit, offset=offset)
+    return ChunkListResponse(
+        document_id=document_id,
+        items=[ChunkResponse.model_validate(c) for c in chunks],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

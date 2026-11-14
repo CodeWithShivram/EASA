@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -19,11 +20,31 @@ class DocumentResponse(BaseModel):
     status: DocumentStatus
     error_code: str | None
     page_count: int | None
+    chunking_config: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
 
 
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
+    limit: int
+    offset: int
+
+
+class ChunkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    chunk_index: int
+    text: str
+    page_number: int | None
+    section: str | None
+    char_start: int
+    char_end: int
+
+
+class ChunkListResponse(BaseModel):
+    document_id: uuid.UUID
+    items: list[ChunkResponse]
+    total: int
     limit: int
     offset: int

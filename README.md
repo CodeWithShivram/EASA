@@ -62,6 +62,7 @@ Endpoints:
 | `GET /api/v1/health/ready` | Readiness. Runs `SELECT 1`; `200 ready` or `503 not_ready` with `checks.database = "unavailable"` |
 | `POST /api/v1/documents` | Upload a PDF, DOCX or UTF-8 TXT file (validated; identical content returns the existing document). Development only |
 | `GET /api/v1/documents`, `GET /api/v1/documents/{id}` | List and get the current tenant's documents. Development only |
+| `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets. Development only |
 | `GET /docs` | OpenAPI UI (disabled when `EASA_ENVIRONMENT=production`) |
 
 Every response carries a server-generated `X-Correlation-ID` header. That ID also appears in the JSON logs and in error bodies (`{"error": {"code", "message", "correlation_id"}}`).

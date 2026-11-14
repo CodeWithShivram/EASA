@@ -12,7 +12,8 @@ from tests.conftest import sqlite_url
 
 BASELINE_REVISION = "7b339cea85fb"
 DOCUMENTS_REVISION = "eb5cd7e86396"
-HEAD_REVISION = DOCUMENTS_REVISION
+CHUNKING_CONFIG_REVISION = "e57f12a3d5ed"
+HEAD_REVISION = CHUNKING_CONFIG_REVISION
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
     assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(CHUNKING_CONFIG_REVISION).down_revision == DOCUMENTS_REVISION
     assert script.get_revision(DOCUMENTS_REVISION).down_revision == BASELINE_REVISION
     assert script.get_revision(BASELINE_REVISION).down_revision is None
 

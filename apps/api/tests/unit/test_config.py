@@ -85,3 +85,26 @@ def test_settings_are_immutable() -> None:
 
     with pytest.raises(ValidationError):
         settings.environment = "production"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("values", "should_pass"),
+    [
+        ({"EASA_CHUNK_MAX_CHARS": "1200", "EASA_CHUNK_OVERLAP_CHARS": "599"}, True),
+        ({"EASA_CHUNK_MAX_CHARS": "1200", "EASA_CHUNK_OVERLAP_CHARS": "600"}, False),
+        ({"EASA_CHUNK_STRATEGY": "semantic"}, False),
+        ({"EASA_CHUNK_MAX_CHARS": "50"}, False),
+        ({"EASA_MAX_PDF_PAGES": "0"}, False),
+    ],
+)
+def test_processing_settings_validation(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, str], should_pass: bool
+) -> None:
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    if should_pass:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+    else:
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)  # type: ignore[call-arg]
