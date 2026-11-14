@@ -4,7 +4,7 @@ import pytest
 
 from app.retrieval.base import ScoredChunk
 from app.retrieval.hybrid import RRF_K, reciprocal_rank_fusion
-from app.retrieval.keyword import MAX_QUERY_TERMS, build_match_query
+from app.retrieval.keyword import MAX_QUERY_TERMS, build_match_query, build_tsquery
 
 A, B, C, D = (uuid.UUID(int=i) for i in range(1, 5))
 
@@ -64,3 +64,16 @@ def test_build_match_query_caps_terms() -> None:
 
     assert match is not None
     assert match.count(" OR ") == MAX_QUERY_TERMS - 1
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Annual leave", "'annual' | 'leave'"),
+        ("leave' | 'x", "'leave' | 'x'"),
+        ("leave & !policy:* <-> (pay)", "'leave' | 'policy' | 'pay'"),
+        ("!!! ???", None),
+    ],
+)
+def test_build_tsquery_neutralizes_tsquery_syntax(query: str, expected: str | None) -> None:
+    assert build_tsquery(query) == expected

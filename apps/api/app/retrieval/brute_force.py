@@ -1,8 +1,8 @@
 """Exact vector search by brute force over stored vectors (any SQL backend).
 
 Vectors are streamed from the database in batches, so memory stays bounded by
-the batch size, and a running top-k is kept. Exact and simple; suitable for
-the synthetic corpus. PostgreSQL + pgvector replaces it at scale (P3-M4).
+the batch size, and a running top-k is kept. Exact and simple; used on SQLite.
+On PostgreSQL, PgvectorIndex computes the same results inside the database.
 """
 
 import uuid

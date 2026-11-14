@@ -9,17 +9,16 @@ from sqlalchemy.orm import Session
 
 from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.db.embeddings import ChunkEmbedding
+from app.db.types import VECTOR_DTYPE
 from app.embeddings.base import Vectors
-
-_DTYPE = np.dtype("<f4")
 
 
 def encode_vector(vector: Vectors) -> bytes:
-    return np.asarray(vector, dtype=_DTYPE).tobytes()
+    return np.asarray(vector, dtype=VECTOR_DTYPE).tobytes()
 
 
 def decode_vector(blob: bytes, dimensions: int) -> Vectors:
-    vector = np.frombuffer(blob, dtype=_DTYPE)
+    vector = np.frombuffer(blob, dtype=VECTOR_DTYPE)
     if vector.shape != (dimensions,):
         raise ValueError("stored vector does not match its declared dimensions")
     return vector

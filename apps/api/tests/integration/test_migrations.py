@@ -17,7 +17,8 @@ DOCUMENTS_REVISION = "eb5cd7e86396"
 CHUNKING_CONFIG_REVISION = "e57f12a3d5ed"
 EMBEDDINGS_REVISION = "29b0c28209aa"
 KEYWORD_INDEX_REVISION = "6d544dac46b3"
-HEAD_REVISION = KEYWORD_INDEX_REVISION
+POSTGRES_SEARCH_REVISION = "e4353f12b34f"  # a no-op on SQLite; see tests/postgres
+HEAD_REVISION = POSTGRES_SEARCH_REVISION
 
 
 @pytest.fixture
@@ -57,6 +58,7 @@ def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
     assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(POSTGRES_SEARCH_REVISION).down_revision == KEYWORD_INDEX_REVISION
     assert script.get_revision(KEYWORD_INDEX_REVISION).down_revision == EMBEDDINGS_REVISION
     assert script.get_revision(EMBEDDINGS_REVISION).down_revision == CHUNKING_CONFIG_REVISION
     assert script.get_revision(CHUNKING_CONFIG_REVISION).down_revision == DOCUMENTS_REVISION

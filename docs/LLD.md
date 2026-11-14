@@ -22,11 +22,12 @@ easa/
       repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
       embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
                            hashing.py (test embedder), factory.py (provider + download)
-      retrieval/           base.py (VectorIndex protocol), brute_force.py (exact search),
-                           keyword.py (FTS5 BM25 search), hybrid.py (reciprocal rank fusion)
+      retrieval/           base.py (VectorIndex, KeywordIndex protocols), brute_force.py (exact search),
+                           pgvector_index.py (PostgreSQL), keyword.py (FTS5 and PostgreSQL
+                           full-text search), hybrid.py (reciprocal rank fusion), factory.py
       storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
     migrations/            Alembic env.py, script template, versions/
-    tests/                 unit/, integration/ and model/ (real embedding model)
+    tests/                 unit/, integration/, model/ (real embedding model), postgres/
     alembic.ini, pyproject.toml, uv.lock, .env.example
   apps/web/                Next.js frontend
     src/app/               layout.tsx, page.tsx, globals.css
@@ -34,6 +35,7 @@ easa/
     src/lib/               config.ts, api/client.ts, api/schemas.ts, api/health.ts
     vitest.config.mts, vitest.setup.ts, next.config.ts, package.json, .env.example
   docs/                    this documentation set and PROGRESS.md
+  compose.yaml             local PostgreSQL 18 + pgvector (optional; P3-M4)
   scripts/                 check.ps1 (all checks), dev.ps1 (run both servers)
   .github/workflows/       ci.yml (GitHub Actions: API and web jobs)
 ```
@@ -171,7 +173,7 @@ stateDiagram-v2
   - `hybrid`: takes `max(4 × top_k, 20)` candidates (`MIN_HYBRID_CANDIDATES`) from both rankings and fuses them with reciprocal rank fusion.
 
   It then loads chunk and document details in one tenant-scoped query (`DocumentRepository.chunks_with_documents`), skipping chunks deleted in between. It logs mode, model ID, `top_k`, result count and duration, never the query.
-- [routes/search.py](../apps/api/app/api/v1/routes/search.py): `POST /api/v1/search` (`SearchRequest` forbids unknown fields; `mode` is a `SearchMode` enum) → `SearchResponse` (`mode`, nullable `model_id`) with a `Citation` per hit. Mounted only outside production, next to the document routes. `get_search_service` wires `BruteForceVectorIndex` and `SqliteKeywordIndex` to the request session.
+- [routes/search.py](../apps/api/app/api/v1/routes/search.py): `POST /api/v1/search` (`SearchRequest` forbids unknown fields; `mode` is a `SearchMode` enum) → `SearchResponse` (`mode`, nullable `model_id`) with a `Citation` per hit. Mounted only outside production, next to the document routes. `get_search_service` gets the indexes for the request session from `build_indexes` (section 2.6f).
 
 ### 2.6e Keyword and hybrid retrieval (P3-M3)
 
@@ -180,6 +182,13 @@ stateDiagram-v2
   - `build_match_query(query)`: lower-cases, extracts `\w+` tokens, removes duplicates, keeps at most `MAX_QUERY_TERMS` (32), quotes each token and joins them with `OR`. Returns `None` when there are no tokens. User text never reaches FTS5 query syntax directly.
   - `SqliteKeywordIndex.search(tenant_id, query, top_k)`: one SQL query joins `chunk_fts` → `document_chunks` (by `rowid`) → `documents`, filtered by tenant (on both the chunk and the document) and `status = processed`, ordered by `bm25()` then chunk ID. The score is `-bm25` (higher is better). On a database other than SQLite it raises `503 keyword_search_unavailable`.
 - [retrieval/hybrid.py](../apps/api/app/retrieval/hybrid.py) `reciprocal_rank_fusion(rankings, *, top_k, k=60)`: each chunk scores `Σ 1 / (k + rank)` over the rankings it appears in (rank starts at 1). Only positions matter, so BM25 and cosine scores never need to be put on one scale. Ties are broken by chunk ID.
+
+### 2.6f PostgreSQL retrieval (P3-M4)
+
+- [db/types.py](../apps/api/app/db/types.py) `EmbeddingVector`: a `TypeDecorator` whose Python value is always float32 little-endian `bytes`. `load_dialect_impl` returns `LargeBinary` on SQLite and pgvector's `VECTOR()` (no dimension) on PostgreSQL; bind and result processing convert bytes to and from NumPy arrays on PostgreSQL only. Repositories and `BruteForceVectorIndex` work unchanged on both backends. Alembic renders the type as `sa.LargeBinary()`; the PostgreSQL migration converts the column.
+- [retrieval/pgvector_index.py](../apps/api/app/retrieval/pgvector_index.py) `PgvectorIndex.search(tenant_id, model_id, query, top_k)`: one SQLAlchemy query selecting `chunk_id` and `vector <=> CAST(:query_vector AS VECTOR)`, joined to chunks and documents, filtered by model, tenant (vector and document), processed status and `dimensions = len(query)`, ordered by distance then chunk ID, limited to `top_k`. Score = `1 - distance`. No ANN index, so results are exact.
+- [retrieval/keyword.py](../apps/api/app/retrieval/keyword.py): `query_terms` (shared token extraction); `build_tsquery` quotes each token and joins with ` | `. `PostgresKeywordIndex` runs `POSTGRES_KEYWORD_SQL`: `to_tsquery('english', :match)` cross-joined once, `to_tsvector('english', dc.text) @@ query` (the GIN index expression), tenant and status filters, `ORDER BY ts_rank_cd(...) DESC, dc.id`. Each implementation raises `503 keyword_search_unavailable` on the other backend.
+- [retrieval/factory.py](../apps/api/app/retrieval/factory.py) `build_indexes(session)`: `(PgvectorIndex, PostgresKeywordIndex)` on PostgreSQL, `(BruteForceVectorIndex, SqliteKeywordIndex)` otherwise.
 
 ### 2.7 Health — routes, service, probe
 
@@ -245,8 +254,9 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 191 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS query building |
-| Backend integration | `apps/api/tests/integration/` | 129 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 195 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building |
+| Backend integration | `apps/api/tests/integration/` | 131 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| PostgreSQL | `apps/api/tests/postgres/` | 44 | Run only with `EASA_TEST_POSTGRES_URL`; throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), and the full app (upload, embeddings, readiness, all search modes). Always run in CI |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 

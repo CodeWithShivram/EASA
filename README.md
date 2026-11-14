@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) in progress: embeddings plus semantic, keyword and hybrid search done.**
+> **Status: Phase 3 (Embeddings and Retrieval) in progress: embeddings plus semantic, keyword and hybrid search done, on SQLite and on PostgreSQL + pgvector.**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -39,7 +39,7 @@ Verified on the development machine (Windows 11):
 | Python  | 3.14.7 (`py -3.14`) |
 | uv      | 0.12.9           |
 
-Not required for Phase 1: PostgreSQL (SQLite is used initially), Ollama and Docker.
+Optional: Docker Desktop (verified 29.9.3 with Compose v5.7.0) to run PostgreSQL 18 + pgvector locally (`docker compose up -d postgres`; see the [Development guide](docs/DEVELOPMENT_GUIDE.md#6c-postgresql--pgvector-optional)). SQLite stays the default and needs nothing extra. Ollama is not used yet.
 
 ## Backend (apps/api)
 
@@ -50,7 +50,7 @@ cd apps/api
 uv sync                      # install runtime and dev dependencies from uv.lock
 uv run ruff format --check . # formatting
 uv run ruff check .          # lint (includes security rules)
-uv run pytest                # unit and integration tests
+uv run pytest                # unit and integration tests (PostgreSQL tests skip unless EASA_TEST_POSTGRES_URL is set)
 uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 ```
 

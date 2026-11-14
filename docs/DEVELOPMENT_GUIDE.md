@@ -14,7 +14,9 @@
 | Node.js | 24.13.0 | `apps/web` requires Node ≥ 24.0 |
 | npm | 11.6.2 | |
 
-Not needed in Phase 1: PostgreSQL, Ollama, Docker. No administrator rights are required.
+| Docker Desktop | 29.9.3 (Compose v5.7.0, WSL 2) | Optional: runs PostgreSQL 18 + pgvector for section 6c. SQLite needs nothing extra |
+
+Ollama is not used yet. No administrator rights are required for the default SQLite setup.
 
 ## 2. First-time setup
 
@@ -107,7 +109,7 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 |---|---|---|---|
 | `EASA_ENVIRONMENT` | API | `development` | `development`, `test`, `production` (production disables `/docs`) |
 | `EASA_LOG_LEVEL` | API | `INFO` | `DEBUG` … `CRITICAL` |
-| `EASA_DATABASE_URL` | API | `sqlite:///…/apps/api/var/easa.db` | Drivers: `sqlite`, `sqlite+pysqlite`, `postgresql+psycopg` (driver not installed yet) |
+| `EASA_DATABASE_URL` | API | `sqlite:///…/apps/api/var/easa.db` | Drivers: `sqlite`, `sqlite+pysqlite`, `postgresql+psycopg` (PostgreSQL: section 6c) |
 | `EASA_CORS_ALLOWED_ORIGINS` | API | `["http://localhost:3000"]` | JSON list; no wildcards |
 | `EASA_STORAGE_DIR` | API | `apps/api/var/uploads` | Uploaded file contents (content-addressed); git-ignored |
 | `EASA_MAX_UPLOAD_BYTES` | API | `10485760` (10 MiB) | Largest accepted file (1 byte to 100 MiB); the request body limit is this plus 64 KiB |
@@ -144,7 +146,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 323 tests (3 real-model tests skip if the model is not downloaded); warnings are errors
+uv run pytest                 # 373 tests: 3 real-model tests skip without the model, 44 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -192,6 +194,36 @@ On SQLite, migration `6d544dac46b3` creates the FTS5 keyword index and indexes e
 ```powershell
 uv run python -m app.cli rebuild-keyword-index
 ```
+
+## 6c. PostgreSQL + pgvector (optional)
+
+SQLite is the default. To run the API on PostgreSQL 18 with pgvector 0.8.7 in Docker (from the repository root):
+
+```powershell
+Copy-Item .env.example .env          # then set EASA_POSTGRES_PASSWORD to a random value
+docker compose up -d postgres        # pgvector/pgvector:0.8.7-pg18 on 127.0.0.1:5433 (healthcheck: pg_isready)
+docker compose ps                    # wait for "healthy"
+```
+
+Then point the API at it (for example in `apps/api/.env`, which is git-ignored) and migrate, from `apps/api`:
+
+```powershell
+# EASA_DATABASE_URL=postgresql+psycopg://easa:<password>@127.0.0.1:5433/easa
+uv run alembic upgrade head          # also enables the vector extension and the full-text index
+uv run python -m app.cli embed-missing
+```
+
+On PostgreSQL, vector search runs inside the database (pgvector, exact) and keyword search uses PostgreSQL full-text search; see [DATABASE_DESIGN.md](DATABASE_DESIGN.md) section 9. The migration converts existing vectors by deleting them (they are derived data); `embed-missing` recreates them.
+
+**PostgreSQL tests.** `tests/postgres` runs only when `EASA_TEST_POSTGRES_URL` is set to a URL whose user may create databases. Each run creates throwaway databases (`easa_test_<random>`), migrates them and drops them; the database in the URL is not written to.
+
+```powershell
+$env:EASA_TEST_POSTGRES_URL = "postgresql+psycopg://easa:<password>@127.0.0.1:5433/easa"
+uv run pytest tests/postgres
+$env:EASA_TEST_POSTGRES_URL = $null
+```
+
+Stop the container with `docker compose stop` (keeps data) or `docker compose down -v` (deletes the data volume). CI runs the same tests against a `pgvector/pgvector:0.8.7-pg18` service container.
 
 ## 7. Adding dependencies
 

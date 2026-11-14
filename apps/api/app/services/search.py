@@ -6,7 +6,6 @@ import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
-from typing import Protocol
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +13,7 @@ from app.core.errors import AppError
 from app.core.identity import Identity
 from app.embeddings.base import Embedder
 from app.repositories.documents import DocumentRepository
-from app.retrieval.base import ScoredChunk, VectorIndex
+from app.retrieval.base import KeywordIndex, ScoredChunk, VectorIndex
 from app.retrieval.hybrid import reciprocal_rank_fusion
 from app.services.normalization import normalize_text
 
@@ -30,10 +29,6 @@ class SearchMode(StrEnum):
     SEMANTIC = "semantic"
     KEYWORD = "keyword"
     HYBRID = "hybrid"
-
-
-class KeywordIndex(Protocol):
-    def search(self, tenant_id: uuid.UUID, query: str, top_k: int) -> list[ScoredChunk]: ...
 
 
 @dataclass(frozen=True)

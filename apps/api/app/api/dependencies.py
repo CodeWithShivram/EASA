@@ -7,8 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.identity import Identity
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
-from app.retrieval.brute_force import BruteForceVectorIndex
-from app.retrieval.keyword import SqliteKeywordIndex
+from app.retrieval.factory import build_indexes
 from app.services.chunking import ChunkingConfig, ChunkingStrategy
 from app.services.documents import DocumentService
 from app.services.health import HealthService
@@ -55,9 +54,6 @@ def get_document_service(
 def get_search_service(
     request: Request, session: Annotated[Session, Depends(get_db_session)]
 ) -> SearchService:
-    return SearchService(
-        session,
-        request.app.state.embedder,
-        BruteForceVectorIndex(session),
-        SqliteKeywordIndex(session),
-    )
+    # pgvector and PostgreSQL full-text search on PostgreSQL; brute force and FTS5 on SQLite.
+    vector_index, keyword_index = build_indexes(session)
+    return SearchService(session, request.app.state.embedder, vector_index, keyword_index)

@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -114,22 +114,33 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 |---|---|
 | Semantic search filters by tenant, processed status and model inside the SQL query, before any vector is scored: another tenant's chunk is never scored, so it cannot leak through ranking, scores or timing differences | [brute_force.py](../apps/api/app/retrieval/brute_force.py) — tested (cross-tenant and status tests) |
 | Search result details are loaded with a second tenant-scoped query (defence in depth) | [documents.py](../apps/api/app/repositories/documents.py) |
-| Keyword search filters by tenant (on both the chunk and the document) and processed status in the same SQL query as the FTS5 `MATCH`; other tenants' rows are never returned | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested (cross-tenant and status tests) |
+| pgvector search applies the same tenant, status and model filters (plus a dimension filter) in the SQL query that computes distances; another tenant's vector is never compared or returned | [pgvector_index.py](../apps/api/app/retrieval/pgvector_index.py) — tested on PostgreSQL |
+| Keyword search filters by tenant (on both the chunk and the document) and processed status in the same SQL query as the full-text match (FTS5 `MATCH` or PostgreSQL `@@`); other tenants' rows are never returned | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested (cross-tenant and status tests) |
 | User text never reaches FTS5 query syntax: the query is reduced to at most 32 `\w+` tokens, each double-quoted (tokens cannot contain quotes) and joined with `OR`, then passed as a bound parameter. Operators (`NEAR`, `AND`, `NOT`), column filters, prefix `*`, `^` and unbalanced quotes are neutralized | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested with hostile queries |
+| On PostgreSQL the same reduction to word tokens is used; each token is single-quoted (tokens cannot contain quotes) and joined with `|`, then passed as a bound parameter to `to_tsquery`. `&`, `!`, `<->`, `:*`, weights and parentheses are neutralized | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested with hostile queries on PostgreSQL |
 | Hybrid search only fuses the outputs of the two tenant-filtered searches; it adds no data access of its own | [hybrid.py](../apps/api/app/retrieval/hybrid.py) |
 | The keyword index follows chunk inserts, updates, replacements and cascade deletes through triggers, so deleted text stops being searchable immediately; `rebuild-keyword-index` resynchronizes it (e.g. after `VACUUM`) | [fts.py](../apps/api/app/db/fts.py) — tested (FTS5 `integrity-check`) |
 | Search requests reject unknown fields and modes (a client cannot pass a `tenant_id`), cap the query at 1,000 characters and `top_k` at 50, and normalize the query like chunk text | [search.py](../apps/api/app/schemas/search.py), [search.py](../apps/api/app/services/search.py) — tested |
 | The query text is never logged; the `search completed` line carries mode, model ID, `top_k`, result count and duration only | [search.py](../apps/api/app/services/search.py) — tested (all modes) and verified on a live server |
 
-**Known limitation (keyword search):** BM25 uses term statistics (document frequency, average length) computed over the whole FTS5 table, which holds every tenant's chunks. Results are filtered to the caller's tenant, but their **scores and order** are slightly influenced by other tenants' text. In theory, repeated probing could reveal whether a rare term is common elsewhere. This is accepted for the single-tenant development build; per-tenant indexes or a PostgreSQL implementation with per-tenant statistics would remove it, and it must be revisited before real multi-tenant use (Phase 6).
+**Known limitation (keyword search on SQLite):** BM25 uses term statistics (document frequency, average length) computed over the whole FTS5 table, which holds every tenant's chunks. Results are filtered to the caller's tenant, but their **scores and order** are slightly influenced by other tenants' text. In theory, repeated probing could reveal whether a rare term is common elsewhere. This is accepted for the single-tenant development build and must be revisited before real multi-tenant use on SQLite (Phase 6). PostgreSQL's `ts_rank_cd` uses only the matched chunk's own text, so the PostgreSQL implementation does not have this issue.
 
 ### Database
-- Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, the constant FTS5 DDL and rebuild statements, and the keyword search query, whose values (match expression, tenant, status, limit) are all bound parameters.
+- Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
+
+### Local PostgreSQL (P3-M4)
+
+- The Compose service binds to `127.0.0.1:5433` only, so it is not reachable from the network.
+- Its password comes from `EASA_POSTGRES_PASSWORD` in the git-ignored root `.env` (Compose refuses to start without it); `.env.example` holds only a placeholder. The local password was generated randomly and never printed or committed. The API's `EASA_DATABASE_URL`, which contains it, is a `SecretStr`.
+- CI uses a fixed throwaway password for a service container that exists only for the job; it protects nothing and is not a secret.
+- PostgreSQL tests create and drop their own databases and never write to the database named in `EASA_TEST_POSTGRES_URL`.
+- The database holds only synthetic data. Connections are unencrypted, which is acceptable only on localhost.
 - Foreign keys enforced on SQLite connections.
 - Schema changes only through reviewed Alembic migrations.
 
 ### Supply chain
 
+- Container image pinned by tag: `pgvector/pgvector:0.8.7-pg18` (digest `sha256:38681dc6…` when pulled on 2026-11-14), in both Compose and CI. Python packages added in P3-M4: `psycopg[binary]` 3.3.9 (LGPL-3.0, used as an unmodified library) and `pgvector` 0.5.1 (MIT).
 - Lockfiles committed: `apps/api/uv.lock`, `apps/web/package-lock.json` (resolved only from `registry.npmjs.org`).
 - Dependencies are added only with a stated purpose, after checking compatibility with Python 3.14 and Node 24.13.
 - CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags (setup-uv to an exact release tag), not commit SHAs.
@@ -150,8 +161,8 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 | Rate limiting | Before any shared deployment |
 | Running parsers in a separate process with hard CPU, memory and time limits. Today a PDF page can still take seconds of CPU (pypdf's form-XObject limit resets per page) within the 30-second budget, and memory is bounded only by the input and budget limits | Before handling untrusted uploads from real users |
 | Security response headers on the API (e.g. CSP, `X-Content-Type-Options`) | Phase 7 / 8 |
-| TLS | Any non-local deployment |
-| Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs | Phase 8 |
+| TLS (HTTP and database connections) | Any non-local deployment |
+| Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs and container images to digests | Phase 8 |
 | Reference counting before blob deletion (blobs are shared across tenants with identical content) | With a delete endpoint |
 
 ## 5. Threat notes
@@ -167,6 +178,7 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 | XML attacks via DOCX (XXE, entity expansion) | `resolve_entities=False`, no external DTDs or network in lxml, libxml2 amplification limit | Low |
 | Spoofed or hidden text (bidi controls, tag characters) | Removed from filenames and from normalized text | Visually confusable letters (homoglyphs) are not normalized |
 | Accidental commit of secrets or data | `.gitignore` rules; manual pre-commit diff review and secret check required by the commit workflow | Manual process; automated scanning planned for CI |
+| Local PostgreSQL reachable from the network | Compose binds to `127.0.0.1` only; random password in a git-ignored `.env` | Anyone with access to the machine can reach it; acceptable for synthetic data |
 | Web server reachable from the local network | npm scripts bind to `localhost` (M5) | Running `next` directly without `--hostname` still binds to all interfaces |
 | Malicious API responses reaching the UI | Zod validation; React escaping | Low |
 
@@ -174,9 +186,10 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 323 backend tests; 3 real-model tests skip without the model):
+**Automated tests** (part of the 373 backend tests; 3 real-model tests skip without the model and 44 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
+- PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
 - Keyword index: FTS5 syntax in queries (`NEAR(...)`, unbalanced quotes, column filters, `*`, `AND NOT`, `^`) is harmless; queries without words return nothing; the index follows chunk replacement, text updates and cascade deletes (FTS5 `integrity-check` passes); the migrated index matches the application module.
 
 - Embeddings: one vector per chunk under the model's versioned ID; failed documents never embedded; embedding failures leave the document processed and are backfilled; vectors deleted with their chunks; readiness reports a missing model; the CLI refuses to run without the model.

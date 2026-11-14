@@ -8,11 +8,14 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from app import cli
+from app.core.errors import AppError
 from app.db.documents import Document, DocumentChunk, DocumentMediaType, DocumentStatus
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
 from app.repositories.documents import DocumentRepository
-from app.retrieval.keyword import SqliteKeywordIndex
+from app.retrieval.brute_force import BruteForceVectorIndex
+from app.retrieval.factory import build_indexes
+from app.retrieval.keyword import PostgresKeywordIndex, SqliteKeywordIndex
 from tests.conftest import create_schema, sqlite_url
 
 # Synthetic identifiers for tests only.
@@ -175,3 +178,17 @@ def test_rebuild_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessio
 def test_top_k_must_be_positive(session: Session) -> None:
     with pytest.raises(ValueError, match="top_k"):
         SqliteKeywordIndex(session).search(TENANT_A, "leave", 0)
+
+
+def test_factory_selects_sqlite_implementations(session: Session) -> None:
+    vector_index, keyword_index = build_indexes(session)
+
+    assert isinstance(vector_index, BruteForceVectorIndex)
+    assert isinstance(keyword_index, SqliteKeywordIndex)
+
+
+def test_postgres_keyword_index_refuses_sqlite(session: Session) -> None:
+    with pytest.raises(AppError) as error:
+        PostgresKeywordIndex(session).search(TENANT_A, "leave", 5)
+
+    assert error.value.code == "keyword_search_unavailable"

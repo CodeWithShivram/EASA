@@ -8,11 +8,11 @@ means embedding again under a new ``model_id``.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, LargeBinary, String, Uuid
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.db.types import UtcDateTime, utc_now
+from app.db.types import EmbeddingVector, UtcDateTime, utc_now
 
 
 class ChunkEmbedding(Base):
@@ -31,5 +31,6 @@ class ChunkEmbedding(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     dimensions: Mapped[int]
     # float32 little-endian, L2-normalized; length = dimensions * 4 bytes.
-    vector: Mapped[bytes] = mapped_column(LargeBinary)
+    # A blob on SQLite, a pgvector `vector` on PostgreSQL.
+    vector: Mapped[bytes] = mapped_column(EmbeddingVector)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)

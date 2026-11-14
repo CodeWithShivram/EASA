@@ -15,7 +15,7 @@ from app.core.logging import configure_logging
 from app.db.engine import create_db_engine
 from app.db.fts import is_keyword_index_object
 from app.db.models import Base
-from app.db.types import UtcDateTime
+from app.db.types import EmbeddingVector, UtcDateTime
 
 settings = load_settings()
 configure_logging(settings.log_level)
@@ -27,9 +27,10 @@ render_as_batch = make_url(database_url).get_backend_name() == "sqlite"
 
 
 def include_name(name: str | None, type_: str, parent_names: object) -> bool:
-    # The FTS5 keyword index (and its shadow tables) is managed by hand-written
-    # migrations, not by the ORM, so autogenerate and `alembic check` ignore it.
-    return not (type_ == "table" and is_keyword_index_object(name))
+    # Keyword indexes (SQLite FTS5 tables, the PostgreSQL GIN index) are managed
+    # by hand-written migrations, not by the ORM, so autogenerate and
+    # `alembic check` ignore them.
+    return not (type_ in ("table", "index") and is_keyword_index_object(name))
 
 
 def render_item(type_: str, obj: Any, autogen_context: AutogenContext) -> str | bool:
@@ -37,6 +38,9 @@ def render_item(type_: str, obj: Any, autogen_context: AutogenContext) -> str | 
     # migrations never import application code.
     if type_ == "type" and isinstance(obj, UtcDateTime):
         return "sa.DateTime(timezone=True)"
+    if type_ == "type" and isinstance(obj, EmbeddingVector):
+        # PostgreSQL columns are converted to pgvector by a hand-written migration.
+        return "sa.LargeBinary()"
     return False
 
 

@@ -499,8 +499,8 @@ Decisions approved 2026-11-14:
 |---|---|---|---|
 | P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | `2691620` |
 | P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | `d6e8781` |
-| P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | COMPLETE | the commit that adds this row |
-| P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | NOT STARTED | |
+| P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | COMPLETE | `97a2b93` |
+| P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | COMPLETE | the commit that adds this row |
 | P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | NOT STARTED | |
 
 ## P3-M1: Embeddings
@@ -625,3 +625,44 @@ Fixed during the work:
 - `OR` matching favours recall; hybrid scores are rank-based and not comparable with the other modes.
 
 **Exit criteria:** met. Keyword and hybrid search work end to end with tenant isolation, injection-safe queries and an index that follows chunk changes, all covered by tests.
+
+## P3-M4: PostgreSQL + pgvector
+
+**Scope:** PostgreSQL 18 + pgvector as a second database backend (Docker Compose), vector and keyword search implementations for it, PostgreSQL tests and a CI service container. SQLite stays the default. No approximate (HNSW) index (P3-M5), no frontend changes.
+
+**Environment and approvals:** Docker Desktop 29.9.3 (Compose v5.7.0, WSL 2) was already installed. Pulled `pgvector/pgvector:0.8.7-pg18` (158 MB compressed, digest `sha256:38681dc6…`). New Python dependencies: `psycopg[binary]` 3.3.9 (with `psycopg-binary` and, on Windows, `tzdata`) and `pgvector` 0.5.1. Port 5432 is used by another local project's container, which was not touched; EASA uses 5433.
+
+**Implemented**
+
+- `compose.yaml` (`postgres` service on `127.0.0.1:5433`, named volume, `pg_isready` healthcheck; password from the git-ignored root `.env`) and a root `.env.example`.
+- `EmbeddingVector` column type: bytes in Python; a blob on SQLite, an undimensioned pgvector `vector` on PostgreSQL.
+- Migration `e4353f12b34f` (hand-written, PostgreSQL only): `vector` extension, `bytea` → `vector` conversion (derived vectors deleted), GIN index on `to_tsvector('english', text)`; reversible. `env.py` renders the new type portably and ignores the GIN index in autogenerate.
+- `PgvectorIndex`: exact cosine search in the database with tenant, status, model and dimension filters.
+- `PostgresKeywordIndex`: `to_tsquery` from quoted word tokens joined with `|`, ranked with `ts_rank_cd`; the SQL is a module constant, so a test can `EXPLAIN` it.
+- `build_indexes(session)` chooses implementations from the dialect; `KeywordIndex` protocol moved to `app/retrieval/base.py`.
+- `tests/postgres` (44 tests, throwaway databases, skipped without `EASA_TEST_POSTGRES_URL`); 6 new SQLite-side tests (tsquery building, factory, cross-backend 503s).
+- CI: `pgvector/pgvector:0.8.7-pg18` service container; tests run with `EASA_TEST_POSTGRES_URL`; `alembic upgrade head` + `alembic check` also run on PostgreSQL.
+- Docs: DATABASE_DESIGN (section 9 rewritten, 8 and 8.1), DEVELOPMENT_GUIDE section 6c, LLD section 2.6f and test table, API spec (score meaning, 503 text), SECURITY (PostgreSQL controls, local database, supply chain), HLD, README, `apps/api/.env.example`, ADR-021.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `docker compose up -d postgres` | Healthy; PostgreSQL 18.7, pgvector 0.8.7 available; bound to `127.0.0.1:5433` |
+| `alembic upgrade head`, `alembic check`, `downgrade base`, `upgrade head` on PostgreSQL | All succeeded; "No new upgrade operations detected"; `vector` column type `vector`; GIN index `to_tsvector('english'::regconfig, text)` |
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL` set | All checks passed (pytest including the PostgreSQL suite) |
+| `uv run pytest` with PostgreSQL | 373 passed (195 unit, 131 integration, 3 real-model, 44 PostgreSQL); the PostgreSQL suite passed three times in a row; no throwaway databases left behind |
+| `uv run pytest` without PostgreSQL | 329 passed, 44 skipped |
+| First parity run | Two test-design failures, fixed: (1) the hashing embedder produces exactly tied scores and float32 rounding (about 2e-8) ordered ties differently at the top-k cut, so the test now compares complete rankings as groups of tied scores; (2) on empty tables the planner reasonably used the documents tenant index, so the GIN test now uses 2,000 chunks, `ANALYZE` and a rare term |
+| Live API on PostgreSQL with the real model (synthetic handbook and travel fixtures) | Readiness `ready`. Vacation query: semantic and hybrid return "Leave" (semantic 0.6843, same as SQLite in P3-M2), keyword returns nothing. "receipts deadline": all modes return travel.pdf page 2. "seat class on flights": all modes return travel.pdf page 1 |
+| `python -m app.cli embed-missing` on PostgreSQL | After deleting all 5 vectors, restored 5 vectors of 384 dimensions; search worked again |
+| Server log | 10 `search completed` lines with metadata only; none of the query texts appear. Server tree stopped |
+
+**Known limitations**
+
+- Exact vector search only: linear in a tenant's chunk count. HNSW (with iterative scans for filtered queries) is evaluated in P3-M5.
+- Keyword scores are backend-specific (BM25 vs `ts_rank_cd`) and not comparable across backends; rankings can differ slightly.
+- The container image is pinned by tag, not digest. Database connections are unencrypted (localhost only).
+- Converting an existing PostgreSQL database deletes its vectors; run `embed-missing` afterwards.
+
+**Exit criteria:** met. The full application runs on PostgreSQL + pgvector with the same API and migrations, results match the SQLite implementation up to float rounding, and CI tests both backends.

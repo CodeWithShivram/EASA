@@ -1,0 +1,29 @@
+# Local PostgreSQL 18 + pgvector for EASA (Phase 3, P3-M4). Development only.
+#
+#   docker compose up -d postgres      (from the repository root)
+#   docker compose down                (stop; add -v to also delete the data volume)
+#
+# The password comes from EASA_POSTGRES_PASSWORD in the git-ignored .env next to
+# this file (see .env.example). The port is bound to localhost only.
+name: easa
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18
+    environment:
+      POSTGRES_USER: easa
+      POSTGRES_DB: easa
+      POSTGRES_PASSWORD: ${EASA_POSTGRES_PASSWORD:?set EASA_POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${EASA_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/18/docker.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easa -d easa"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:

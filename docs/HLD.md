@@ -42,12 +42,12 @@ flowchart LR
 |---|---|---|
 | Web (`apps/web`) | Next.js 16 (App Router), React 19, strict TypeScript, Tailwind 4, Zod | Dashboard shell; API status card that calls readiness from the browser; every API response validated at runtime |
 | API (`apps/api`) | Python 3.14, FastAPI, Pydantic Settings, SQLAlchemy 2 | Strict configuration, correlation IDs, JSON logging, standard error envelope, liveness and readiness endpoints, session management |
-| Database | SQLite file (git-ignored) | `documents` and `document_chunks` (Phase 2, P2-M1); tenant-scoped repository |
+| Database | SQLite file (git-ignored) by default; PostgreSQL 18 + pgvector 0.8.7 (Docker Compose, P3-M4) | `documents`, `document_chunks` (Phase 2) and `chunk_embeddings` (P3-M1); tenant-scoped repositories. Keyword index: FTS5 on SQLite, a GIN full-text index on PostgreSQL. Vector search: NumPy brute force on SQLite, pgvector in the database on PostgreSQL |
 | File store | Local disk, content-addressed (git-ignored) | Stores uploaded bytes by SHA-256 |
 | Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3) |
-| Migrations | Alembic | Settings-driven environment; baseline plus the documents migration |
+| Migrations | Alembic | Settings-driven environment; the same migration chain on SQLite and PostgreSQL (backend-specific steps are no-ops elsewhere) |
 
-There is **no** authentication, retrieval, model integration or tool execution yet; document endpoints use a development-only identity. Those arrive in later phases (section 6).
+There is **no** authentication, model integration or tool execution yet; document endpoints use a development-only identity. Those arrive in later phases (section 6).
 
 ## 4. Target architecture (planned)
 
@@ -65,7 +65,7 @@ flowchart TB
     services --> agent["Agent and allowlisted tools (Phase 5)"]
     retrieval --> embed["Embedding provider interface"]
     rag --> model["Model provider interface (e.g. Ollama, optional)"]
-    repos --> pg[("PostgreSQL + pgvector (Phase 3)")]
+    repos --> pg[("SQLite or PostgreSQL + pgvector (Phase 3)")]
     services --> audit["Audit log"]
 ```
 
@@ -103,7 +103,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 |---|---|---|
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
-| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | In progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search done) |
+| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | In progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector done) |
 | 4 | Grounded RAG answering | Not started |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
@@ -117,7 +117,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 - Windows 11 company laptop with installation restrictions; no administrator rights; no system-level installs.
 - CPU-only inference baseline; no CUDA assumptions.
 - Python 3.14 and Node.js 24.13 as installed; dependencies must be compatible with them ([ADR-012](ARCHITECTURE_DECISIONS.md#adr-012)).
-- No paid services or API keys. PostgreSQL, Ollama and Docker are not used in Phase 1.
+- No paid services or API keys. Docker is optional (local PostgreSQL); Ollama is not used yet.
 
 ## 8. Quality attributes
 
@@ -126,8 +126,8 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (350 automated tests today: 323 backend, 27 frontend) |
-| Portability | SQLAlchemy and Alembic abstractions so PostgreSQL can replace SQLite ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003)) |
+| Testability | App factory, injected dependencies, deterministic tests (400 automated tests today: 373 backend including 44 PostgreSQL tests, 27 frontend) |
+| Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks
 

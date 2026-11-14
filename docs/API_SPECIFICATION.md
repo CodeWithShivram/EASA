@@ -229,7 +229,7 @@ Chunk text is document content: it is returned only to the owning tenant and is 
 | Request | JSON `{"query": string, "top_k": integer, "mode": string}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5; `mode`: `semantic` (default), `keyword` or `hybrid`. Unknown fields are rejected |
 | Validation | The query is normalized like chunk text (Unicode NFC, invisible characters removed, whitespace collapsed); a query that is empty after normalization is rejected. For keyword search, the query is reduced to at most 32 distinct word tokens, each quoted and joined with `OR`, so full-text query syntax (operators, column filters, quotes) cannot be injected; a query with no word characters returns no keyword results |
 | Response `200` | `{"mode": string, "model_id": string or null, "results": [{"score": number, "text": string, "citation": Citation}, ...]}`, ordered by score (highest first); ties are broken by chunk ID. `model_id` is `null` in `keyword` mode. `results` may be empty |
-| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields or modes); `422 empty_query`; `503 embeddings_unavailable` (`semantic` and `hybrid` only; `keyword` works without the model); `503 keyword_search_unavailable` (keyword index not supported by the database; PostgreSQL support arrives in P3-M4) |
+| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields or modes); `422 empty_query`; `503 embeddings_unavailable` (`semantic` and `hybrid` only; `keyword` works without the model); `503 keyword_search_unavailable` (the keyword implementation does not match the database; not expected in normal operation, since the implementation is chosen from the database) |
 | Audit | No audit record yet. One `search completed` log line with mode, model ID, `top_k`, result count and duration; **the query text is never logged** |
 
 Citation object:
@@ -247,8 +247,8 @@ Score meaning depends on the mode, and scores are never comparable across modes:
 
 | Mode | `score` |
 |---|---|
-| `semantic` | Cosine similarity between query and chunk embeddings (−1 to 1; vectors are L2-normalized). Comparable only within one `model_id`. With the `hashing` test provider it reflects word overlap, not meaning |
-| `keyword` | Negated BM25 rank from SQLite FTS5 (higher is better; unbounded). Porter stemming: "leave" matches "leaves" |
+| `semantic` | Cosine similarity between query and chunk embeddings (−1 to 1; vectors are L2-normalized), computed by NumPy on SQLite or by pgvector on PostgreSQL (equal up to float rounding). Comparable only within one `model_id`. With the `hashing` test provider it reflects word overlap, not meaning |
+| `keyword` | Database-specific relevance, higher is better. SQLite: negated FTS5 BM25 rank (unbounded). PostgreSQL: `ts_rank_cd` (0 or more). Both stem English words: "leave" matches "leaves" |
 | `hybrid` | Reciprocal Rank Fusion: the sum of `1 / (60 + rank)` over the semantic and keyword rankings (each taking the top `max(4 × top_k, 20)` candidates); at most 2/61 ≈ 0.0328 |
 
 None of these are probabilities.

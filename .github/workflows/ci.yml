@@ -19,6 +19,24 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    # PostgreSQL + pgvector for tests/postgres and the PostgreSQL migration check.
+    # A throwaway container that exists only for this job; the password is not a secret.
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18
+        env:
+          POSTGRES_USER: easa
+          POSTGRES_PASSWORD: ci-throwaway
+          POSTGRES_DB: easa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U easa -d easa"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PG_URL: postgresql+psycopg://easa:ci-throwaway@localhost:5432/easa
     steps:
       - uses: actions/checkout@v7
 
@@ -40,12 +58,21 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check .
 
-      - name: Tests
+      - name: Tests (including PostgreSQL)
+        env:
+          EASA_TEST_POSTGRES_URL: ${{ env.PG_URL }}
         run: uv run pytest
 
       - name: Migrations apply and match models
         env:
           EASA_DATABASE_URL: sqlite:///${{ runner.temp }}/ci.db
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+      - name: Migrations apply and match models (PostgreSQL)
+        env:
+          EASA_DATABASE_URL: ${{ env.PG_URL }}
         run: |
           uv run alembic upgrade head
           uv run alembic check

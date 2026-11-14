@@ -25,6 +25,7 @@
 | [ADR-018](#adr-018) | Local, pinned ONNX embeddings with versioned vectors | P3-M1 |
 | [ADR-019](#adr-019) | Vector-index interface with exact brute-force search first | P3-M2 |
 | [ADR-020](#adr-020) | SQLite FTS5 keyword search and reciprocal-rank-fusion hybrid | P3-M3 |
+| [ADR-021](#adr-021) | PostgreSQL + pgvector as a second backend with exact search | P3-M4 |
 
 ---
 
@@ -56,7 +57,7 @@
 - **Options considered:** (a) wait for PostgreSQL; (b) SQLite with raw SQL; (c) SQLite through SQLAlchemy 2 with portable migrations.
 - **Decision:** (c). A driver allowlist (`sqlite`, `sqlite+pysqlite`, `postgresql+psycopg`); SQLite foreign keys enabled per connection; constraint naming convention; Alembic batch mode on SQLite.
 - **Trade-offs:** SQLite differs from PostgreSQL (types, concurrency, `ALTER` support), so some issues will appear only after the switch.
-- **Consequences:** Business code never imports a driver. The switch requires installing `psycopg`, changing `EASA_DATABASE_URL` and running the migrations and tests against PostgreSQL.
+- **Consequences:** Business code never imports a driver. The switch requires installing `psycopg`, changing `EASA_DATABASE_URL` and running the migrations and tests against PostgreSQL. (Done in P3-M4; see [ADR-021](#adr-021).)
 
 <a id="adr-004"></a>
 ## ADR-004: Settings-driven Alembic with an empty baseline; no premature tables
@@ -251,12 +252,38 @@
 
 ---
 
+<a id="adr-021"></a>
+## ADR-021: PostgreSQL + pgvector as a second backend with exact search
+
+- **Status:** Accepted (P3-M4, 2026-11-14; Docker image pull, `psycopg` and `pgvector` approved in the P3-M4 plan)
+- **Context:** The roadmap targets PostgreSQL with pgvector. SQLite must stay the zero-setup default. PostgreSQL is not installed on the machine, but Docker Desktop is. Another local project already uses port 5432.
+- **Options considered:**
+  - Server: Docker Compose with `pgvector/pgvector` (pinned tag); a native PostgreSQL install (system-level software, not approved); a hosted database (paid, external).
+  - Vector storage: a portable column type (blob on SQLite, `vector` on PostgreSQL); a separate PostgreSQL-only table (duplicated model and repository code); a fixed-dimension `vector(384)` column (ties the table to one model).
+  - Vector search: exact `<=>` ordering; an HNSW index now.
+  - Keyword search: an expression GIN index on `to_tsvector('english', text)`; a stored generated `tsvector` column (an ORM schema difference between backends).
+- **Decision:**
+  - `compose.yaml` runs `pgvector/pgvector:0.8.7-pg18` on `127.0.0.1:5433` with the password from a git-ignored `.env`.
+  - `EmbeddingVector` keeps vectors as bytes in Python on both backends and maps to an undimensioned pgvector `vector` on PostgreSQL. One hand-written migration (no-op on SQLite) enables the extension, converts the column (deleting derived vectors) and adds the GIN index.
+  - `PgvectorIndex` and `PostgresKeywordIndex` implement the existing protocols; `build_indexes` chooses implementations from the session's dialect, so the service and API are unchanged.
+  - Exact search first; no HNSW index in P3-M4.
+  - `tests/postgres` runs against throwaway databases when `EASA_TEST_POSTGRES_URL` is set, and CI always runs it against a service container.
+- **Trade-offs:**
+  - Exact search scans all of a tenant's vectors for one model on every query: fine for the demo corpus, linear in size. With per-tenant filters an HNSW index can silently return fewer results unless tuned (`hnsw.iterative_scan`), so it is deferred to P3-M5, where recall is measured.
+  - An undimensioned column cannot carry an ANN index directly; a future HNSW index will be a partial expression index per model (`(vector::vector(384)) WHERE model_id = …`).
+  - The column conversion deletes existing vectors on PostgreSQL, accepted because they are derived data recreated by `embed-missing`.
+  - Keyword scores differ between backends (BM25 vs `ts_rank_cd`). `ts_rank_cd` ignores corpus-wide statistics, which also removes SQLite's cross-tenant scoring influence.
+  - Two backends to test; CI covers both.
+- **Consequences:** The same code, API and migration chain run on SQLite and PostgreSQL; results agree up to float rounding (tested). P3-M5 can evaluate exact search against HNSW on PostgreSQL.
+
+---
+
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
-| Embedding model and vector store details (pgvector index type) | 3 |
+| Approximate pgvector index (HNSW) versus exact search, based on measured recall and latency | 3 (P3-M5) |
 | Model provider (Ollama or another free option) behind the model interface | 4 |
 | Whether LangGraph is justified for agent workflows | 5 |

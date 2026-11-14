@@ -9,10 +9,10 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 
 | Item | Value |
 |---|---|
-| Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) |
-| Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored) |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`); SQLite FTS5 keyword index `chunk_fts` (section 8.1) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (head) |
+| Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) by default; PostgreSQL 18.7 with pgvector 0.8.7 through `psycopg` 3.3 (Docker Compose, section 9) |
+| Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored); PostgreSQL data lives in the Docker volume `easa_postgres-data` |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -110,7 +110,7 @@ uv run alembic upgrade head --sql
 uv run alembic revision --autogenerate -m "describe change"
 ```
 
-Tests confirm a single linear migration head, an upgrade/downgrade round trip, that the expected tables exist after upgrade, that models and migrations are in sync, and that the migrated keyword index matches the one the app module creates (section 8.1).
+Tests confirm a single linear migration head, an upgrade/downgrade round trip, that the expected tables exist after upgrade, that models and migrations are in sync, and that the migrated keyword index matches the one the app module creates (section 8.1). `tests/postgres` repeats the upgrade, downgrade and `alembic check` tests on PostgreSQL (section 9).
 
 Hand-written migrations: the FTS5 keyword index is not an ORM model, so [migrations/env.py](../apps/api/migrations/env.py) excludes it from autogenerate and `alembic check` through an `include_name` filter.
 
@@ -175,7 +175,7 @@ Naming convention ([app/db/base.py](../apps/api/app/db/base.py)):
 | `model_id` | varchar(200) | no | Model name **and revision**, e.g. `bge-small-en-v1.5@aa8f8b060edb`; primary key `(chunk_id, model_id)` (`pk_chunk_embeddings`) |
 | `tenant_id` | UUID | no | Copied from the chunk so search can filter by tenant before scoring |
 | `dimensions` | integer | no | `> 0` (`ck_chunk_embeddings_dimensions_positive`); 384 for the default model |
-| `vector` | binary | no | float32 little-endian, L2-normalized; `dimensions × 4` bytes (checked when decoding) |
+| `vector` | `EmbeddingVector` | no | float32 little-endian bytes in Python, L2-normalized; `dimensions × 4` bytes (checked when decoding). Stored as a blob on SQLite and as a pgvector `vector` (no fixed dimension) on PostgreSQL |
 | `created_at` | timestamp with time zone | no | UTC |
 
 Index `ix_chunk_embeddings_model_id_tenant_id` serves "all vectors of one model for one tenant".
@@ -184,7 +184,7 @@ Rules:
 - Vectors from different models never share a search space. Search will select a single `model_id`, and changing the model means embedding again under the new ID (old rows can stay until deleted).
 - Deleting or replacing chunks deletes their vectors (database-level cascade).
 - Chunks without a vector for the active model (e.g. the model was missing at upload time) are found and embedded by `uv run python -m app.cli embed-missing`.
-- PostgreSQL will store vectors in a `pgvector` column (P3-M4); the model and versioning rules stay the same.
+- On PostgreSQL the column is a pgvector `vector` without a fixed dimension, so one table holds several models; searches filter on `model_id` and `dimensions`, so vectors of different sizes are never compared. There is no approximate (HNSW/IVFFlat) index yet: search is exact (section 9).
 
 ### 8.1 Keyword index (Phase 3, implemented in P3-M3)
 
@@ -199,17 +199,28 @@ Rules:
 | Tenant and status filters | Not stored in the index; the search query joins back to `document_chunks` and `documents` and filters by tenant and `status = 'processed'` |
 
 Rules:
-- The migration creates the index and runs FTS5 `rebuild` to index existing chunks. On databases other than SQLite it is a no-op; PostgreSQL full-text search arrives in P3-M4.
+- The migration creates the index and runs FTS5 `rebuild` to index existing chunks. On PostgreSQL it is a no-op; PostgreSQL uses the GIN index below.
 - The join uses SQLite's implicit `rowid`. `VACUUM` may renumber rowids of tables without an `INTEGER PRIMARY KEY`, which would desynchronize the index, so after a `VACUUM` run `uv run python -m app.cli rebuild-keyword-index`.
 - Tests use `create_schema` (in `tests/conftest.py`), which runs `create_all` and then creates the index, matching what migrations produce.
 
-## 9. PostgreSQL path (Phase 3, P3-M4)
+On **PostgreSQL**, migration `e4353f12b34f` creates `ix_document_chunks_text_tsv`, a GIN index on `to_tsvector('english', text)` (English stemming and stop words). It is an expression index, so there are no triggers or extra columns, and it follows every chunk change automatically. Queries must use exactly the same expression (`POSTGRES_KEYWORD_SQL` in [app/retrieval/keyword.py](../apps/api/app/retrieval/keyword.py)); a test checks with `EXPLAIN` that the planner uses the index. Both keyword index objects are excluded from autogenerate by `is_keyword_index_object`.
 
-1. Install the `psycopg` driver (allowed by configuration today, not installed).
-2. Point `EASA_DATABASE_URL` at PostgreSQL and run `alembic upgrade head`.
-3. Add the `pgvector` extension through a migration, and a PostgreSQL full-text keyword index to replace FTS5.
-4. Run the integration tests against a real PostgreSQL instance.
+## 9. PostgreSQL + pgvector (Phase 3, implemented in P3-M4)
+
+| Item | Value |
+|---|---|
+| Server | `pgvector/pgvector:0.8.7-pg18` from [compose.yaml](../compose.yaml): PostgreSQL 18.7, pgvector 0.8.7, bound to `127.0.0.1:5433`, data in a named volume |
+| Driver | `psycopg[binary]` 3.3 (`postgresql+psycopg://…`); the `pgvector` Python package provides the SQLAlchemy `VECTOR` type |
+| Migrations | The same chain as SQLite. `e4353f12b34f` (PostgreSQL only): `CREATE EXTENSION vector`, converts `chunk_embeddings.vector` from `bytea` to `vector` (existing rows are deleted, as vectors are derived data; run `embed-missing`), and creates the GIN full-text index. Its downgrade restores `bytea` (again deleting vectors), drops the index and the extension |
+| Vector search | `PgvectorIndex`: `ORDER BY vector <=> :query, chunk_id LIMIT k` with tenant, status, model and dimension filters in the same query. Exact (no ANN index); scores are `1 - cosine distance` and match the brute-force index up to float rounding (tested) |
+| Keyword search | `PostgresKeywordIndex`: `to_tsquery('english', …)` built from quoted word tokens joined with `|`, ranked with `ts_rank_cd` (per-chunk, no corpus-wide statistics) |
+| Selection | `build_indexes(session)` picks the implementations from the session's dialect |
+| Types | `Uuid` is native `uuid`; `UtcDateTime` is `timestamptz`; `EmbeddingVector` is `vector` |
+
+Verified on PostgreSQL: upgrade to head, `alembic check` (no drift), downgrade to base and upgrade again, and the full application (upload, processing, embedding, all search modes, `embed-missing`), both through tests and live.
+
+Not done yet: an approximate index (HNSW) and its recall/latency trade-off (P3-M5), connection-pool tuning, backups.
 
 ## 10. Data handling
 
-Only synthetic data is stored. Database files are git-ignored (`var/`, `*.db` with its journal, WAL and SHM files, `*.sqlite`, `*.sqlite3`). There is no backup or retention policy in Phase 1 because nothing of value is stored.
+Only synthetic data is stored, in SQLite files and in the local PostgreSQL volume. Database files are git-ignored (`var/`, `*.db` with its journal, WAL and SHM files, `*.sqlite`, `*.sqlite3`). There is no backup or retention policy in Phase 1 because nothing of value is stored.

@@ -1,6 +1,6 @@
-"""SQLite FTS5 keyword index over document chunks.
+"""Keyword (full-text) index over document chunks, per database backend.
 
-An external-content FTS5 table: it indexes ``document_chunks.text`` without
+SQLite: an external-content FTS5 table: it indexes ``document_chunks.text`` without
 storing a second copy and is kept in sync by triggers (which also fire for
 foreign-key cascade deletes). It is keyed on the chunk table's implicit
 ``rowid``; if a VACUUM ever renumbers rowids, run
@@ -8,12 +8,18 @@ foreign-key cascade deletes). It is keyed on the chunk table's implicit
 
 The same statements are in migration ``add keyword index``; a test checks that
 a migrated database and this module produce identical schema objects.
-PostgreSQL keyword search is a separate implementation (Phase 3, P3-M4).
+
+PostgreSQL: a GIN expression index on ``to_tsvector('english', text)``, created
+by migration ``add postgres search``. Queries must use the same expression
+(``POSTGRES_TSVECTOR``) for the index to apply.
 """
 
 from sqlalchemy import Connection, text
 
 FTS_TABLE = "chunk_fts"
+
+POSTGRES_FTS_INDEX = "ix_document_chunks_text_tsv"
+POSTGRES_TS_CONFIG = "english"
 
 KEYWORD_INDEX_DDL = (
     "CREATE VIRTUAL TABLE chunk_fts USING fts5("
@@ -41,5 +47,11 @@ def rebuild_keyword_index(connection: Connection) -> None:
 
 
 def is_keyword_index_object(name: str | None) -> bool:
-    """FTS5 tables and their shadow tables (chunk_fts_data, ...); not ORM-managed."""
-    return bool(name) and (name == FTS_TABLE or name.startswith(f"{FTS_TABLE}_"))
+    """Hand-made keyword index objects that the ORM does not manage.
+
+    The FTS5 table and its shadow tables (chunk_fts_data, ...) on SQLite, and the
+    GIN full-text index on PostgreSQL.
+    """
+    if not name:
+        return False
+    return name in (FTS_TABLE, POSTGRES_FTS_INDEX) or name.startswith(f"{FTS_TABLE}_")
