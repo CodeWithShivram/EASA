@@ -24,6 +24,7 @@
 | [ADR-017](#adr-017) | Character-based, structure-aware chunking with exact offsets | P2-M4 |
 | [ADR-018](#adr-018) | Local, pinned ONNX embeddings with versioned vectors | P3-M1 |
 | [ADR-019](#adr-019) | Vector-index interface with exact brute-force search first | P3-M2 |
+| [ADR-020](#adr-020) | SQLite FTS5 keyword search and reciprocal-rank-fusion hybrid | P3-M3 |
 
 ---
 
@@ -224,6 +225,29 @@
   - Search results are enriched with a second tenant-scoped query.
 - **Trade-offs:** The cost is linear in the tenant's chunk count for every query (about 30 ms server-side on the demo corpus). Fine for thousands of chunks, not for millions. Exact results, so there are no recall losses to tune.
 - **Consequences:** Retrieval correctness and isolation are tested independently of any index technology. pgvector (P3-M4) becomes a second implementation of the same protocol, and results can be compared against the exact baseline in the evaluation (P3-M5).
+
+---
+
+<a id="adr-020"></a>
+## ADR-020: SQLite FTS5 keyword search and reciprocal-rank-fusion hybrid
+
+- **Status:** Accepted (P3-M3, 2026-11-14)
+- **Context:** Semantic search misses exact terms such as codes, names and rare words, while keyword search misses paraphrases ("vacation" vs "annual leave"). The roadmap asks for keyword and hybrid retrieval. The database is SQLite today and PostgreSQL in P3-M4.
+- **Options considered:**
+  - Keyword: SQLite FTS5 (built into Python's `sqlite3`, BM25 ranking, stemming); a Python BM25 library over all chunks in memory (new dependency, index rebuilt per process); `LIKE` queries (no ranking).
+  - Hybrid: weighted sum of normalized scores (needs per-query score normalization and a tuned weight); reciprocal rank fusion (rank-based, no tuning).
+- **Decision:**
+  - An external-content FTS5 table over `document_chunks.text`, kept in sync by triggers and created by a hand-written migration (excluded from autogenerate). Porter stemming with Unicode folding.
+  - Tenant and status filters are applied in the same SQL query as the `MATCH`, by joining back to the chunk and document tables.
+  - User text is never passed as FTS5 syntax: it is reduced to quoted word tokens joined with `OR`.
+  - `KeywordIndex` is a protocol, like `VectorIndex`; a PostgreSQL implementation follows in P3-M4. On other databases the SQLite implementation returns `503 keyword_search_unavailable` instead of failing.
+  - Hybrid mode fuses the top `max(4 × top_k, 20)` candidates of each ranking with reciprocal rank fusion (`k = 60`, the value from the original RRF paper). The request's `mode` defaults to `semantic`, so existing clients are unaffected.
+- **Trade-offs:**
+  - FTS5's BM25 statistics span all tenants, so scores are slightly influenced by other tenants' text (rows are still filtered); accepted for the development build and documented in [SECURITY.md](SECURITY.md).
+  - The index is keyed on SQLite's implicit `rowid`, which `VACUUM` may renumber, hence the `rebuild-keyword-index` command.
+  - `OR` matching favours recall over precision; BM25 ranking puts chunks matching more terms first.
+  - RRF ignores score magnitudes, so a near-perfect match counts no more than a weak first place; in exchange it needs no score normalization or weight tuning. Hybrid scores are not comparable with the other modes.
+- **Consequences:** The search API offers three modes behind one endpoint, and keyword search keeps working when the embedding model is missing. The evaluation (P3-M5) can compare the modes on the same dataset.
 
 ---
 

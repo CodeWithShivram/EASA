@@ -23,9 +23,10 @@ def search(
     service: Annotated[SearchService, Depends(get_search_service)],
     identity: Annotated[Identity, Depends(get_identity)],
 ) -> SearchResponse:
-    """Semantic search over the current tenant's processed documents, with citations."""
-    result = service.search(identity, request.query, top_k=request.top_k)
+    """Semantic, keyword or hybrid search over the tenant's processed documents, with citations."""
+    result = service.search(identity, request.query, top_k=request.top_k, mode=request.mode)
     return SearchResponse(
+        mode=result.mode,
         model_id=result.model_id,
         results=[
             SearchHitResponse(

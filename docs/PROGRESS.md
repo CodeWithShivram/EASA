@@ -498,8 +498,8 @@ Decisions approved 2026-11-14:
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
 | P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | `2691620` |
-| P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | the commit that adds this row |
-| P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | NOT STARTED | |
+| P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | `d6e8781` |
+| P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | COMPLETE | the commit that adds this row |
 | P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | NOT STARTED | |
 | P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | NOT STARTED | |
 
@@ -585,3 +585,43 @@ Fixed during the work:
 - Scores are cosine similarities, not calibrated relevance probabilities.
 
 **Exit criteria:** met. Tenant-isolated, exact semantic search with citations works end to end with the real model, and isolation and filtering are covered by tests.
+
+## P3-M3: Keyword and hybrid search
+
+**Scope:** SQLite FTS5 keyword index and BM25 search, Reciprocal Rank Fusion hybrid, and a `mode` parameter on `POST /api/v1/search`. No PostgreSQL keyword search (P3-M4), no evaluation dataset (P3-M5). No new dependencies.
+
+**Implemented**
+
+- `app/db/fts.py` and migration `6d544dac46b3` (hand-written; SQLite only, a no-op elsewhere):
+  - The external-content FTS5 table `chunk_fts` over `document_chunks.text`, tokenizer `porter unicode61 remove_diacritics 2`.
+  - Insert, delete and update triggers; existing chunks indexed with `rebuild`.
+  - `migrations/env.py` excludes the FTS tables from autogenerate (`include_name`), so `alembic check` stays clean.
+- `app/retrieval/keyword.py`:
+  - `build_match_query`: at most 32 distinct word tokens, each quoted, joined with `OR`, so user text is never parsed as FTS5 syntax.
+  - `SqliteKeywordIndex`: BM25 search with tenant and processed-status filters in the same query; `503 keyword_search_unavailable` on other databases.
+- `app/retrieval/hybrid.py`: `reciprocal_rank_fusion` (`k = 60`, ties broken by chunk ID).
+- `SearchService`: modes `semantic` (default), `keyword` (needs no embedder; `model_id` is `null`) and `hybrid` (fuses `max(4 × top_k, 20)` candidates from each ranking). The log line now includes the mode.
+- `POST /api/v1/search`: optional `mode`; the response includes `mode`.
+- CLI: `python -m app.cli rebuild-keyword-index` (for use after `VACUUM`).
+- Tests: `create_schema` helper (tables plus keyword index, like migrations); keyword index tests (stemming, ranking, hostile FTS syntax, tenant and status isolation, trigger synchronization, rebuild command); RRF and query-building unit tests; search API tests for all modes; migration tests for the FTS index (parity with the app module, downgrade).
+- Docs: API spec section 3.5, DATABASE_DESIGN section 8.1 (and the migration chain, missing `29b0c28209aa` since P3-M1), LLD section 2.6e and test counts, SECURITY (search controls, now under their own heading, and the BM25 cross-tenant statistics note), DEVELOPMENT_GUIDE (mode example, keyword index section), HLD, README, ADR-020.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` | All checks passed: `uv sync --locked`, ruff format, ruff check, pytest, Alembic upgrade + `alembic check` on a temporary database ("No new upgrade operations detected") |
+| `uv run pytest` (model downloaded locally) | 323 passed (191 unit, 129 integration, 3 real-model); 40 new tests |
+| FTS5 behaviour probes (scratch database) | Triggers fire on foreign-key cascade deletes; Porter stemming matches "leaves" for "leave" |
+| `uv run alembic upgrade head` (development database) | Upgraded to `6d544dac46b3` |
+| `uv run python -m app.cli rebuild-keyword-index` (development database) | Exit code 0, `keyword index rebuilt` |
+| Live server with the real model, same queries in all three modes | "How much vacation time do staff get?": keyword returns nothing (no shared words), semantic and hybrid return the "Leave" section. "receipts deadline": all three modes return travel.pdf page 2. Server tree stopped |
+
+**Known limitations**
+
+- BM25 term statistics span all tenants, so keyword scores are slightly influenced by other tenants' text (rows are still filtered). Documented in SECURITY.md; to be revisited before real multi-tenant use.
+- Keyword search exists only on SQLite until P3-M4.
+- The exact-term comparison in the live test was not discriminative: the document with a code ("HR-217") became a single chunk, so every mode found it. P3-M5 needs evaluation cases where exact terms actually separate the modes.
+- `OR` matching favours recall; hybrid scores are rank-based and not comparable with the other modes.
+
+**Exit criteria:** met. Keyword and hybrid search work end to end with tenant isolation, injection-safe queries and an index that follows chunk changes, all covered by tests.

@@ -13,6 +13,7 @@ from sqlalchemy.engine import make_url
 from app.core.config import load_settings
 from app.core.logging import configure_logging
 from app.db.engine import create_db_engine
+from app.db.fts import is_keyword_index_object
 from app.db.models import Base
 from app.db.types import UtcDateTime
 
@@ -23,6 +24,12 @@ database_url = settings.database_url.get_secret_value()
 target_metadata = Base.metadata
 # SQLite cannot ALTER most constraints; batch mode recreates tables instead.
 render_as_batch = make_url(database_url).get_backend_name() == "sqlite"
+
+
+def include_name(name: str | None, type_: str, parent_names: object) -> bool:
+    # The FTS5 keyword index (and its shadow tables) is managed by hand-written
+    # migrations, not by the ORM, so autogenerate and `alembic check` ignore it.
+    return not (type_ == "table" and is_keyword_index_object(name))
 
 
 def render_item(type_: str, obj: Any, autogen_context: AutogenContext) -> str | bool:
@@ -41,6 +48,7 @@ def run_migrations_offline() -> None:
         compare_type=True,
         render_as_batch=render_as_batch,
         render_item=render_item,
+        include_name=include_name,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -58,6 +66,7 @@ def run_migrations_online() -> None:
                 compare_type=True,
                 render_as_batch=render_as_batch,
                 render_item=render_item,
+                include_name=include_name,
             )
             with context.begin_transaction():
                 context.run_migrations()

@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health, document (Phase 2) and semantic search (Phase 3, P3-M2) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) and search (Phase 3: semantic, keyword, hybrid) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -219,18 +219,18 @@ Chunk object:
 
 Chunk text is document content: it is returned only to the owning tenant and is never written to logs.
 
-### 3.5 `POST /api/v1/search` — semantic search (Phase 3, development only)
+### 3.5 `POST /api/v1/search` — semantic, keyword and hybrid search (Phase 3, development only)
 
 | Item | Specification |
 |---|---|
-| Purpose | Find the chunks of the current tenant's documents most similar in meaning to a query, with citations |
+| Purpose | Find the chunks of the current tenant's documents that best match a query, with citations. Modes: `semantic` (embedding similarity), `keyword` (BM25 full-text search) or `hybrid` (both, fused) |
 | Authentication / authorization | As for document endpoints: development identity; only the identity's tenant is searched. The tenant, "processed documents only" and embedding-model filters are applied in the database query **before** any scoring, so other tenants' content is never scored or returned |
 | Availability | Not mounted when `EASA_ENVIRONMENT=production` |
-| Request | JSON `{"query": string, "top_k": integer}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5. Unknown fields are rejected |
-| Validation | The query is normalized like chunk text (Unicode NFC, invisible characters removed, whitespace collapsed); a query that is empty after normalization is rejected |
-| Response `200` | `{"model_id": string, "results": [{"score": number, "text": string, "citation": Citation}, ...]}`, ordered by score (highest first); ties are broken by chunk ID. `results` may be empty |
-| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields); `422 empty_query`; `503 embeddings_unavailable` (embedding model not downloaded) |
-| Audit | No audit record yet. One `search completed` log line with model ID, `top_k`, result count and duration; **the query text is never logged** |
+| Request | JSON `{"query": string, "top_k": integer, "mode": string}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5; `mode`: `semantic` (default), `keyword` or `hybrid`. Unknown fields are rejected |
+| Validation | The query is normalized like chunk text (Unicode NFC, invisible characters removed, whitespace collapsed); a query that is empty after normalization is rejected. For keyword search, the query is reduced to at most 32 distinct word tokens, each quoted and joined with `OR`, so full-text query syntax (operators, column filters, quotes) cannot be injected; a query with no word characters returns no keyword results |
+| Response `200` | `{"mode": string, "model_id": string or null, "results": [{"score": number, "text": string, "citation": Citation}, ...]}`, ordered by score (highest first); ties are broken by chunk ID. `model_id` is `null` in `keyword` mode. `results` may be empty |
+| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields or modes); `422 empty_query`; `503 embeddings_unavailable` (`semantic` and `hybrid` only; `keyword` works without the model); `503 keyword_search_unavailable` (keyword index not supported by the database; PostgreSQL support arrives in P3-M4) |
+| Audit | No audit record yet. One `search completed` log line with mode, model ID, `top_k`, result count and duration; **the query text is never logged** |
 
 Citation object:
 
@@ -243,7 +243,15 @@ Citation object:
 | `chunk_index` | integer | |
 | `char_start`, `char_end` | integer | Offsets into the document's canonical normalized text |
 
-`score` is the cosine similarity between the query and chunk embeddings (vectors are L2-normalized). Scores are comparable only within one `model_id`, and they are not probabilities. With the `hashing` test provider, scores reflect word overlap, not meaning.
+Score meaning depends on the mode, and scores are never comparable across modes:
+
+| Mode | `score` |
+|---|---|
+| `semantic` | Cosine similarity between query and chunk embeddings (−1 to 1; vectors are L2-normalized). Comparable only within one `model_id`. With the `hashing` test provider it reflects word overlap, not meaning |
+| `keyword` | Negated BM25 rank from SQLite FTS5 (higher is better; unbounded). Porter stemming: "leave" matches "leaves" |
+| `hybrid` | Reciprocal Rank Fusion: the sum of `1 / (60 + rank)` over the semantic and keyword rankings (each taking the top `max(4 × top_k, 20)` candidates); at most 2/61 ≈ 0.0328 |
+
+None of these are probabilities.
 
 ## 4. Headers
 
@@ -262,7 +270,7 @@ Citation object:
 | `/api/v1/auth` | Sign-in and identity | 6 |
 | `/api/v1/users` | User and role management | 6 |
 | `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
-| `/api/v1/search` | Semantic search **implemented** (section 3.5); keyword and hybrid modes in P3-M3 | 3 |
+| `/api/v1/search` | Semantic, keyword and hybrid search **implemented** (section 3.5) | 3 |
 | `/api/v1/chat` | Grounded question answering with citations | 4 |
 | `/api/v1/conversations` | Conversation history | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |

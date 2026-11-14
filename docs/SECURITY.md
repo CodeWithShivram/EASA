@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -20,7 +20,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | Surface | Exposure |
 |---|---|
 | `GET /api/v1/health`, `GET /api/v1/health/ready` | Public, unauthenticated; coarse status only |
-| `POST /api/v1/search` | Development only; development identity; searches the identity's tenant only; returns chunk text with citations |
+| `POST /api/v1/search` | Development only; development identity; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
 | `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Development only (not mounted in production); no authentication; act as a fixed development identity ([ADR-014](ARCHITECTURE_DECISIONS.md#adr-014)); accept untrusted files and parse them in the API process |
 | `/docs`, `/openapi.json` | Available outside `production` |
 | Web dashboard | Static page; calls readiness from the browser without credentials |
@@ -106,15 +106,25 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | Embedding logs carry document ID, model ID, counts and error type only, never chunk text | [documents.py](../apps/api/app/services/documents.py) |
 | Unit tests and CI use a deterministic, offline hashing embedder; real-model checks run only where the model is present | [hashing.py](../apps/api/app/embeddings/hashing.py), `tests/model/` |
 
-| Search filters by tenant, processed status and model inside the SQL query, before any vector is scored: another tenant's chunk is never scored, so it cannot leak through ranking, scores or timing differences | [brute_force.py](../apps/api/app/retrieval/brute_force.py) — tested (cross-tenant and status tests) |
-| Search result details are loaded with a second tenant-scoped query (defence in depth) | [documents.py](../apps/api/app/repositories/documents.py) |
-| Search requests reject unknown fields (a client cannot pass a `tenant_id`), cap the query at 1,000 characters and `top_k` at 50, and normalize the query like chunk text | [search.py](../apps/api/app/schemas/search.py), [search.py](../apps/api/app/services/search.py) — tested |
-| The query text is never logged; the `search completed` line carries model ID, `top_k`, result count and duration only | [search.py](../apps/api/app/services/search.py) — tested and verified on a live server |
-
 Model files are trusted as pinned upstream artifacts; their integrity relies on Hugging Face's revision and hash checks in `huggingface_hub`.
 
+### Search (Phase 3, P3-M2 and P3-M3)
+
+| Control | Where |
+|---|---|
+| Semantic search filters by tenant, processed status and model inside the SQL query, before any vector is scored: another tenant's chunk is never scored, so it cannot leak through ranking, scores or timing differences | [brute_force.py](../apps/api/app/retrieval/brute_force.py) — tested (cross-tenant and status tests) |
+| Search result details are loaded with a second tenant-scoped query (defence in depth) | [documents.py](../apps/api/app/repositories/documents.py) |
+| Keyword search filters by tenant (on both the chunk and the document) and processed status in the same SQL query as the FTS5 `MATCH`; other tenants' rows are never returned | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested (cross-tenant and status tests) |
+| User text never reaches FTS5 query syntax: the query is reduced to at most 32 `\w+` tokens, each double-quoted (tokens cannot contain quotes) and joined with `OR`, then passed as a bound parameter. Operators (`NEAR`, `AND`, `NOT`), column filters, prefix `*`, `^` and unbalanced quotes are neutralized | [keyword.py](../apps/api/app/retrieval/keyword.py) — tested with hostile queries |
+| Hybrid search only fuses the outputs of the two tenant-filtered searches; it adds no data access of its own | [hybrid.py](../apps/api/app/retrieval/hybrid.py) |
+| The keyword index follows chunk inserts, updates, replacements and cascade deletes through triggers, so deleted text stops being searchable immediately; `rebuild-keyword-index` resynchronizes it (e.g. after `VACUUM`) | [fts.py](../apps/api/app/db/fts.py) — tested (FTS5 `integrity-check`) |
+| Search requests reject unknown fields and modes (a client cannot pass a `tenant_id`), cap the query at 1,000 characters and `top_k` at 50, and normalize the query like chunk text | [search.py](../apps/api/app/schemas/search.py), [search.py](../apps/api/app/services/search.py) — tested |
+| The query text is never logged; the `search completed` line carries mode, model ID, `top_k`, result count and duration only | [search.py](../apps/api/app/services/search.py) — tested (all modes) and verified on a live server |
+
+**Known limitation (keyword search):** BM25 uses term statistics (document frequency, average length) computed over the whole FTS5 table, which holds every tenant's chunks. Results are filtered to the caller's tenant, but their **scores and order** are slightly influenced by other tenants' text. In theory, repeated probing could reveal whether a rare term is common elsewhere. This is accepted for the single-tenant development build; per-tenant indexes or a PostgreSQL implementation with per-tenant statistics would remove it, and it must be revisited before real multi-tenant use (Phase 6).
+
 ### Database
-- Parameterized access through SQLAlchemy; the only raw SQL is the constant `SELECT 1` probe.
+- Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, the constant FTS5 DDL and rebuild statements, and the keyword search query, whose values (match expression, tenant, status, limit) are all bound parameters.
 - Foreign keys enforced on SQLite connections.
 - Schema changes only through reviewed Alembic migrations.
 
@@ -164,9 +174,10 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 310 tests; 3 real-model tests skip without the model):
+**Automated tests** (part of the 323 backend tests; 3 real-model tests skip without the model):
 
-- Search: another tenant's matching document never appears, even with `top_k=50`; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) are rejected; the query is not logged; `503` when the model is missing; not mounted in production.
+- Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
+- Keyword index: FTS5 syntax in queries (`NEAR(...)`, unbalanced quotes, column filters, `*`, `AND NOT`, `^`) is harmless; queries without words return nothing; the index follows chunk replacement, text updates and cascade deletes (FTS5 `integrity-check` passes); the migrated index matches the application module.
 
 - Embeddings: one vector per chunk under the model's versioned ID; failed documents never embedded; embedding failures leave the document processed and are backfilled; vectors deleted with their chunks; readiness reports a missing model; the CLI refuses to run without the model.
 

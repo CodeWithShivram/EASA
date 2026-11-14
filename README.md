@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) in progress: embeddings and semantic search done.**
+> **Status: Phase 3 (Embeddings and Retrieval) in progress: embeddings plus semantic, keyword and hybrid search done.**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -63,7 +63,7 @@ Endpoints:
 | `POST /api/v1/documents` | Upload a PDF, DOCX or UTF-8 TXT file (validated; identical content returns the existing document). Development only |
 | `GET /api/v1/documents`, `GET /api/v1/documents/{id}` | List and get the current tenant's documents. Development only |
 | `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets. Development only |
-| `POST /api/v1/search` | Semantic search over the current tenant's documents, with citations. Development only |
+| `POST /api/v1/search` | Semantic, keyword (BM25) or hybrid search over the current tenant's documents, with citations. Development only |
 | `GET /docs` | OpenAPI UI (disabled when `EASA_ENVIRONMENT=production`) |
 
 Every response carries a server-generated `X-Correlation-ID` header. That ID also appears in the JSON logs and in error bodies (`{"error": {"code", "message", "correlation_id"}}`).

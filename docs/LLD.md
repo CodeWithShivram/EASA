@@ -17,14 +17,16 @@ easa/
                            uploads.py (upload validation), documents.py (DocumentService)
       schemas/             health.py, documents.py (response models)
       db/                  engine.py, session.py, base.py, models.py, probe.py,
-                           types.py (UtcDateTime), documents.py (Document, DocumentChunk)
+                           types.py (UtcDateTime), documents.py (Document, DocumentChunk),
+                           embeddings.py (ChunkEmbedding), fts.py (FTS5 keyword index DDL)
       repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
       embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
                            hashing.py (test embedder), factory.py (provider + download)
-      retrieval/           base.py (VectorIndex protocol), brute_force.py (exact search)
+      retrieval/           base.py (VectorIndex protocol), brute_force.py (exact search),
+                           keyword.py (FTS5 BM25 search), hybrid.py (reciprocal rank fusion)
       storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
     migrations/            Alembic env.py, script template, versions/
-    tests/                 unit/ and integration/
+    tests/                 unit/, integration/ and model/ (real embedding model)
     alembic.ini, pyproject.toml, uv.lock, .env.example
   apps/web/                Next.js frontend
     src/app/               layout.tsx, page.tsx, globals.css
@@ -157,14 +159,27 @@ stateDiagram-v2
 - [repositories/embeddings.py](../apps/api/app/repositories/embeddings.py): `add`, `chunks_without_embedding(model_id)` (chunks of processed documents only), `vectors_for_document(tenant_id, …)`; float32 encoding and decoding with a dimension check.
 - Processing: after a document commits as `processed`, `DocumentService._embed` embeds its chunks as a separate unit of work. A failure is rolled back and logged as `document embedding skipped` (with the error type), and the document stays `processed`.
 - `app.state.embedder` is built at startup (model loaded on first use) and is also the readiness probe (`checks.embeddings`).
-- [cli.py](../apps/api/app/cli.py): `python -m app.cli download-embedding-model` and `python -m app.cli embed-missing [--limit N]`.
+- [cli.py](../apps/api/app/cli.py): `python -m app.cli download-embedding-model`, `python -m app.cli embed-missing [--limit N]` and `python -m app.cli rebuild-keyword-index` (section 2.6e).
 
-### 2.6d Semantic search (P3-M2)
+### 2.6d Semantic search (P3-M2) and search modes (P3-M3)
 
 - [retrieval/base.py](../apps/api/app/retrieval/base.py): the `VectorIndex` protocol, `search(tenant_id, model_id, query_vector, top_k) -> [ScoredChunk(chunk_id, score)]`. Implementations must filter by tenant, processed status and model **before** scoring.
 - [retrieval/brute_force.py](../apps/api/app/retrieval/brute_force.py) `BruteForceVectorIndex`: one SQL query joins `chunk_embeddings` → `document_chunks` → `documents`, filtered by `model_id`, `tenant_id` (on both the vector and the document) and `status = processed`. Rows are streamed in batches of 5,000 (`yield_per`), so memory is bounded by the batch size, and each batch is scored with one matrix-vector product. A running top-k is kept; ties are broken by chunk ID so results are deterministic and independent of batch size. Works on any SQL backend; exact.
-- [services/search.py](../apps/api/app/services/search.py) `SearchService.search(identity, query, top_k)`: normalizes the query like chunk text; rejects empty (`empty_query`) or out-of-range input; returns `503 embeddings_unavailable` when the model is missing. It embeds the query with `Embedder.embed_query` (fastembed's query handling for the ONNX model), asks the index, then loads chunk and document details in one tenant-scoped query (`DocumentRepository.chunks_with_documents`). It logs metadata only (never the query).
-- [routes/search.py](../apps/api/app/api/v1/routes/search.py): `POST /api/v1/search` (`SearchRequest` forbids unknown fields) → `SearchResponse` with a `Citation` per hit. Mounted only outside production, next to the document routes.
+- [services/search.py](../apps/api/app/services/search.py) `SearchService(session, embedder, index, keyword_index).search(identity, query, *, top_k, mode=semantic)`: normalizes the query like chunk text; rejects empty (`empty_query`) or out-of-range input; returns `503 embeddings_unavailable` when the model is missing (not in `keyword` mode, which needs no embedder). Per mode:
+  - `semantic`: embeds the query with `Embedder.embed_query` (fastembed's query handling for the ONNX model) and asks the `VectorIndex`.
+  - `keyword`: asks the `KeywordIndex` protocol (`search(tenant_id, query, top_k)`); `model_id` in the result is `None`.
+  - `hybrid`: takes `max(4 × top_k, 20)` candidates (`MIN_HYBRID_CANDIDATES`) from both rankings and fuses them with reciprocal rank fusion.
+
+  It then loads chunk and document details in one tenant-scoped query (`DocumentRepository.chunks_with_documents`), skipping chunks deleted in between. It logs mode, model ID, `top_k`, result count and duration, never the query.
+- [routes/search.py](../apps/api/app/api/v1/routes/search.py): `POST /api/v1/search` (`SearchRequest` forbids unknown fields; `mode` is a `SearchMode` enum) → `SearchResponse` (`mode`, nullable `model_id`) with a `Citation` per hit. Mounted only outside production, next to the document routes. `get_search_service` wires `BruteForceVectorIndex` and `SqliteKeywordIndex` to the request session.
+
+### 2.6e Keyword and hybrid retrieval (P3-M3)
+
+- [db/fts.py](../apps/api/app/db/fts.py): `KEYWORD_INDEX_DDL` (the external-content FTS5 table `chunk_fts` plus insert, delete and update triggers on `document_chunks`), `create_keyword_index`, `rebuild_keyword_index` and `is_keyword_index_object` (used by the Alembic `include_name` filter). The migration `6d544dac46b3` contains the same statements; a test compares the two. See [DATABASE_DESIGN.md section 8.1](DATABASE_DESIGN.md#81-keyword-index-phase-3-implemented-in-p3-m3).
+- [retrieval/keyword.py](../apps/api/app/retrieval/keyword.py):
+  - `build_match_query(query)`: lower-cases, extracts `\w+` tokens, removes duplicates, keeps at most `MAX_QUERY_TERMS` (32), quotes each token and joins them with `OR`. Returns `None` when there are no tokens. User text never reaches FTS5 query syntax directly.
+  - `SqliteKeywordIndex.search(tenant_id, query, top_k)`: one SQL query joins `chunk_fts` → `document_chunks` (by `rowid`) → `documents`, filtered by tenant (on both the chunk and the document) and `status = processed`, ordered by `bm25()` then chunk ID. The score is `-bm25` (higher is better). On a database other than SQLite it raises `503 keyword_search_unavailable`.
+- [retrieval/hybrid.py](../apps/api/app/retrieval/hybrid.py) `reciprocal_rank_fusion(rankings, *, top_k, k=60)`: each chunk scores `Σ 1 / (k + rank)` over the rankings it appears in (rank starts at 1). Only positions matter, so BM25 and cosine scores never need to be put on one scale. Ties are broken by chunk ID.
 
 ### 2.7 Health — routes, service, probe
 
@@ -230,8 +245,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 179 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies |
-| Backend integration | `apps/api/tests/integration/` | 101 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 191 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS query building |
+| Backend integration | `apps/api/tests/integration/` | 129 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 

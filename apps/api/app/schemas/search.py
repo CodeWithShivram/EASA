@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.search import MAX_QUERY_CHARS, MAX_TOP_K
+from app.services.search import MAX_QUERY_CHARS, MAX_TOP_K, SearchMode
 
 
 class SearchRequest(BaseModel):
@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=MAX_QUERY_CHARS)
     top_k: int = Field(default=5, ge=1, le=MAX_TOP_K)
+    mode: SearchMode = SearchMode.SEMANTIC
 
 
 class Citation(BaseModel):
@@ -31,5 +32,7 @@ class SearchHitResponse(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    model_id: str
+    mode: SearchMode
+    # Embedding model used; null in keyword mode.
+    model_id: str | None
     results: list[SearchHitResponse]

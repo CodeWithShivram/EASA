@@ -4,8 +4,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 
 from app.core.config import Settings
+from app.db.fts import create_keyword_index
+from app.db.models import Base
 from app.main import create_app
 
 
@@ -53,3 +56,10 @@ def broken_db_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = make_settings(tmp_path, database_url=sqlite_url(unusable))
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+def create_schema(engine: Engine) -> None:
+    """Create all tables plus the SQLite keyword index (what migrations produce)."""
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        create_keyword_index(connection)

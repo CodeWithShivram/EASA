@@ -92,6 +92,9 @@ curl.exe "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
 # Search: write the JSON body to a file to avoid PowerShell quoting issues
 [IO.File]::WriteAllText("$PWD\q.json", '{"query": "How much vacation time do staff get?", "top_k": 3}')
 curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
+# Other modes: add "mode": "keyword" (BM25, works without the model) or "mode": "hybrid"
+[IO.File]::WriteAllText("$PWD\q.json", '{"query": "receipts deadline", "top_k": 3, "mode": "hybrid"}')
+curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
 ```
 
 Use synthetic documents only.
@@ -141,7 +144,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 283 tests (3 real-model tests skip if the model is not downloaded); warnings are errors
+uv run pytest                 # 323 tests (3 real-model tests skip if the model is not downloaded); warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -181,6 +184,14 @@ uv run pytest tests/model                           # real-model checks (skip if
 ```
 
 The API never downloads models at runtime. Without the model files, readiness reports `embeddings: unavailable`, uploads still succeed (text and chunks are stored), and `embed-missing` fills in the vectors after the download. Set `EASA_EMBEDDING_PROVIDER=hashing` to work without the model (not semantic).
+
+## 6b. Keyword index
+
+On SQLite, migration `6d544dac46b3` creates the FTS5 keyword index and indexes existing chunks; triggers keep it in sync afterwards. If the database file is ever compacted with `VACUUM`, or keyword results look inconsistent, rebuild it from `apps/api`:
+
+```powershell
+uv run python -m app.cli rebuild-keyword-index
+```
 
 ## 7. Adding dependencies
 

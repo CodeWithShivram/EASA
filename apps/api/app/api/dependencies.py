@@ -8,6 +8,7 @@ from app.core.identity import Identity
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
 from app.retrieval.brute_force import BruteForceVectorIndex
+from app.retrieval.keyword import SqliteKeywordIndex
 from app.services.chunking import ChunkingConfig, ChunkingStrategy
 from app.services.documents import DocumentService
 from app.services.health import HealthService
@@ -54,4 +55,9 @@ def get_document_service(
 def get_search_service(
     request: Request, session: Annotated[Session, Depends(get_db_session)]
 ) -> SearchService:
-    return SearchService(session, request.app.state.embedder, BruteForceVectorIndex(session))
+    return SearchService(
+        session,
+        request.app.state.embedder,
+        BruteForceVectorIndex(session),
+        SqliteKeywordIndex(session),
+    )

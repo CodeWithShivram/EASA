@@ -3,6 +3,7 @@
 Run from apps/api:
     uv run python -m app.cli download-embedding-model
     uv run python -m app.cli embed-missing [--limit N]
+    uv run python -m app.cli rebuild-keyword-index
 """
 
 import argparse
@@ -12,6 +13,7 @@ import sys
 from app.core.config import load_settings
 from app.core.logging import configure_logging
 from app.db.engine import create_db_engine
+from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder, download_model
 from app.embeddings.registry import DEFAULT_MODEL
@@ -31,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
         "embed-missing", help="embed chunks of processed documents that have no vector yet"
     )
     backfill.add_argument("--limit", type=int, default=10_000, help="maximum chunks to embed")
+    commands.add_parser(
+        "rebuild-keyword-index",
+        help="rebuild the SQLite FTS5 keyword index from document_chunks (e.g. after VACUUM)",
+    )
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -42,6 +48,16 @@ def main(argv: list[str] | None = None) -> int:
             "embedding model downloaded",
             extra={"model_id": DEFAULT_MODEL.model_id, "path": str(path)},
         )
+        return 0
+
+    if args.command == "rebuild-keyword-index":
+        engine = create_db_engine(settings.database_url.get_secret_value())
+        try:
+            with engine.begin() as connection:
+                rebuild_keyword_index(connection)
+        finally:
+            engine.dispose()
+        logger.info("keyword index rebuilt")
         return 0
 
     embedder = build_embedder(settings)

@@ -11,8 +11,8 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored) |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config (head) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`); SQLite FTS5 keyword index `chunk_fts` (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -110,7 +110,9 @@ uv run alembic upgrade head --sql
 uv run alembic revision --autogenerate -m "describe change"
 ```
 
-Tests confirm a single migration head, an upgrade/downgrade round trip, that only `alembic_version` exists after upgrade, and that models and migrations are in sync.
+Tests confirm a single linear migration head, an upgrade/downgrade round trip, that the expected tables exist after upgrade, that models and migrations are in sync, and that the migrated keyword index matches the one the app module creates (section 8.1).
+
+Hand-written migrations: the FTS5 keyword index is not an ORM model, so [migrations/env.py](../apps/api/migrations/env.py) excludes it from autogenerate and `alembic check` through an `include_name` filter.
 
 ## 6. Provisional logical model
 
@@ -184,11 +186,28 @@ Rules:
 - Chunks without a vector for the active model (e.g. the model was missing at upload time) are found and embedded by `uv run python -m app.cli embed-missing`.
 - PostgreSQL will store vectors in a `pgvector` column (P3-M4); the model and versioning rules stay the same.
 
+### 8.1 Keyword index (Phase 3, implemented in P3-M3)
+
+`chunk_fts` is a SQLite FTS5 virtual table ([app/db/fts.py](../apps/api/app/db/fts.py), migration `6d544dac46b3`) that indexes `document_chunks.text` for BM25 keyword search.
+
+| Property | Value |
+|---|---|
+| Content | External content: `content='document_chunks'`, `content_rowid='rowid'`. The index stores only tokens; text is read from `document_chunks`, so chunk text is not duplicated |
+| Tokenizer | `porter unicode61 remove_diacritics 2` (lower-casing, Unicode word splitting, accent folding, English stemming) |
+| Synchronization | Triggers `chunk_fts_ai` (insert), `chunk_fts_ad` (delete) and `chunk_fts_au` (update of text) on `document_chunks`. Cascade deletes from `documents` fire them as well (verified by tests) |
+| Shadow tables | `chunk_fts_data`, `chunk_fts_idx`, `chunk_fts_docsize`, `chunk_fts_config` (created by SQLite) |
+| Tenant and status filters | Not stored in the index; the search query joins back to `document_chunks` and `documents` and filters by tenant and `status = 'processed'` |
+
+Rules:
+- The migration creates the index and runs FTS5 `rebuild` to index existing chunks. On databases other than SQLite it is a no-op; PostgreSQL full-text search arrives in P3-M4.
+- The join uses SQLite's implicit `rowid`. `VACUUM` may renumber rowids of tables without an `INTEGER PRIMARY KEY`, which would desynchronize the index, so after a `VACUUM` run `uv run python -m app.cli rebuild-keyword-index`.
+- Tests use `create_schema` (in `tests/conftest.py`), which runs `create_all` and then creates the index, matching what migrations produce.
+
 ## 9. PostgreSQL path (Phase 3, P3-M4)
 
 1. Install the `psycopg` driver (allowed by configuration today, not installed).
 2. Point `EASA_DATABASE_URL` at PostgreSQL and run `alembic upgrade head`.
-3. Add the `pgvector` extension through a migration.
+3. Add the `pgvector` extension through a migration, and a PostgreSQL full-text keyword index to replace FTS5.
 4. Run the integration tests against a real PostgreSQL instance.
 
 ## 10. Data handling

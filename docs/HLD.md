@@ -44,7 +44,7 @@ flowchart LR
 | API (`apps/api`) | Python 3.14, FastAPI, Pydantic Settings, SQLAlchemy 2 | Strict configuration, correlation IDs, JSON logging, standard error envelope, liveness and readiness endpoints, session management |
 | Database | SQLite file (git-ignored) | `documents` and `document_chunks` (Phase 2, P2-M1); tenant-scoped repository |
 | File store | Local disk, content-addressed (git-ignored) | Stores uploaded bytes by SHA-256 |
-| Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1) and tenant-scoped semantic search with citations (P3-M2) |
+| Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3) |
 | Migrations | Alembic | Settings-driven environment; baseline plus the documents migration |
 
 There is **no** authentication, retrieval, model integration or tool execution yet; document endpoints use a development-only identity. Those arrive in later phases (section 6).
@@ -103,7 +103,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 |---|---|---|
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
-| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | In progress (P3-M1 embeddings, P3-M2 semantic search done) |
+| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | In progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search done) |
 | 4 | Grounded RAG answering | Not started |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (310 automated tests today) |
+| Testability | App factory, injected dependencies, deterministic tests (350 automated tests today: 323 backend, 27 frontend) |
 | Portability | SQLAlchemy and Alembic abstractions so PostgreSQL can replace SQLite ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003)) |
 
 ## 9. Risks

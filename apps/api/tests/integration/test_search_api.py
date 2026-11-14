@@ -8,10 +8,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.identity import Identity
-from app.db.models import Base
 from app.main import create_app
 from app.services.documents import DocumentService
-from tests.conftest import make_settings
+from tests.conftest import create_schema, make_settings
 from tests.fixtures import DOCX_BYTES, PDF_BYTES, make_encrypted_pdf
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -23,7 +22,7 @@ OTHER_TENANT = Identity(
 @pytest.fixture
 def app(tmp_path: Path) -> Iterator[FastAPI]:
     app = create_app(make_settings(tmp_path))
-    Base.metadata.create_all(app.state.engine)
+    create_schema(app.state.engine)
     yield app
     app.state.engine.dispose()
 
@@ -141,3 +140,72 @@ def test_search_without_the_embedding_model_is_unavailable(tmp_path: Path) -> No
 def test_search_is_not_mounted_in_production(tmp_path: Path) -> None:
     with TestClient(create_app(make_settings(tmp_path, environment="production"))) as client:
         assert search(client, "annual leave").status_code == 404
+
+
+def test_keyword_mode_finds_exact_terms(client: TestClient) -> None:
+    body = search(client, "receipts", mode="keyword", top_k=3).json()
+
+    assert body["mode"] == "keyword"
+    assert body["model_id"] is None
+    assert body["results"][0]["citation"]["filename"] == "travel.pdf"
+    assert "receipts" in body["results"][0]["text"].lower()
+
+
+def test_hybrid_mode_fuses_rankings(client: TestClient) -> None:
+    body = search(client, "annual leave days", mode="hybrid", top_k=3).json()
+
+    assert body["mode"] == "hybrid"
+    assert body["model_id"] == "hashing-v1-384"
+    assert body["results"][0]["citation"]["section"] == "Leave"
+    scores = [r["score"] for r in body["results"]]
+    assert scores == sorted(scores, reverse=True)
+    # RRF with k = 60 and two rankings: at most 2/61 (scores are rounded to 6 places).
+    assert all(0 < s <= 2 / 61 + 1e-6 for s in scores)
+
+
+def test_default_mode_is_semantic(client: TestClient) -> None:
+    assert search(client, "annual leave").json()["mode"] == "semantic"
+
+
+def test_unknown_mode_is_rejected(client: TestClient) -> None:
+    response = search(client, "annual leave", mode="regex")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_keyword_mode_works_without_the_embedding_model(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path, embedding_provider="onnx", embedding_model_dir=tmp_path / "no-models"
+    )
+    app = create_app(settings)
+    create_schema(app.state.engine)
+    try:
+        with TestClient(app) as client:
+            client.post(
+                "/api/v1/documents",
+                files={"file": ("travel.pdf", PDF_BYTES, "application/pdf")},
+            )
+            keyword = search(client, "receipts", mode="keyword")
+            hybrid = search(client, "receipts", mode="hybrid")
+    finally:
+        app.state.engine.dispose()
+
+    assert keyword.status_code == 200
+    assert keyword.json()["results"][0]["citation"]["page_number"] == 2
+    assert hybrid.status_code == 503
+    assert hybrid.json()["error"]["code"] == "embeddings_unavailable"
+
+
+def test_keyword_mode_never_returns_other_tenants(client: TestClient, app: FastAPI) -> None:
+    with app.state.session_factory() as session:
+        DocumentService(
+            session,
+            app.state.blob_store,
+            max_upload_bytes=10_000_000,
+            embedder=app.state.embedder,
+        ).upload(OTHER_TENANT, "merger.txt", b"Confidential merger plan for project falcon.")
+
+    for mode in ("keyword", "hybrid"):
+        results = search(client, "falcon merger", mode=mode, top_k=50).json()["results"]
+        assert all("falcon" not in r["text"] for r in results)
