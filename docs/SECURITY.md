@@ -1,7 +1,7 @@
 # EASA — Security
 
 > **Status:** Phase 1. Foundational controls are implemented. Authentication, authorization, document handling and AI safeguards are **not implemented yet** and are listed with their planned phase.
-> Checked against commit `753742c` on 2026-11-14. EASA is a learning project, not a production system.
+> Checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
 
@@ -25,7 +25,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | SQLite file | Local disk under `apps/api/var/`; holds no domain data |
 | Configuration | Environment variables and git-ignored `.env` files |
 
-The documented API command binds to `127.0.0.1`. `next dev` and `next start` listen on **all interfaces (`0.0.0.0`) by default**, so the web server is reachable from the local network unless started with `--hostname localhost` (verified with `npm run start -- --port 3000 --hostname localhost`). Binding the npm scripts to localhost by default is a proposed follow-up.
+The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Next.js listens on all interfaces (`0.0.0.0`) by default, so since M5 the `dev` and `start` npm scripts pass `--hostname localhost`.
 
 ## 3. Implemented controls
 
@@ -70,6 +70,7 @@ The documented API command binds to `127.0.0.1`. `next dev` and `next start` lis
 
 - Lockfiles committed: `apps/api/uv.lock`, `apps/web/package-lock.json` (resolved only from `registry.npmjs.org`).
 - Dependencies are added only with a stated purpose, after checking compatibility with Python 3.14 and Node 24.13.
+- CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags, not commit SHAs.
 - Ruff runs the bandit-derived `S` security rules on all Python code (`S101`, `assert`, is allowed in tests).
 - No web fonts are fetched at build time. Next.js telemetry is not disabled by repository configuration; set `NEXT_TELEMETRY_DISABLED=1` in your shell to opt out.
 
@@ -88,7 +89,7 @@ The documented API command binds to `127.0.0.1`. `next dev` and `next start` lis
 | Rate limiting and request size limits | Before any shared deployment |
 | Security response headers on the API (e.g. CSP, `X-Content-Type-Options`) | Phase 7 / 8 |
 | TLS | Any non-local deployment |
-| Automated dependency review in CI | M5 / Phase 8 |
+| Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs | Phase 8 |
 
 ## 5. Threat notes for the current system
 
@@ -99,7 +100,7 @@ The documented API command binds to `127.0.0.1`. `next dev` and `next start` lis
 | Cross-origin abuse | Explicit origin list, `GET` only, no credentials | None significant today; revisit when authentication arrives |
 | Log injection or spoofed correlation IDs | IDs generated server-side; JSON-encoded log fields | Low |
 | Accidental commit of secrets or data | `.gitignore` rules; manual pre-commit diff review and secret check required by the commit workflow | Manual process; automated scanning planned for CI |
-| Web server reachable from the local network | None yet (`next dev`/`next start` default to `0.0.0.0`) | Start with `--hostname localhost`; script change proposed |
+| Web server reachable from the local network | npm scripts bind to `localhost` (M5) | Running `next` directly without `--hostname` still binds to all interfaces |
 | Malicious API responses reaching the UI | Zod validation; React escaping | Low |
 
 ## 6. Security testing

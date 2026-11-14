@@ -13,8 +13,19 @@ easa/
   apps/api/   FastAPI backend (Python 3.14, uv)          [M1–M2]       
   apps/web/   Next.js frontend (TypeScript, Tailwind)    [M3: shell]
   docs/       Design, API, security and dev docs         [M4]
-  scripts/    Development and check scripts              [not yet created]
+  scripts/    check.ps1 (all checks), dev.ps1 (run both) [M5]
+  .github/    GitHub Actions CI                          [M5]
 ```
+
+## Quick start (Windows PowerShell)
+
+```powershell
+cd apps/api; uv sync; uv run alembic upgrade head; cd ../web; npm ci; cd ../..
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1     # API :8000 + web :3000, Ctrl+C stops both
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # every lint, type, test, migration and build check
+```
+
+CI runs the same checks on every push to `main` and on pull requests ([.github/workflows/ci.yml](.github/workflows/ci.yml)). Details: [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md).
 
 ## Prerequisites
 

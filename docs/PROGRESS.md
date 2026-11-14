@@ -13,8 +13,8 @@ Status labels: **COMPLETE** (implemented and verified), **PARTIAL**, **BLOCKED**
 | (guide) | Development guide: mandatory commit protocol/workflow (sections 15–16) | COMPLETE | `6ebf95f` |
 | M2 | Database sessions, settings-driven Alembic, empty baseline migration | COMPLETE | `77f692f` |
 | M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | COMPLETE | `753742c` |
-| M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | COMPLETE | the commit that adds this row |
-| M5 | Dev/check scripts and GitHub Actions CI | NOT STARTED | |
+| M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | COMPLETE | `3371ec3` |
+| M5 | Dev/check scripts and GitHub Actions CI | PARTIAL (CI not yet run) | the commit that adds this row |
 
 ## M2: Database foundation
 
@@ -166,3 +166,49 @@ The M3 live-check cleanup did not stop the API server. In this automation shell 
 - Documents state the commit they were checked against; they must be updated as later phases change the system.
 
 **Exit criteria:** met. All seven required documents exist, describe only implemented behaviour as implemented, label planned work, and every command they list has been run on this machine.
+
+## M5: Developer scripts and CI
+
+**Scope:** one-command local checks and startup, GitHub Actions CI, and the follow-ups approved after M4 (portable Alembic hooks, no generated `AGENTS.md`, web server bound to localhost).
+
+**Implemented**
+
+- [scripts/check.ps1](../scripts/check.ps1):
+  - Backend: `uv sync --locked`, ruff format and lint, pytest, and `alembic upgrade head` + `alembic check` on a temporary SQLite database that is deleted afterwards.
+  - Frontend: lint, typecheck, tests and build.
+  - Every check runs even after a failure; prints a PASS/FAIL table; exits 1 if any check failed. Options: `-Backend`, `-Frontend`, `-SkipBuild`.
+- [scripts/dev.ps1](../scripts/dev.ps1):
+  - Refuses to start if port 8000 or 3000 is in use (IPv4 and IPv6 probe).
+  - Starts the API (`--reload`, `127.0.0.1:8000`) and the web dev server (`localhost:3000`) in one console.
+  - Stops both process trees with `taskkill /T` on exit or `Ctrl+C`. `-SmokeTest` starts both, checks liveness, readiness and the page, then shuts down through the same path.
+- [.github/workflows/ci.yml](../.github/workflows/ci.yml):
+  - Triggers on pushes to `main` and on pull requests; read-only token; concurrency cancels superseded runs.
+  - `api` job: Python 3.14, uv 0.12.9, locked install, ruff, pytest, migrations + drift check.
+  - `web` job: Node 24.13.0 with npm cache, `npm ci`, lint, typecheck, tests, build.
+- `apps/api/alembic.ini`: post-write hooks switched to Alembic's `module` type (`python -m ruff`), replacing the Windows-only `.venv/Scripts/ruff` path.
+- `apps/web/next.config.ts`: `agentRules: false`, so `next dev` no longer writes `AGENTS.md`.
+- `apps/web/package.json`: `dev` and `start` pass `--hostname localhost`.
+- Documentation updated: README quick start, DEVELOPMENT_GUIDE, SECURITY, DATABASE_DESIGN, HLD, LLD, and ADR-013 for the scripts and CI.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1` | 9/9 PASS (backend 45 tests, frontend 27 tests, build), exit 0, ~2 min; no temporary database left behind |
+| `scripts\check.ps1 -Backend` with `EASA_LOG_LEVEL=verbose` | Alembic step FAIL, other checks PASS, exit 1 (failure path works) |
+| `scripts\dev.ps1 -SmokeTest` | API live and ready, web up, both stopped, exit 0 (28 s); no leftover processes; neither port answers afterwards |
+| `next dev` after `agentRules: false` | No `AGENTS.md` created |
+| `alembic revision --autogenerate` with the portable hooks | Both hooks ran; generated file formatted and lint-clean (test file deleted) |
+| `ci.yml` parsed with PyYAML | Valid: 2 jobs, expected triggers, steps and permissions |
+| `package-lock.json` | Contains the Linux native packages CI needs (`@next/swc-linux-x64-gnu`, Tailwind oxide, lightningcss, rolldown) |
+| GitHub Actions run | **Not yet run.** Requires a push; the repository is public, so the result can be read from the GitHub API |
+
+**Known limitations**
+
+- CI has never run; status stays PARTIAL until the first run passes.
+- The `Ctrl+C` path of `dev.ps1` shares its cleanup with `-SmokeTest`, but interactive `Ctrl+C` was not exercised by automation.
+- The scripts target Windows PowerShell 5.1; on Linux/macOS run the individual commands from the development guide.
+- Actions are pinned to major version tags, not commit SHAs (planned for Phase 8 hardening).
+- Mermaid diagrams still need a visual check on GitHub.
+
+**Exit criteria:** local checks and smoke test pass; CI configured. The milestone is complete once the first CI run passes.

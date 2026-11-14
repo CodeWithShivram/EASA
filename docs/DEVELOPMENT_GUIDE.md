@@ -1,7 +1,7 @@
 # EASA — Development Guide
 
 > How to set up, run, test and change EASA locally. Every command here has been run successfully on the development machine (Windows 11, PowerShell) unless it is marked otherwise.
-> Checked against commit `753742c` on 2026-11-14.
+> Checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14.
 > The engineering rules for contributors and coding agents are in [CLAUDE_DEVELOPMENT_GUIDE.txt](../CLAUDE_DEVELOPMENT_GUIDE.txt); this guide is the practical companion.
 
 ## 1. Prerequisites
@@ -35,7 +35,7 @@ Optional configuration templates (copy only if you need to change defaults):
 
 Both targets are git-ignored. Never put real credentials in them.
 
-Recommended: opt out of Next.js telemetry in your shell before running `npm` commands.
+Recommended: opt out of Next.js telemetry in your shell before running `npm` commands (the scripts in `scripts/` and CI already set it).
 
 ```powershell
 $env:NEXT_TELEMETRY_DISABLED = "1"
@@ -43,7 +43,16 @@ $env:NEXT_TELEMETRY_DISABLED = "1"
 
 ## 3. Running locally
 
-Use two terminals.
+**One command** (from the repository root) starts both servers in one console; `Ctrl+C` stops both:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+scripts\dev.ps1 -SmokeTest    # start both, check they respond, stop, exit 0/1
+```
+
+The smoke test has been run successfully; the interactive `Ctrl+C` shutdown uses the same cleanup code but has not been exercised by automation. Run `uv run alembic upgrade head` in `apps/api` first when migrations change.
+
+**Or use two terminals:**
 
 **API** (from `apps/api`):
 
@@ -60,7 +69,7 @@ uv run uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 80
 npm run dev        # development server on http://localhost:3000
 ```
 
-Next.js listens on all network interfaces by default. To keep it local, add `--hostname localhost` (verified with `npm run start -- --port 3000 --hostname localhost`).
+The `dev` and `start` npm scripts pass `--hostname localhost`, so the web server is not exposed on the local network (Next.js itself defaults to all interfaces).
 
 Open http://localhost:3000. The **API status** card should show **Ready**. If the API is stopped it shows "Cannot reach the API…".
 
@@ -89,6 +98,19 @@ Invalid API settings stop the server at startup with a validation error that nev
 
 ## 5. Checks
 
+**All checks** (from the repository root):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # backend + frontend, about 2 minutes
+scripts\check.ps1 -Backend                                    # or -Frontend, -SkipBuild
+```
+
+It runs every check even after a failure, prints a PASS/FAIL table and exits with code 1 if anything failed. The Alembic step uses a temporary SQLite database that is deleted afterwards. Dependencies must already be installed.
+
+**CI:** [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs the same checks on GitHub Actions (Ubuntu, Python 3.14, uv 0.12.9, Node 24.13.0) for pushes to `main` and for pull requests.
+
+Individual commands:
+
 **Backend** (from `apps/api`):
 
 ```powershell
@@ -109,7 +131,7 @@ npm run build       # production build
 
 `npm run test:watch` exists for interactive use; it has not been run as part of verification.
 
-Run all relevant checks before every commit. Planned for M5: one script for all checks, and GitHub Actions CI.
+Run `scripts\check.ps1` (or the relevant commands) before every commit.
 
 ## 6. Database migrations
 
@@ -154,7 +176,8 @@ The full protocol is in sections 15–16 of [CLAUDE_DEVELOPMENT_GUIDE.txt](../CL
 | `npm` warns `EBADENGINE` for jsdom 30/31 | They require Node ≥ 24.15; the machine has 24.13 | `jsdom` is pinned to `~29.1.1` |
 | `npm` warns that ESLint 9 is unsupported | The Next.js template pins ESLint 9 | Known; revisit when `eslint-config-next` supports ESLint 10 |
 | `pytest` fails on import with `StarletteDeprecationWarning` about `httpx` | Starlette 1.10 wants `httpx2` for its test client; warnings are errors | The dev dependency is `httpx2` |
-| `npm run dev` creates `apps/web/AGENTS.md` | Next.js 16 dev server writes agent guidance unless `agentRules: false` is set | Do not commit it by accident; a decision on keeping or disabling it is pending |
+| `npm run dev` created `apps/web/AGENTS.md` (before M5) | Next.js 16 dev server writes agent guidance unless `agentRules: false` is set | Fixed: `agentRules: false` in `next.config.ts`; delete any leftover copy |
+| `scripts\*.ps1` "cannot be loaded because running scripts is disabled" | PowerShell execution policy | Run with `powershell -ExecutionPolicy Bypass -File scripts\<name>.ps1` |
 | `git commit -F -` with a PowerShell here-string fails with "pathspec … did not match" | PowerShell does not pipe the here-string to stdin that way | Write the message to a file and use `git commit -F <file>` |
 | `Get-NetTCPConnection` or `netstat` show no listener although a server answers | Seen in a sandboxed automation shell | Check with an HTTP request or TCP connect instead |
 

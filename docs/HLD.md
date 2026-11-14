@@ -1,7 +1,7 @@
 # EASA — High-Level Design
 
-> **Status:** Phase 1 (Foundation and Architecture). Milestones M0–M3 are implemented and this documentation set is M4; this document describes the implemented system and the target architecture.
-> Last checked against commit `753742c` on 2026-11-14.
+> **Status:** Phase 1 (Foundation and Architecture). Milestones M0–M5 are implemented (M4 is this documentation set; M5 added developer scripts and CI); this document describes the implemented system and the target architecture.
+> Last checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14.
 > This is a learning and portfolio project. It is **not production-ready**, and all data is synthetic.
 
 Related documents: [LLD](LLD.md) · [Database design](DATABASE_DESIGN.md) · [API specification](API_SPECIFICATION.md) · [Security](SECURITY.md) · [Development guide](DEVELOPMENT_GUIDE.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) · [Progress](PROGRESS.md)
@@ -99,7 +99,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 
 | Phase | Theme | Status |
 |---|---|---|
-| 1 | Foundation and architecture | In progress (M0–M4 done; M5 scripts and CI remain) |
+| 1 | Foundation and architecture | M0–M5 done; awaiting phase review and the first CI run |
 | 2 | Document intelligence | Not started |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Not started |
 | 4 | Grounded RAG answering | Not started |

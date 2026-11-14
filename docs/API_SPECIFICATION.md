@@ -1,7 +1,7 @@
 # EASA — API Specification
 
 > **Status:** two endpoints are implemented (liveness and readiness). Other endpoint groups are planned and have **no contract yet**.
-> Checked against commit `753742c` on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
+> Checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
 

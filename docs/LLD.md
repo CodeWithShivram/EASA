@@ -1,6 +1,6 @@
 # EASA — Low-Level Design
 
-> **Status:** describes the code at commit `753742c` (milestones M0–M3), checked 2026-11-14. Planned work is labelled as such.
+> **Status:** describes the code as of M5 (commit `3371ec3` plus M5 changes), checked 2026-11-14. Planned work is labelled as such.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Database design](DATABASE_DESIGN.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
 
@@ -25,6 +25,8 @@ easa/
     src/lib/               config.ts, api/client.ts, api/schemas.ts, api/health.ts
     vitest.config.mts, vitest.setup.ts, next.config.ts, package.json, .env.example
   docs/                    this documentation set and PROGRESS.md
+  scripts/                 check.ps1 (all checks), dev.ps1 (run both servers)
+  .github/workflows/       ci.yml (GitHub Actions: API and web jobs)
 ```
 
 ## 2. Backend (`apps/api`)

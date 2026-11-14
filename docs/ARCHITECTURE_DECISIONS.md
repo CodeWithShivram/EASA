@@ -1,7 +1,7 @@
 # EASA — Architecture Decision Records
 
 > Decisions made so far, in the format required by the project guide: context, options considered, decision, trade-offs, consequences.
-> All records below are **Accepted**. Checked against commit `753742c` on 2026-11-14.
+> All records below are **Accepted**. Checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14.
 
 | ADR | Decision | Milestone |
 |---|---|---|
@@ -17,6 +17,7 @@
 | [ADR-010](#adr-010) | Runtime validation of all API responses with Zod | M3 |
 | [ADR-011](#adr-011) | Testing stack: pytest/ruff and Vitest/Testing Library | M1–M3 |
 | [ADR-012](#adr-012) | Version compatibility policy for a restricted machine | M1–M3 |
+| [ADR-013](#adr-013) | PowerShell developer scripts and GitHub Actions CI | M5 |
 
 ---
 
@@ -57,8 +58,8 @@
 - **Context:** The guide requires migrations for schema changes but forbids creating tables before their requirements are understood.
 - **Options considered:** (a) create all planned tables now; (b) no migrations until Phase 2; (c) configure Alembic now with an empty baseline.
 - **Decision:** (c). `migrations/env.py` reads the URL from the validated application settings (none in `alembic.ini`); baseline revision `7b339cea85fb` is empty; generated files are formatted and lint-fixed by ruff through two post-write hooks.
-- **Trade-offs:** Slight upfront setup with nothing to migrate yet. The hook's executable path (`.venv/Scripts/ruff`) is Windows-specific.
-- **Consequences:** The app and migrations can never target different databases. `alembic check` detects drift from the first table onward. The hook path must be made portable before CI (M5).
+- **Trade-offs:** Slight upfront setup with nothing to migrate yet. The hooks originally pointed at a Windows-only path (`.venv/Scripts/ruff`); since M5 they use Alembic's `module` hook type (`python -m ruff`), which is portable.
+- **Consequences:** The app and migrations can never target different databases. `alembic check` detects drift from the first table onward and runs in `scripts/check.ps1` and CI.
 
 <a id="adr-005"></a>
 ## ADR-005: Strict, centralized configuration
@@ -107,7 +108,7 @@
 - **Context:** The guide prescribes Next.js, React, TypeScript and Tailwind with accessible, responsive components.
 - **Options considered:** Package managers npm or pnpm (both installed); Pages Router or App Router; scaffold manually or with `create-next-app`.
 - **Decision:** `create-next-app@16.4.5` with App Router and `src/`; npm with a committed `package-lock.json`; TypeScript `strict` plus `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`; template fonts from Google removed in favour of the system font stack; `poweredByHeader: false`.
-- **Trade-offs:** The create-next-app template settings `cacheComponents: true` and `partialPrefetching: true` were kept without deep evaluation; `next dev` writes an `AGENTS.md` file unless disabled; `next dev`/`next start` listen on all interfaces unless `--hostname` is given.
+- **Trade-offs:** The create-next-app template settings `cacheComponents: true` and `partialPrefetching: true` were kept without deep evaluation. Two Next.js defaults were overridden in M5: `agentRules: false` stops `next dev` from writing `AGENTS.md`, and the npm scripts pass `--hostname localhost` because Next.js otherwise listens on all interfaces.
 - **Consequences:** No external requests at build time; strict typing catches unchecked array access.
 
 <a id="adr-010"></a>
@@ -140,6 +141,16 @@
 - **Trade-offs:** Some packages lag behind the latest release; ESLint 9 is reported as out of support.
 - **Consequences:** Installs are reproducible from lockfiles. Upgrades are revisited when the runtime changes.
 
+<a id="adr-013"></a>
+## ADR-013: PowerShell developer scripts and GitHub Actions CI
+
+- **Status:** Accepted (M5, 2026-11-14)
+- **Context:** The checks span two toolchains (uv and npm) and should be one command locally and automatic on every push. The development machine is Windows without `make`; CI runs on Linux.
+- **Options considered:** `make` (not installed); npm scripts at the repository root (would need a root `package.json`); Python task runners (new dependency); PowerShell scripts plus a GitHub Actions workflow.
+- **Decision:** `scripts/check.ps1` runs all checks and reports PASS/FAIL per check; `scripts/dev.ps1` starts both servers, stops both process trees on exit, and has a `-SmokeTest` mode. `.github/workflows/ci.yml` runs the same checks in two jobs (API and web) with locked installs, the same uv and Node versions as the dev machine, and a read-only token.
+- **Trade-offs:** The scripts are Windows PowerShell, so Linux/macOS developers run the individual commands (or CI). Actions are pinned to major tags rather than commit SHAs.
+- **Consequences:** One command reproduces CI locally. Platform-specific settings (such as the Alembic hook path) must stay portable because CI runs on Linux.
+
 ---
 
 ## Open decisions (not yet made)
@@ -151,4 +162,3 @@
 | Embedding model and vector store details (pgvector index type) | 3 |
 | Model provider (Ollama or another free option) behind the model interface | 4 |
 | Whether LangGraph is justified for agent workflows | 5 |
-| Whether to keep or disable Next.js's generated `AGENTS.md` | M4 review |
