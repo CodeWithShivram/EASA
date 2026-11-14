@@ -1,6 +1,6 @@
 # EASA — High-Level Design
 
-> **Status:** Phase 1 (Foundation and Architecture). Milestones M0–M5 are implemented (M4 is this documentation set; M5 added developer scripts and CI); this document describes the implemented system and the target architecture.
+> **Status:** Phases 1 (foundation) and 2 (document intelligence) are complete; this document describes the implemented system and the target architecture.
 > Last checked against the M5 state (commit `3371ec3` plus M5 changes) on 2026-11-14.
 > This is a learning and portfolio project. It is **not production-ready**, and all data is synthetic.
 
@@ -47,7 +47,7 @@ flowchart LR
 | Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4) |
 | Migrations | Alembic | Settings-driven environment; baseline plus the documents migration |
 
-There is **no** authentication, document handling, retrieval, model integration or tool execution yet. Those arrive in later phases (section 6).
+There is **no** authentication, retrieval, model integration or tool execution yet; document endpoints use a development-only identity. Those arrive in later phases (section 6).
 
 ## 4. Target architecture (planned)
 
@@ -59,7 +59,7 @@ flowchart TB
     api --> auth["Identity and authorization (Phase 6)"]
     api --> services["Business services"]
     services --> repos["Repositories (SQLAlchemy)"]
-    services --> ingest["Document ingestion (Phase 2)"]
+    services --> ingest["Document ingestion (Phase 2, done)"]
     services --> retrieval["Retrieval: semantic + keyword (Phase 3)"]
     services --> rag["Grounded answering (Phase 4)"]
     services --> agent["Agent and allowlisted tools (Phase 5)"]
@@ -74,9 +74,9 @@ flowchart TB
 | API layer | HTTP contracts, validation, no business logic | Implemented (health only) |
 | Core | Configuration, logging, correlation IDs, errors, middleware | Implemented |
 | Services | Business rules (currently `HealthService`) | Implemented (health only) |
-| Persistence | Engine, sessions, declarative base, migrations; repositories later | Partially implemented (no repositories or tables) |
+| Persistence | Engine, sessions, declarative base, migrations, tenant-scoped repositories, content-addressed file store | Implemented for documents and chunks |
 | Identity and RBAC | Verified identity, roles, document permissions, tenant filters | Planned (Phase 6) |
-| Document ingestion | Upload validation, text extraction, chunking, status tracking | Planned (Phase 2) |
+| Document ingestion | Upload validation, text extraction, normalization, chunking, status tracking, resource budgets | Implemented (Phase 2) |
 | Retrieval | Embeddings, vector and keyword search, authorization filters, citations | Planned (Phase 3) |
 | Grounded answering | Bounded context construction, evidence-only answers, citations | Planned (Phase 4) |
 | Agent and tools | Typed tool contracts, allowlist, approvals, audit | Planned (Phase 5) |
@@ -102,7 +102,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | Phase | Theme | Status |
 |---|---|---|
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
-| 2 | Document intelligence | In progress (P2-M1 data model and storage, P2-M2 upload and validation, P2-M3 extraction and normalization, P2-M4 chunking done; P2-M5 hardening remains) |
+| 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Not started |
 | 4 | Grounded RAG answering | Not started |
 | 5 | Agent and controlled tool calling | Not started |
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (232 automated tests today) |
+| Testability | App factory, injected dependencies, deterministic tests (266 automated tests today) |
 | Portability | SQLAlchemy and Alembic abstractions so PostgreSQL can replace SQLite ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003)) |
 
 ## 9. Risks

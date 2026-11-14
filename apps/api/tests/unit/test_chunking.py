@@ -1,11 +1,14 @@
+import time
 from itertools import pairwise
 
 import pytest
 
 from app.db.documents import DocumentMediaType
+from app.services import chunking
 from app.services.chunking import Chunk, ChunkingConfig, ChunkingStrategy, chunk_document
 from app.services.extraction import (
     BlockKind,
+    ExtractionError,
     ExtractionResult,
     TextBlock,
     extract_document,
@@ -204,3 +207,24 @@ def test_config_record() -> None:
 def test_invalid_config_is_rejected(max_chars: int, overlap_chars: int) -> None:
     with pytest.raises(ValueError, match=r"max_chars|overlap_chars"):
         ChunkingConfig(max_chars=max_chars, overlap_chars=overlap_chars)
+
+
+def test_chunking_many_blocks_is_fast() -> None:
+    # Regression: block lookup was quadratic (~2 s for 87k blocks, minutes at 10 MiB).
+    result = result_of(*[paragraph(f"block {i}") for i in range(40_000)])
+    start = time.perf_counter()
+
+    chunks = chunk_document(result, ChunkingConfig())
+
+    assert chunks
+    assert time.perf_counter() - start < 3
+
+
+def test_chunk_count_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chunking, "MAX_CHUNKS", 3)
+    result = result_of(paragraph(SENTENCE * 40))
+
+    with pytest.raises(ExtractionError) as exc_info:
+        chunk_document(result, ChunkingConfig(strategy=FIXED, max_chars=200, overlap_chars=0))
+
+    assert exc_info.value.code == "document_too_complex"

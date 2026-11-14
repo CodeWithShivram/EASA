@@ -31,3 +31,17 @@ def test_normalization_is_idempotent() -> None:
 
     once = normalize_text(raw)
     assert normalize_text(once) == once
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("co\u00adoperate", "cooperate"),  # soft hyphen
+        ("safe \u202eevil", "safe evil"),  # right-to-left override
+        ("\U000e0041hidden\U000e007f text", "hidden text"),  # tag characters
+        ("arabic\u061cmark", "arabicmark"),  # Arabic letter mark (bidi)
+        ("\u2066isolated\u2069", "isolated"),  # bidi isolates
+    ],
+)
+def test_format_characters_are_removed(raw: str, expected: str) -> None:
+    assert normalize_text(raw) == expected

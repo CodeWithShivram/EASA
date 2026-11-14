@@ -137,7 +137,7 @@ Tenant and owner IDs are not returned.
 | Request | `multipart/form-data` with one file field named `file` |
 | Response `201` | Document object; `Location: /api/v1/documents/{id}` |
 | Response `200` | Same content was already uploaded in this tenant: the **existing** document is returned unchanged (idempotent; the new filename is ignored) |
-| Validation | 1. Filename: last path component only (both `/` and `\`), Unicode NFC, tabs/newlines → spaces, control characters and `< > : " / \ \| ? *` removed, trailing dots and spaces removed; must not be empty or start with a dot; truncated to 255 characters keeping the extension. 2. Extension allowlist: `.pdf`, `.docx`, `.txt` (case-insensitive). 3. Size: 1 byte to `EASA_MAX_UPLOAD_BYTES` (default 10 MiB). 4. Content must match the extension: PDF starts with `%PDF-`; DOCX is a readable zip with `[Content_Types].xml` and `word/document.xml`, at most 1000 entries, 100 MiB total uncompressed, compression ratio ≤ 200 per entry, no encrypted entries; TXT is valid UTF-8 (BOM allowed), contains no NUL bytes and is not a PDF or zip |
+| Validation | 1. Filename: last path component only (both `/` and `\`), Unicode NFC, whitespace (including tabs, newlines, NEL) → spaces, C0/C1 control characters, zero-width characters, Unicode bidirectional controls and `< > : " / \ \| ? *` removed, trailing dots and spaces removed; must not be empty or start with a dot; truncated to 255 characters keeping the extension. 2. Extension allowlist: `.pdf`, `.docx`, `.txt` (case-insensitive). 3. Size: 1 byte to `EASA_MAX_UPLOAD_BYTES` (default 10 MiB). 4. Content must match the extension: PDF starts with `%PDF-`; DOCX is a readable zip with `[Content_Types].xml` and `word/document.xml`, at most 1000 entries, 100 MiB total uncompressed, compression ratio ≤ 200 per entry, no encrypted entries, no VBA macro part; TXT is valid UTF-8 (BOM allowed), contains no NUL bytes and is not a PDF or zip |
 
 Upload error codes (all use the error envelope):
 
@@ -153,6 +153,7 @@ Upload error codes (all use the error envelope):
 | 422 | `corrupt_file` | DOCX zip cannot be read |
 | 422 | `encrypted_file` | DOCX contains encrypted entries |
 | 422 | `archive_limits_exceeded` | DOCX exceeds entry, size or compression-ratio limits (zip-bomb protection) |
+| 422 | `macros_not_allowed` | DOCX contains a VBA macro part (`vbaProject.bin`) |
 | 422 | `validation_error` | No `file` field |
 
 Encrypted PDFs are detected during processing, because that requires parsing the PDF: the upload succeeds (`201`) and the document is stored as `failed` with `encrypted_file` (section 3.4.4).
@@ -185,10 +186,13 @@ A newly created document is processed (text extraction, normalization and chunki
 | `failed` | `encrypted_file` | Password-protected PDF (all encrypted PDFs are rejected) |
 | `failed` | `corrupt_file` | The PDF or DOCX cannot be parsed |
 | `failed` | `too_many_pages` | PDF has more than `EASA_MAX_PDF_PAGES` pages (default 500) |
+| `failed` | `resource_limit_exceeded` | A PDF exceeds a parsing limit: a stream inflating beyond 20 MB, more than 50 MB decoded in total, or more than 30 seconds of parsing |
+| `failed` | `text_too_large` | More than 5,000,000 characters of normalized text |
+| `failed` | `document_too_complex` | More than 50,000 text blocks or more than 20,000 chunks |
 | `failed` | `no_extractable_text` | No text found, e.g. a scanned PDF without a text layer (OCR is not supported) or a whitespace-only TXT |
 | `failed` | `processing_error` | Unexpected parser failure; details are logged server-side only |
 
-`processing` is visible only while a request is in progress.
+`processing` is normally visible only while a request is in progress. If processing was interrupted (for example the server process died), the document stays `processing`; an identical re-upload more than 10 minutes later reprocesses it and returns the result with `200`.
 
 #### 3.4.5 `GET /api/v1/documents/{document_id}/chunks` — chunks
 

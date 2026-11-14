@@ -6,12 +6,15 @@ blocks joined by a blank line), and every chunk's text is exactly
 always produce the same chunks.
 """
 
+from bisect import bisect_right
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.services.extraction import BlockKind, ExtractionResult, TextBlock
+from app.services.extraction import BlockKind, ExtractionError, ExtractionResult, TextBlock
 
 BLOCK_SEPARATOR = "\n\n"
+# Upper bound on chunks per document (bounds rows written in one transaction).
+MAX_CHUNKS = 20_000
 # When cutting a window, look back this fraction of max_chars for whitespace.
 _BREAK_SEARCH_FRACTION = 0.2
 
@@ -68,12 +71,15 @@ def chunk_document(result: ExtractionResult, config: ChunkingConfig) -> list[Chu
     else:
         spans = _structured_spans(text, placed, config)
 
-    chunks = []
+    block_ends = [item.end for item in placed]
+    chunks: list[Chunk] = []
     for start, end in spans:
         start, end = _trim(text, start, end)
         if start >= end:
             continue
-        origin = _block_at(placed, start)
+        if len(chunks) >= MAX_CHUNKS:
+            raise ExtractionError("document_too_complex")
+        origin = _block_at(placed, block_ends, start)
         chunks.append(
             Chunk(
                 index=len(chunks),
@@ -95,12 +101,11 @@ def _place_blocks(blocks: list[TextBlock]) -> list[_PlacedBlock]:
     return placed
 
 
-def _block_at(placed: list[_PlacedBlock], offset: int) -> _PlacedBlock:
+def _block_at(placed: list[_PlacedBlock], block_ends: list[int], offset: int) -> _PlacedBlock:
     # The block containing the offset, or the next one if it falls in a separator.
-    for item in placed:
-        if offset < item.end:
-            return item
-    return placed[-1]
+    # Binary search keeps chunking O(chunks * log(blocks)) instead of quadratic.
+    index = bisect_right(block_ends, offset)
+    return placed[min(index, len(placed) - 1)]
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:

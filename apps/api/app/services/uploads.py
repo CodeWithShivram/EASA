@@ -24,8 +24,12 @@ EXTENSION_MEDIA_TYPES = {
     ".txt": DocumentMediaType.TXT,
 }
 
-# Characters that are unsafe or confusing in displayed or downloaded names.
-_UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+# Path and reserved characters that are unsafe in displayed or downloaded names.
+_RESERVED_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*]')
+# Unicode categories removed from names: control (Cc) and format (Cf) characters,
+# which include zero-width characters, bidirectional controls that can disguise
+# an extension (e.g. "x\u202efdp.txt") and tag characters.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf"})
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -61,7 +65,8 @@ def sanitize_filename(raw: str | None) -> str:
     name = unicodedata.normalize("NFC", name)
     # Whitespace controls (tabs, newlines) become spaces; other unsafe characters go.
     name = _WHITESPACE.sub(" ", name)
-    name = _UNSAFE_FILENAME_CHARS.sub("", name)
+    name = "".join(c for c in name if unicodedata.category(c) not in _INVISIBLE_CATEGORIES)
+    name = _RESERVED_FILENAME_CHARS.sub("", name)
     name = name.strip(" ").rstrip(" .")
     # Leading dots are rejected, not stripped: ".txt" is not a real name, and
     # hidden-file names are not accepted.
@@ -128,7 +133,16 @@ def _check_docx(data: bytes, limits: DocxLimits) -> None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             entries = archive.infolist()
-    except zipfile.BadZipFile:
+            content_types = _read_content_types(archive, entries)
+    except (
+        zipfile.BadZipFile,
+        NotImplementedError,
+        UnicodeDecodeError,
+        ValueError,
+        EOFError,
+        OSError,
+    ):
+        # zipfile raises all of these for malformed archives (found by fuzzing).
         raise _reject(
             "corrupt_file", "The DOCX file is damaged.", HTTPStatus.UNPROCESSABLE_CONTENT
         ) from None
@@ -138,11 +152,7 @@ def _check_docx(data: bytes, limits: DocxLimits) -> None:
     total = 0
     for entry in entries:
         if entry.flag_bits & 0x1:
-            raise _reject(
-                "encrypted_file",
-                "Encrypted files are not accepted.",
-                HTTPStatus.UNPROCESSABLE_CONTENT,
-            )
+            raise _encrypted_rejected()
         total += entry.file_size
         ratio = entry.file_size / max(entry.compress_size, 1)
         if total > limits.max_total_uncompressed_bytes or ratio > limits.max_compression_ratio:
@@ -151,6 +161,41 @@ def _check_docx(data: bytes, limits: DocxLimits) -> None:
     names = {entry.filename for entry in entries}
     if not {"[Content_Types].xml", "word/document.xml"} <= names:
         raise _content_mismatch()
+    # Macro-enabled content is never executed here, but it has no place in a
+    # knowledge-base document, so it is refused outright. Word locates macros
+    # through content types, so check those, not only the usual part name.
+    lowered = content_types.lower()
+    if (
+        b"vbaproject" in lowered
+        or b"macroenabled" in lowered
+        or any(name.lower().endswith("vbaproject.bin") for name in names)
+    ):
+        raise _reject(
+            "macros_not_allowed",
+            "Documents containing macros are not accepted.",
+            HTTPStatus.UNPROCESSABLE_CONTENT,
+        )
+
+
+# [Content_Types].xml is tiny in real documents; refuse to read huge ones.
+_MAX_CONTENT_TYPES_BYTES = 1024 * 1024
+
+
+def _read_content_types(archive: zipfile.ZipFile, entries: list[zipfile.ZipInfo]) -> bytes:
+    for entry in entries:
+        if entry.filename == "[Content_Types].xml":
+            if entry.flag_bits & 0x1:
+                raise _encrypted_rejected()
+            if entry.file_size > _MAX_CONTENT_TYPES_BYTES:
+                raise _archive_rejected()
+            return archive.read(entry)
+    return b""
+
+
+def _encrypted_rejected() -> UploadRejectedError:
+    return _reject(
+        "encrypted_file", "Encrypted files are not accepted.", HTTPStatus.UNPROCESSABLE_CONTENT
+    )
 
 
 def _archive_rejected() -> UploadRejectedError:

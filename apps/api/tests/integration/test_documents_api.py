@@ -1,6 +1,7 @@
 import hashlib
 import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import httpx2
@@ -9,12 +10,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.db.documents import Document, DocumentMediaType
+from app.db.documents import Document, DocumentMediaType, DocumentStatus
 from app.db.models import Base
+from app.db.types import utc_now
 from app.main import create_app
 from app.repositories.documents import DocumentRepository
 from tests.conftest import make_settings
-from tests.fixtures import DOCX_BYTES, PDF_BYTES, TXT_BYTES, make_encrypted_pdf
+from tests.fixtures import (
+    DOCX_BYTES,
+    PDF_BYTES,
+    TXT_BYTES,
+    make_encrypted_pdf,
+    make_pdf_decompression_bomb,
+)
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 OTHER_TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000bb")
@@ -241,6 +249,7 @@ def test_unexpected_parser_failure_fails_the_document_not_the_request(
     assert body["error_code"] == "processing_error"
     assert "secret text" not in response.text
     assert any(r.getMessage() == "document processing crashed" for r in caplog.records)
+    assert "secret text" not in caplog.text
 
 
 def test_processed_upload_stores_chunks_with_metadata(client: TestClient) -> None:
@@ -337,3 +346,57 @@ def test_chunking_settings_are_applied(tmp_path: Path) -> None:
         "overlap_chars": 10,
     }
     assert all(len(c["text"]) <= 100 for c in chunks["items"])
+
+
+def test_pdf_decompression_bomb_fails_the_document_safely(tmp_path: Path) -> None:
+    app = create_app(make_settings(tmp_path))  # default 10 MiB upload limit
+    Base.metadata.create_all(app.state.engine)
+
+    with TestClient(app) as client:
+        response = upload(client, "bomb.pdf", make_pdf_decompression_bomb(), "application/pdf")
+        chunks = client.get(f"/api/v1/documents/{response.json()['id']}/chunks").json()
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "failed"
+    assert response.json()["error_code"] == "resource_limit_exceeded"
+    assert chunks["total"] == 0
+
+
+def _insert_document(app: FastAPI, settings: Settings, *, status: str, age: timedelta) -> None:
+    with app.state.session_factory() as session:
+        DocumentRepository(session).add(
+            Document(
+                tenant_id=settings.dev_tenant_id,
+                owner_id=settings.dev_user_id,
+                filename="stuck.txt",
+                media_type=DocumentMediaType.TXT,
+                size_bytes=len(TXT_BYTES),
+                sha256=hashlib.sha256(TXT_BYTES).hexdigest(),
+                status=DocumentStatus(status),
+                updated_at=utc_now() - age,
+            )
+        )
+        session.commit()
+
+
+def test_interrupted_document_is_reprocessed_on_reupload(
+    client: TestClient, app: FastAPI, settings: Settings
+) -> None:
+    _insert_document(app, settings, status="processing", age=timedelta(hours=1))
+
+    response = upload(client, "stuck.txt", TXT_BYTES)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert client.get(f"/api/v1/documents/{response.json()['id']}/chunks").json()["total"] > 0
+
+
+def test_recently_started_processing_is_not_reprocessed(
+    client: TestClient, app: FastAPI, settings: Settings
+) -> None:
+    _insert_document(app, settings, status="processing", age=timedelta(seconds=5))
+
+    response = upload(client, "stuck.txt", TXT_BYTES)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"

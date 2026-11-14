@@ -222,8 +222,8 @@ Decisions approved 2026-11-14: development-only identity from server configurati
 | P2-M1 | Data model (`documents`, `document_chunks`), tenant-scoped repository, content-addressed file store | COMPLETE | `1d549ee` |
 | P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity, request body limit | COMPLETE | `6704107` |
 | P2-M3 | Text extraction (PDF, DOCX, TXT) and normalization, in-request processing with status | COMPLETE | `02117b6` |
-| P2-M4 | Chunking strategies, chunk persistence, chunks endpoint, recorded chunking config | COMPLETE | the commit that adds this row |
-| P2-M5 | Security hardening tests, documentation, phase report | NOT STARTED | |
+| P2-M4 | Chunking strategies, chunk persistence, chunks endpoint, recorded chunking config | COMPLETE | `9bd5df7` |
+| P2-M5 | Security review and hardening, documentation, Phase 2 report | COMPLETE | the commit that adds this row |
 
 ## P2-M1: Data model and storage
 
@@ -396,3 +396,93 @@ Fixed during the work:
 - Documents processed before P2-M4 (development databases only) have no chunks. There is no reprocess endpoint yet.
 
 **Exit criteria:** met. Every processed document has ordered, located chunks under a recorded configuration; both strategies are deterministic and covered by invariant tests; chunks are tenant-scoped.
+
+## P2-M5: Hardening and Phase 2 report
+
+**Scope:** security review of the upload, processing and chunk path; fixes with regression tests; documentation corrections; Phase 2 report. Delete and reprocess endpoints were offered as optional and not requested, so they are not included. No new dependencies and no migrations.
+
+**Method:** two independent angles.
+1. My own probes against the real libraries: XML entity bombs, external entities (XXE), a PDF decompression bomb.
+2. An independent read-only review agent, which used code reading, timing experiments and 20,000 zip-structure mutations (fuzzing).
+
+Every finding was reproduced (or, where marked, reasoned through) before it was fixed.
+
+**Findings and outcome**
+
+| # | Finding (severity) | Verified | Fix |
+|---|---|---|---|
+| 1 | Quadratic chunking: block lookup scanned all blocks per chunk; a 10 MiB TXT of `a\n\n` would take ~20 min of CPU; 20k DOCX headings took 16.8 s (high) | Yes: 64→256 KiB took 0.16 s → 1.83 s | Binary search over block ends; 50,000-block and 20,000-chunk caps (`document_too_complex`) |
+| 2 | DOCX `gridSpan` amplification: `row.cells` repeats a cell per spanned column; a 35 KB file could expand into billions of copies (high) | Yes: span 1,000 → 0.37 s, 5,000 → 1.22 s | Read each physical `<w:tc>` once; per-cell text budget |
+| 3 | PDF parsing cost not bounded: pypdf limits only decompression (75 MB per stream, no total, no time) (medium) | My probe: `extract_text()` silently returns "" at the limit | Stream limits lowered to 20 MB, 50 MB decoded total, 30-second budget per PDF, explicit content decoding → `resource_limit_exceeded`. Residual risk documented (process isolation) |
+| 4 | A document could stay in `processing` forever after a crash; re-upload returned it unchanged (medium) | Reasoning | Identical re-upload reprocesses documents stuck for more than 10 minutes; tested |
+| 5 | Text cap applied only after extraction and ignored block count (low) | Reasoning | Budget enforced while extracting, separators included; block cap |
+| 6 | Malformed zips (`NotImplementedError`, `UnicodeDecodeError`) caused 500s (low) | Yes (reviewer's fuzzing; my test for unsupported version) | All zipfile errors → `corrupt_file` |
+| 7 | Invisible bidi and tag characters kept in chunk text (low; relevant to prompt injection in Phase 4) | Yes | All Unicode `Cf` characters removed in normalization |
+| 8 | Filename gaps: tag characters, U+061C, soft hyphen (low) | Yes | Remove Unicode `Cc`/`Cf` by category |
+| 9 | Macro check matched only the part name (low) | Reasoning | Also check `[Content_Types].xml` (`vbaProject`, `macroEnabled`), read with a 1 MB cap and an encryption check first |
+| 10 | Logs could carry file fragments (tracebacks, pypdf warnings) (low) | Reasoning | ERROR logs carry the exception type only (traceback at DEBUG); pypdf logger at ERROR |
+| 11 | `"²".isdigit()` in `Content-Length` check caused a 500 (info; uvicorn blocks it first) | Yes | `isascii() and isdigit()` |
+| — | SECURITY.md inaccuracies and stale statements (e.g. "cannot be left in processing", "never written to disk", Phase 1 header) | — | SECURITY.md rewritten |
+
+The DOCX external-entity and entity-expansion probes confirmed the existing protections: the secret file was never read, and the "billion laughs" file failed in milliseconds. My first XXE test had assumed rejection; the real mechanism is that entities are not resolved, and the test was corrected to assert that.
+
+**Before / after (same attack inputs)**
+
+| Input | Before | After |
+|---|---|---|
+| TXT `a\n\n` × 10 MiB | ~20 min (extrapolated from timings) | Rejected (`document_too_complex`) in 2.8 s |
+| DOCX, one cell with `gridSpan` 2³¹−1 | Memory exhaustion (16 GB tuple) | Extracted in 0.02 s |
+| DOCX, 20,000 headings | 16.8 s | 2.2 s (style names also resolved once per document instead of an XPath search per paragraph) |
+| PDF inflating to 80 MB | `no_extractable_text` (misleading) | `resource_limit_exceeded` in 0.5 s |
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` | 5/5 PASS; 239 tests (169 unit, 70 integration); 34 new tests |
+| Python sources | All ASCII (escape sequences only) |
+| Live server (scratch database): PDF, DOCX, PDF bomb | `processed` with 2 and 3 chunks; bomb `failed` with `resource_limit_exceeded` in 0.5 s; logs show metadata only, with no document text or filenames; server tree stopped |
+
+**Known limitations (residual risk, documented in SECURITY.md)**
+
+- Parsing runs in the API process. A slow PDF can occupy a worker for up to about 30 seconds, and memory is bounded only by input size and the budgets. Hard isolation (subprocess with CPU, memory and time limits) is required before untrusted uploads from real users.
+- Homoglyphs are not normalized. Polyglot files that are valid as an allowed type are stored, but never executed or served.
+- No delete or reprocess endpoints. Blob deletion will need reference counting.
+
+**Exit criteria:** met. Every review finding is fixed or documented as residual risk, with regression tests for each fix, and SECURITY.md matches the code.
+
+## Phase 2 completion report
+
+**Status: COMPLETE.** Phase 2 delivered document upload, validation, text extraction, normalization and chunking with tenant isolation and bounded resource use. CI passed on every pushed milestone.
+
+**Phase 2 goals (CLAUDE_DEVELOPMENT_GUIDE.txt §7) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Upload PDF, DOCX and TXT files | `POST /api/v1/documents` (development identity; not in production) | P2-M2 |
+| Validate file type and size | Allowlist plus content signature, size and body limits, zip, macro and encryption checks | P2-M2, P2-M5 |
+| Extract text and page-level metadata | PDF pages, DOCX headings as sections and tables, TXT paragraphs | P2-M3 |
+| Normalize extracted content | Deterministic, idempotent normalization; invisible format characters removed | P2-M3, P2-M5 |
+| Configurable chunking strategies | `structured` and `fixed`, settings validated, configuration recorded per document | P2-M4 |
+| Preserve document ID, page, section, tenant and access metadata | Every chunk carries document ID, tenant ID, page, section and offsets. Document permissions arrive with RBAC (Phase 6); access today is tenant-scoped | P2-M1, P2-M4 |
+| Track processing status and failures | `uploaded` → `processing` → `processed`/`failed` with 8 processing error codes; interrupted documents recoverable | P2-M3, P2-M5 |
+| Make ingestion idempotent | Unique (tenant, SHA-256); identical re-upload returns the existing document; concurrent duplicates resolved | P2-M1, P2-M2 |
+| Tests with synthetic sample documents | Generated multi-page PDFs, `python-docx` documents, hostile variants (encrypted, bombs, XXE, `gridSpan`) | P2-M2 to P2-M5 |
+
+**Commits:** P2-M1 `1d549ee`, P2-M2 `6704107`, P2-M3 `02117b6`, P2-M4 `9bd5df7`, P2-M5 (the commit that adds this report).
+
+**Dependencies added in Phase 2:** `python-multipart` (uploads), `pypdf` (PDF text), `python-docx` and `lxml` (DOCX text). All are prebuilt wheels for Python 3.14.
+
+**Architecture decisions:** ADR-014 (development identity), ADR-015 (content-addressed storage, tenant-scoped data), ADR-016 (in-request processing), ADR-017 (chunking).
+
+**Tests:** 239 backend (169 unit, 70 integration) plus 27 frontend = 266, up from 72 at the end of Phase 1.
+
+**Security considerations:** see [SECURITY.md](SECURITY.md); the P2-M5 review is summarized above.
+
+**Manual verification steps** (from `apps/api`, with the API running):
+
+1. `curl.exe -F "file=@<synthetic.pdf>" http://127.0.0.1:8000/api/v1/documents` → `201`, `status: processed`.
+2. `curl.exe http://127.0.0.1:8000/api/v1/documents/<id>/chunks` → chunks with page numbers.
+3. Upload the same file again → `200` with the same `id`.
+
+**Recommended next phase:** Phase 3, embeddings and retrieval. It starts with an environment check (PostgreSQL and pgvector availability, a CPU-friendly local embedding model compatible with Python 3.14) and an embedding interface independent of any provider, plus a plan for your approval.

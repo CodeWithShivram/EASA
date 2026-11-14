@@ -29,7 +29,7 @@ Tables are added only when a phase defines their requirements ([ADR-004](ARCHITE
 | `media_type` | varchar(100) | no | `application/pdf`, DOCX (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) or `text/plain` (`ck_documents_media_type_allowed`) |
 | `size_bytes` | integer | no | `> 0` (`ck_documents_size_positive`) |
 | `sha256` | varchar(64) | no | Hex digest of the content; key into the file store |
-| `status` | varchar(20) | no | `uploaded`, `processing`, `processed`, `failed` (`ck_documents_status_allowed`); default `uploaded`. Lifecycle: inserted as `uploaded` → `processing` (committed) → `processed` or `failed` within the same request |
+| `status` | varchar(20) | no | `uploaded`, `processing`, `processed`, `failed` (`ck_documents_status_allowed`); default `uploaded`. Lifecycle: inserted as `uploaded` → `processing` (committed) → `processed` or `failed` within the same request. A row left `processing` by an interrupted request is reprocessed by an identical re-upload after 10 minutes |
 | `error_code` | varchar(64) | yes | Machine-readable failure reason; never raw exception text |
 | `page_count` | integer | yes | `>= 0` when set (`ck_documents_page_count_non_negative`); PDF page count after successful processing, otherwise null |
 | `chunking_config` | JSON | yes | Chunking settings used for the stored chunks (`strategy`, `max_chars`, `overlap_chars`); null when there are no chunks. Lets retrieval quality be compared across configurations (Phase 3) |

@@ -148,3 +148,67 @@ def test_rejections_carry_http_status() -> None:
         validate_upload("x.exe", TXT_BYTES, max_bytes=MAX)
 
     assert exc_info.value.status_code == 415
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("invoice\u202efdp.txt", "invoicefdp.txt"),  # right-to-left override
+        ("rep\u200bort\u200d.pdf", "report.pdf"),  # zero-width characters
+        ("\u2066isolate\u2069.docx", "isolate.docx"),  # bidi isolates
+        ("c1\x9bcontrol.txt", "c1control.txt"),  # C1 control character (CSI)
+        ("next\x85line.txt", "next line.txt"),  # NEL is whitespace: becomes a space
+    ],
+)
+def test_sanitize_filename_removes_invisible_and_bidi_characters(raw: str, expected: str) -> None:
+    assert sanitize_filename(raw) == expected
+
+
+def test_docx_with_macros_is_rejected() -> None:
+    data = make_minimal_docx_zip(extra_entries={"word/vbaProject.bin": b"synthetic macro stub"})
+
+    assert rejection_code("macro.docx", data) == "macros_not_allowed"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("x\U000e0041\U000e0042.txt", "x.txt"),  # tag characters
+        ("ara\u061cbic.pdf", "arabic.pdf"),  # Arabic letter mark
+        ("soft\u00adhyphen.docx", "softhyphen.docx"),
+    ],
+)
+def test_sanitize_filename_removes_all_format_characters(raw: str, expected: str) -> None:
+    assert sanitize_filename(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "content_types",
+    [
+        b'<Types><Override ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+        b'<Types><Override ContentType="application/'
+        b'vnd.ms-word.document.macroEnabled.main+xml"/></Types>',
+    ],
+)
+def test_macros_are_detected_from_content_types(content_types: bytes) -> None:
+    # The macro part has an unusual name, so only the content types reveal it.
+    data = make_minimal_docx_zip(
+        minimal=False,
+        extra_entries={
+            "[Content_Types].xml": content_types,
+            "word/document.xml": b"<document/>",
+            "word/renamed.bin": b"synthetic macro stub",
+        },
+    )
+
+    assert rejection_code("hidden-macro.docx", data) == "macros_not_allowed"
+
+
+def test_unsupported_zip_version_is_corrupt_not_a_server_error() -> None:
+    # Found by fuzzing: zipfile raises NotImplementedError for unknown versions.
+    data = bytearray(DOCX_BYTES)
+    central = data.find(b"PK\x01\x02")
+    data[central + 6] = 88  # "version needed to extract" = 8.8
+    data[central + 7] = 0
+
+    assert rejection_code("future.docx", bytes(data)) == "corrupt_file"

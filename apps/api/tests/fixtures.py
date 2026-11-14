@@ -3,6 +3,7 @@
 import io
 import secrets
 import zipfile
+import zlib
 
 import docx
 from pypdf import PdfWriter
@@ -105,3 +106,40 @@ def make_encrypted_pdf() -> bytes:
     buffer = io.BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
+
+
+def make_pdf_decompression_bomb(inflated_bytes: int = 80 * 1024 * 1024) -> bytes:
+    """A one-page PDF (~80 KB) whose content stream inflates past pypdf's 75 MB limit."""
+    payload = zlib.compress(b" " * inflated_bytes, 9)
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+        4: b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(payload)
+        + payload
+        + b"\nendstream",
+    }
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: dict[int, int] = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += f"{number} 0 obj\n".encode() + objects[number] + b"\nendobj\n"
+    xref_offset = len(out)
+    out += b"xref\n0 5\n0000000000 65535 f \n"
+    out += b"".join(f"{offsets[n]:010d} 00000 n \n".encode() for n in range(1, 5))
+    out += f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+WORDML = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def make_docx_with_document_xml(document_xml: bytes) -> bytes:
+    """DOCX_BYTES with word/document.xml replaced (for hostile-XML tests)."""
+    source = zipfile.ZipFile(io.BytesIO(DOCX_BYTES))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = document_xml if item.filename == "word/document.xml" else source.read(item)
+            target.writestr(item, content)
+    return out.getvalue()

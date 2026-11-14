@@ -134,7 +134,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 205 tests; warnings are treated as errors
+uv run pytest                 # 239 tests; warnings are treated as errors
 ```
 
 **Frontend** (from `apps/web`):

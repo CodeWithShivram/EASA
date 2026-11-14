@@ -4,6 +4,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from http import HTTPStatus
 
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.core.identity import Identity
 from app.db.documents import Document, DocumentChunk, DocumentStatus
+from app.db.types import utc_now
 from app.repositories.documents import DocumentRepository
 from app.services.chunking import ChunkingConfig, chunk_document
 from app.services.extraction import ExtractionError, ExtractionResult, extract_document
@@ -19,6 +21,10 @@ from app.services.uploads import DocxLimits, validate_upload
 from app.storage.blob_store import BlobStore
 
 logger = logging.getLogger(__name__)
+
+# A document still "uploaded" or "processing" after this long was interrupted
+# (process killed, final commit failed); an identical re-upload reprocesses it.
+STALE_PROCESSING_AFTER = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,12 @@ class DocumentService:
 
         existing = self._repository.get_by_sha256(identity.tenant_id, sha256)
         if existing is not None:
+            if self._is_interrupted(existing):
+                logger.warning(
+                    "reprocessing interrupted document",
+                    extra={"document_id": str(existing.id), "status": existing.status.value},
+                )
+                self._process(existing, data)
             return UploadResult(document=existing, created=False)
 
         # Store the bytes first: an orphaned blob (if the insert fails) is harmless
@@ -90,11 +102,19 @@ class DocumentService:
         self._process(document, data)
         return UploadResult(document=document, created=True)
 
+    @staticmethod
+    def _is_interrupted(document: Document) -> bool:
+        return (
+            document.status in (DocumentStatus.UPLOADED, DocumentStatus.PROCESSING)
+            and utc_now() - document.updated_at > STALE_PROCESSING_AFTER
+        )
+
     def _process(self, document: Document, data: bytes) -> ExtractionResult | None:
         """Extract and chunk text in the request; record the outcome on the document.
 
-        The document always ends in PROCESSED or FAILED; it is never left in
-        PROCESSING, even if a parser fails unexpectedly on hostile input.
+        The document ends in PROCESSED or FAILED, even if a parser fails
+        unexpectedly on hostile input. If the process dies mid-way it stays in
+        PROCESSING until an identical re-upload finds it stale and reprocesses it.
         """
         document.status = DocumentStatus.PROCESSING
         self._session.commit()
@@ -122,12 +142,18 @@ class DocumentService:
         except ExtractionError as exc:
             document.status = DocumentStatus.FAILED
             document.error_code = exc.code
-        except Exception:
+        except Exception as exc:
             # Unexpected failure in parsing or chunking: discard any partial chunks,
             # log server-side (no document text) and fail the document with a
             # generic code instead of a 500.
             self._session.rollback()
-            logger.exception("document processing crashed", extra={"document_id": str(document.id)})
+            # Only the exception type at ERROR: messages and tracebacks can quote
+            # file content. The full traceback is available at DEBUG.
+            logger.error(
+                "document processing crashed",
+                extra={"document_id": str(document.id), "error_type": type(exc).__name__},
+            )
+            logger.debug("document processing traceback", exc_info=True)
             result = None
             document.status = DocumentStatus.FAILED
             document.error_code = "processing_error"

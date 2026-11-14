@@ -119,7 +119,7 @@ class BodySizeLimitMiddleware:
 
         declared = Headers(scope=scope).get("content-length")
         if declared is not None:
-            if not declared.isdigit():
+            if not (declared.isascii() and declared.isdigit()):
                 await error_response(
                     HTTPStatus.BAD_REQUEST, "invalid_content_length", "Invalid Content-Length."
                 )(scope, receive, send)
