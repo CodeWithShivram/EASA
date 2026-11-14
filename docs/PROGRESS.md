@@ -14,7 +14,7 @@ Status labels: **COMPLETE** (implemented and verified), **PARTIAL**, **BLOCKED**
 | M2 | Database sessions, settings-driven Alembic, empty baseline migration | COMPLETE | `77f692f` |
 | M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | COMPLETE | `753742c` |
 | M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | COMPLETE | `3371ec3` |
-| M5 | Dev/check scripts and GitHub Actions CI | PARTIAL (CI not yet run) | the commit that adds this row |
+| M5 | Dev/check scripts and GitHub Actions CI | COMPLETE | `76582bd`, CI fix `808dfb4` |
 
 ## M2: Database foundation
 
@@ -201,14 +201,14 @@ The M3 live-check cleanup did not stop the API server. In this automation shell 
 | `alembic revision --autogenerate` with the portable hooks | Both hooks ran; generated file formatted and lint-clean (test file deleted) |
 | `ci.yml` parsed with PyYAML | Valid: 2 jobs, expected triggers, steps and permissions |
 | `package-lock.json` | Contains the Linux native packages CI needs (`@next/swc-linux-x64-gnu`, Tailwind oxide, lightningcss, rolldown) |
-| GitHub Actions run 43579416940 (commit `76582bd`) | **Failed.** Web job passed every step on Ubuntu. API job failed at "Set up job": `astral-sh/setup-uv@v10` does not exist (setup-uv publishes only exact release tags). Fixed in the follow-up commit `fix(ci): pin setup-uv to an existing release tag` by pinning `v10.3.3`; the rerun result is recorded in the next progress update |
+| GitHub Actions run 43579416940 (commit `76582bd`) | **Failed.** Web job passed every step on Ubuntu. API job failed at "Set up job": `astral-sh/setup-uv@v10` does not exist (setup-uv publishes only exact release tags). Fixed in the follow-up commit `fix(ci): pin setup-uv to an existing release tag` by pinning `v10.3.3`; see the next row |
+| GitHub Actions run 43580363504 (commit `808dfb4`) | **Passed.** API job (18 s): locked install, ruff format and lint, 45 tests, migrations + `alembic check`. Web job (38 s): `npm ci`, lint, typecheck, 27 tests, build |
 
 **Known limitations**
 
-- CI has never run; status stays PARTIAL until the first run passes.
 - The `Ctrl+C` path of `dev.ps1` shares its cleanup with `-SmokeTest`, but interactive `Ctrl+C` was not exercised by automation.
 - The scripts target Windows PowerShell 5.1; on Linux/macOS run the individual commands from the development guide.
 - Actions are pinned to major version tags (setup-uv to an exact release tag, since it has no major tag), not commit SHAs (planned for Phase 8 hardening).
 - Mermaid diagrams still need a visual check on GitHub.
 
-**Exit criteria:** local checks and smoke test pass; CI configured. The milestone is complete once the first CI run passes.
+**Exit criteria:** met. Local checks and the smoke test pass, and CI passes on GitHub Actions (run 43580363504). GitHub notes that `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; no change is needed now.

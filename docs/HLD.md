@@ -99,7 +99,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 
 | Phase | Theme | Status |
 |---|---|---|
-| 1 | Foundation and architecture | M0–M5 done; awaiting phase review and the first CI run |
+| 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Not started |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Not started |
 | 4 | Grounded RAG answering | Not started |
