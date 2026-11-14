@@ -60,6 +60,19 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | Database failures log only the error type, not driver messages | [probe.py](../apps/api/app/db/probe.py) |
 | Tracebacks go to server logs only | [middleware.py](../apps/api/app/core/middleware.py) |
 
+### Uploads (Phase 2, P2-M2)
+
+| Control | Where |
+|---|---|
+| Request body limit (`EASA_MAX_UPLOAD_BYTES` + 64 KiB), enforced on the declared `Content-Length` and while streaming | [middleware.py](../apps/api/app/core/middleware.py) `BodySizeLimitMiddleware` — tested |
+| Extension allowlist (`.pdf`, `.docx`, `.txt`) **and** content signature check; the client's declared content type is ignored | [uploads.py](../apps/api/app/services/uploads.py) — tested |
+| DOCX zip-bomb limits (entries, total uncompressed size, per-entry compression ratio) checked from the archive directory before any decompression; encrypted entries rejected | [uploads.py](../apps/api/app/services/uploads.py) — tested |
+| TXT must be UTF-8 without NUL bytes | [uploads.py](../apps/api/app/services/uploads.py) — tested |
+| Filenames sanitized for display (path components, control and reserved characters removed) and never used as paths; bytes stored by SHA-256 outside any web root | [uploads.py](../apps/api/app/services/uploads.py), [blob_store.py](../apps/api/app/storage/blob_store.py) — tested |
+| Uploaded files are never executed or extracted; nothing is parsed at upload time beyond the zip directory | — |
+| Identity comes from server configuration only; document endpoints are not mounted in production | [dependencies.py](../apps/api/app/api/dependencies.py), [main.py](../apps/api/app/main.py) — tested |
+| Another tenant's document answers like a missing one (no existence disclosure) | [documents.py](../apps/api/app/services/documents.py) — tested |
+
 ### Database
 
 - Parameterized access through SQLAlchemy; the only raw SQL is the constant `SELECT 1` probe.
@@ -82,11 +95,12 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | Role-based and resource-level authorization; deny by default | Phase 6 |
 | Document-level permissions applied before retrieval and before returning content | Phases 2, 3, 6 |
 | Tenant and ownership filters inside the backend | Phase 6 |
-| Upload validation (type, extension, size, content), safe filenames, no path traversal, storage outside web roots | Phase 2 |
+| Content-level document checks during parsing (encrypted or malformed PDFs, parser resource limits) | P2-M3 |
 | Prompt-injection defences; retrieved text kept separate from instructions | Phases 4, 5 |
 | Allowlisted tools with strict schemas, permission re-check before execution, confirmation for consequential actions | Phase 5 |
 | Audit logs for protected operations and tool executions (tool, user, authorization result, outcome, correlation ID) | Phases 5, 6 |
-| Rate limiting and request size limits | Before any shared deployment |
+| Rate limiting | Before any shared deployment |
+| Upload-time detection of encrypted PDFs (needs PDF parsing) | P2-M3 |
 | Security response headers on the API (e.g. CSP, `X-Content-Type-Options`) | Phase 7 / 8 |
 | TLS | Any non-local deployment |
 | Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs | Phase 8 |
@@ -105,9 +119,10 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 ## 6. Security testing
 
-**Automated today** (part of the 104 tests):
+**Automated today** (part of the 171 tests):
 
 - Documents: repository reads are tenant-scoped (another tenant gets nothing for a known document ID); the file store rejects path-traversal and malformed hashes and never uses filenames for paths.
+- Uploads: malicious filenames (`../`, `..\`, reserved characters, control characters, dot-prefixed), disallowed extensions, executables disguised as PDFs, mismatched content, empty and oversized files, non-UTF-8 text, corrupt, encrypted and zip-bomb DOCX files; oversized request bodies with and without `Content-Length`; another tenant's document returns 404; document routes absent in production.
 
 - Settings reject invalid values, wildcard/path CORS origins, non-allowlisted drivers and unknown `.env` keys; secrets are not echoed.
 - Errors: 404/405/422/500 use the envelope; the 500 body has no internal details; validation errors omit input.

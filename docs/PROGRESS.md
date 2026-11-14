@@ -219,8 +219,8 @@ Decisions approved 2026-11-14: development-only identity from server configurati
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P2-M1 | Data model (`documents`, `document_chunks`), tenant-scoped repository, content-addressed file store | COMPLETE | the commit that adds this row |
-| P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity | NOT STARTED | |
+| P2-M1 | Data model (`documents`, `document_chunks`), tenant-scoped repository, content-addressed file store | COMPLETE | `1d549ee` |
+| P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity, request body limit | COMPLETE | the commit that adds this row |
 | P2-M3 | Text extraction (PDF, DOCX, TXT) and normalization | NOT STARTED | |
 | P2-M4 | Chunking strategies and chunk persistence | NOT STARTED | |
 | P2-M5 | Security hardening tests, documentation, phase report | NOT STARTED | |
@@ -259,3 +259,53 @@ Decisions approved 2026-11-14: development-only identity from server configurati
 - The frontend is unchanged, so frontend checks were not rerun for this milestone. CI runs them after the push.
 
 **Exit criteria:** met. Tables exist through a reviewed migration, data access is tenant-scoped and tested, and file storage cannot be steered by user input.
+
+## P2-M2: Upload and validation
+
+**Scope:** document upload, list and get endpoints; upload validation; idempotency; development identity; a global request body limit. Parsing, normalization and chunking are not included (P2-M3/M4). Encrypted-PDF detection moved to P2-M3 because it needs a PDF parser.
+
+**Dependency added:** `python-multipart` 0.0.33 (pure Python), which FastAPI requires to parse `multipart/form-data` uploads.
+
+**Implemented**
+
+- `POST /api/v1/documents`: 201 for new content, 200 with the existing document for identical content in the same tenant; `Location` header. `GET /api/v1/documents` (`limit` 1–200, `offset`) and `GET /api/v1/documents/{id}`. Contracts are in [API_SPECIFICATION.md §3.4](API_SPECIFICATION.md#34-documents-phase-2-development-only).
+- [app/services/uploads.py](../apps/api/app/services/uploads.py):
+  - Filename sanitizing.
+  - Extension allowlist plus a content signature check.
+  - Size limit.
+  - DOCX checks from the zip directory only (entries, total uncompressed size, compression ratio, encrypted entries, required parts).
+  - Strict UTF-8 TXT without NUL bytes.
+  - Each rejection has its own error code and HTTP status.
+- [app/services/documents.py](../apps/api/app/services/documents.py): `DocumentService`. Stores the blob before inserting the row, resolves concurrent identical uploads, and returns the same 404 for missing and foreign documents.
+- [app/core/middleware.py](../apps/api/app/core/middleware.py) `BodySizeLimitMiddleware`: limit is `EASA_MAX_UPLOAD_BYTES` + 64 KiB; checks the declared length up front and counts streamed bytes; returns 413 `request_too_large`.
+- [app/core/identity.py](../apps/api/app/core/identity.py) and `get_identity`: the development identity comes from settings (`EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID`). Document routes are mounted only outside production.
+- Settings: `EASA_MAX_UPLOAD_BYTES` (default 10 MiB, range 1 B–100 MiB), the development identity fields; `.env.example` updated.
+- Docs: API spec (full document contracts and error codes), SECURITY (upload controls; request size limit now implemented), LLD, HLD, DEVELOPMENT_GUIDE (settings, verified `curl.exe` upload example), README endpoints, ADR-014 marked implemented.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `uv run ruff format --check .` / `uv run ruff check .` | Clean |
+| `uv run pytest` | 144 passed (86 unit, 58 integration); 67 new tests |
+| Live server (scratch database and storage, 1 MiB limit): `curl.exe -F file=@policy.txt …/documents` | 201 with the document; repeat as `copy.txt` → 200, same ID |
+| Live: list and get | 200 with the stored document; timestamps in UTC (`…Z`) |
+| Live: executable bytes named `evil.pdf` | 415 `file_content_mismatch` with correlation ID |
+| Live: 2 MiB body | 413 `request_too_large` |
+| Live: stored blobs | 1 file under the scratch storage directory; server tree stopped, port closed, no leftover processes |
+
+Fixed during the work:
+
+- Tabs and newlines in filenames were deleted instead of becoming spaces.
+- Names starting with a dot (`.txt`, `.hidden.txt`) were silently changed instead of rejected.
+- A test fixture could not create an "encrypted" zip entry, because `zipfile` resets the flag; the flag is now set in the archive bytes.
+
+**Known limitations**
+
+- Processing does not run yet; uploaded documents stay `uploaded` (P2-M3).
+- Encrypted or malformed PDFs are only detected once parsing exists (P2-M3).
+- CORS still allows only `GET`, so browsers cannot upload yet (Phase 7).
+- No rate limiting. The development identity means every caller of a development server is the same user (ADR-014).
+- Blob deletion is not implemented.
+
+**Exit criteria:** met. Uploads are validated, idempotent and tenant-scoped, oversized requests are rejected early, and all behaviour is tested automatically and confirmed against a live server.

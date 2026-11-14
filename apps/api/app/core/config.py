@@ -5,6 +5,7 @@ an optional ``.env`` file in the working directory. Invalid or unknown values
 fail application startup instead of being silently ignored.
 """
 
+import uuid
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -42,6 +43,13 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     # Uploaded file contents (content-addressed). Never served directly; git-ignored.
     storage_dir: Path = Field(default_factory=lambda: API_ROOT / "var" / "uploads")
+    # Largest accepted uploaded file. The whole request body may exceed this by
+    # a small multipart overhead (see app.core.middleware.BodySizeLimitMiddleware).
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
+    # Development-only identity (ADR-014). Synthetic values; never taken from
+    # requests. Document endpoints are not mounted in production.
+    dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+    dev_user_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000002")
 
     @field_validator("database_url")
     @classmethod

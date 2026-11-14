@@ -156,7 +156,7 @@
 <a id="adr-014"></a>
 ## ADR-014: Development-only identity until authentication exists
 
-- **Status:** Accepted (Phase 2 planning, 2026-11-14). Implemented with the upload endpoints in P2-M2.
+- **Status:** Accepted (Phase 2 planning, 2026-11-14). Implemented in P2-M2 (`get_identity` dependency; document routes mounted only outside production).
 - **Context:** The roadmap puts authentication and RBAC in Phase 6, but Phase 2 stores documents that must carry an owner and a tenant. The guide forbids trusting identity supplied by the browser.
 - **Options considered:** (a) a fixed development identity from server configuration; (b) bring minimal authentication forward; (c) no HTTP upload in Phase 2, only a command-line ingestion tool.
 - **Decision:** (a). The server reads a development tenant and user ID from its own configuration (`EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID`). It never takes identity from requests. Document endpoints are disabled when `EASA_ENVIRONMENT=production`. Tables carry real `tenant_id` and `owner_id` columns now; foreign keys are added in Phase 6.

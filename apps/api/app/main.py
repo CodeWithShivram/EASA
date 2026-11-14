@@ -10,14 +10,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.api.v1.routes import documents
 from app.core.config import Settings, load_settings
 from app.core.correlation import CORRELATION_ID_HEADER
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import CorrelationIdMiddleware, UnhandledErrorMiddleware
+from app.core.middleware import (
+    BodySizeLimitMiddleware,
+    CorrelationIdMiddleware,
+    UnhandledErrorMiddleware,
+)
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
 from app.storage.blob_store import LocalBlobStore
+
+# Allowance for multipart boundaries and headers on top of the file itself.
+MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -46,8 +54,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router)
+    if not settings.is_production:
+        # Uses the development-only identity (ADR-014), so never in production.
+        app.include_router(documents.router, prefix="/api/v1")
 
     # Starlette wraps middleware in reverse order: the last one added is outermost.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        max_body_bytes=settings.max_upload_bytes + MULTIPART_OVERHEAD_BYTES,
+    )
     app.add_middleware(UnhandledErrorMiddleware)
     app.add_middleware(
         CORSMiddleware,

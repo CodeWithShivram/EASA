@@ -82,6 +82,15 @@ npm run start      # serves the build on http://localhost:3000
 
 Useful URLs: http://127.0.0.1:8000/api/v1/health, http://127.0.0.1:8000/api/v1/health/ready, http://127.0.0.1:8000/docs.
 
+Uploading a document from PowerShell (uses the development identity; `curl.exe`, not the PowerShell `curl` alias):
+
+```powershell
+curl.exe -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
+curl.exe "http://127.0.0.1:8000/api/v1/documents?limit=10"
+```
+
+Use synthetic documents only.
+
 Stop servers with `Ctrl+C`. If you start them in the background from a script, stop the **whole process tree** (`taskkill /PID <pid> /T /F`); killing only the parent can leave the server running (see section 9).
 
 ## 4. Configuration
@@ -93,6 +102,8 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_DATABASE_URL` | API | `sqlite:///…/apps/api/var/easa.db` | Drivers: `sqlite`, `sqlite+pysqlite`, `postgresql+psycopg` (driver not installed yet) |
 | `EASA_CORS_ALLOWED_ORIGINS` | API | `["http://localhost:3000"]` | JSON list; no wildcards |
 | `EASA_STORAGE_DIR` | API | `apps/api/var/uploads` | Uploaded file contents (content-addressed); git-ignored |
+| `EASA_MAX_UPLOAD_BYTES` | API | `10485760` (10 MiB) | Largest accepted file (1 byte to 100 MiB); the request body limit is this plus 64 KiB |
+| `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
 Invalid API settings stop the server at startup with a validation error that never shows the submitted value.
@@ -118,7 +129,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 77 tests; warnings are treated as errors
+uv run pytest                 # 144 tests; warnings are treated as errors
 ```
 
 **Frontend** (from `apps/web`):

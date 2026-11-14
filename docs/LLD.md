@@ -11,10 +11,11 @@ easa/
   apps/api/                FastAPI backend (Python 3.14, uv)
     app/
       main.py              application factory: create_app()
-      core/                config, correlation IDs, logging, errors, middleware
-      api/                 dependencies.py, v1/router.py, v1/routes/health.py
-      services/            health.py (HealthService, DatabaseProbe protocol)
-      schemas/             health.py (response models)
+      core/                config, correlation IDs, logging, errors, middleware, identity
+      api/                 dependencies.py, v1/router.py, v1/routes/health.py, v1/routes/documents.py
+      services/            health.py (HealthService, DatabaseProbe protocol),
+                           uploads.py (upload validation), documents.py (DocumentService)
+      schemas/             health.py, documents.py (response models)
       db/                  engine.py, session.py, base.py, models.py, probe.py,
                            types.py (UtcDateTime), documents.py (Document, DocumentChunk)
       repositories/        documents.py (tenant-scoped DocumentRepository)
@@ -82,8 +83,9 @@ Starlette runs the last-added middleware first. Effective order for a request, o
 | 2 | `CorrelationIdMiddleware` | Generates `uuid4().hex` per HTTP request, stores it in a context variable, adds `X-Correlation-ID` to the response, logs `request completed` with `method`, `path`, `status_code`, `duration_ms` (query string deliberately omitted) |
 | 3 | `CORSMiddleware` | Allowed origins from settings; `allow_methods=["GET"]`, `allow_headers=["Content-Type"]`, `allow_credentials=False`, exposes `X-Correlation-ID` |
 | 4 | `UnhandledErrorMiddleware` | Catches any exception from the app, logs it with traceback, returns the standard 500 body. If the response had already started it re-raises |
+| 4a | `BodySizeLimitMiddleware` | Rejects a declared `Content-Length` over `max_upload_bytes + 64 KiB` before reading; otherwise counts body bytes as they arrive and, if the limit is crossed, replaces the app's response with `413 request_too_large`. Malformed `Content-Length` → `400 invalid_content_length` |
 | 5 | Starlette `ExceptionMiddleware` | Runs the registered exception handlers (2.5) |
-| 6 | Router | `/api/v1/health`, `/api/v1/health/ready` |
+| 6 | Router | `/api/v1/health`, `/api/v1/health/ready`; outside production also `/api/v1/documents` routes |
 
 Because #4 sits inside #2 and #3, an unexpected error still returns a response carrying CORS headers and the correlation ID ([ADR-007](ARCHITECTURE_DECISIONS.md#adr-007)).
 
@@ -103,6 +105,13 @@ Response shape: `{"error": {"code", "message", "correlation_id", "details"?}}` (
 `configure_logging(level)` installs one JSON handler on the root logger (stderr), removes Uvicorn's own handlers so `uvicorn` and `uvicorn.error` propagate to it, and raises `uvicorn.access` to `WARNING` (request logging is done by the middleware). `JsonFormatter` emits `timestamp` (UTC, milliseconds), `level`, `logger`, `message`, `correlation_id` (null outside a request), any `extra=` fields and `exception` when present. Uvicorn's ANSI `color_message` duplicate is dropped.
 
 With `--reload`, the reloader supervisor process logs in plain text because it runs before the factory configures logging; the worker's logs are JSON.
+
+### 2.6a Documents — routes, service, validation (P2-M2)
+
+- [routes/documents.py](../apps/api/app/api/v1/routes/documents.py): `upload_document` (multipart field `file`; `201` new, `200` existing, `Location` header), `list_documents` (`limit` 1–200, `offset` ≥ 0), `get_document`. Handlers only resolve dependencies, call the service and map to `DocumentResponse`. Mounted in `create_app` only when not in production.
+- [dependencies.py](../apps/api/app/api/dependencies.py): `get_identity` builds an `Identity` from `settings.dev_tenant_id` / `dev_user_id` ([ADR-014](ARCHITECTURE_DECISIONS.md#adr-014)); `get_document_service` wires the request session, `app.state.blob_store` and `max_upload_bytes`.
+- [services/uploads.py](../apps/api/app/services/uploads.py): `sanitize_filename` and `validate_upload` → `ValidatedUpload(filename, media_type)` or `UploadRejectedError` (an `AppError` with a specific code and status). `DocxLimits` holds the zip-bomb limits.
+- [services/documents.py](../apps/api/app/services/documents.py): `DocumentService.upload` validates, hashes, returns the existing document for known content, otherwise stores the blob **then** inserts the row and commits (an orphan blob is harmless; a row without a blob is not). A unique-constraint race with a concurrent identical upload is resolved by returning the winner. `get` raises `DocumentNotFoundError` (404) for missing and foreign documents alike.
 
 ### 2.7 Health — routes, service, probe
 
@@ -168,8 +177,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 43 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type |
-| Backend integration | `apps/api/tests/integration/` | 34 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency); document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 86 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation |
+| Backend integration | `apps/api/tests/integration/` | 58 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).

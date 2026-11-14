@@ -8,12 +8,15 @@ Order (outermost first), as installed by ``create_app``:
 2. ``CORSMiddleware``.
 3. ``UnhandledErrorMiddleware``: converts unexpected exceptions into the
    standard 500 error body, which then still receives CORS and ID headers.
+4. ``BodySizeLimitMiddleware``: rejects request bodies over the limit with 413.
 """
 
 import logging
 import time
+from http import HTTPStatus
 
-from starlette.datastructures import MutableHeaders
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.correlation import (
@@ -89,3 +92,73 @@ class UnhandledErrorMiddleware:
                 raise
             response = error_response(500, "internal_error", "An unexpected error occurred.")
             await response(scope, receive, send)
+
+
+class _BodyTooLargeError(Exception):
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """Rejects request bodies larger than ``max_body_bytes`` with 413.
+
+    A declared ``Content-Length`` over the limit is rejected before the body is
+    read. Bodies without a usable length (e.g. chunked) are counted as they
+    arrive. When the limit is crossed mid-stream, whatever response the app
+    would have sent (FastAPI turns body-read errors into a 400) is replaced by
+    the 413 error body.
+    """
+
+    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None:
+            if not declared.isdigit():
+                await error_response(
+                    HTTPStatus.BAD_REQUEST, "invalid_content_length", "Invalid Content-Length."
+                )(scope, receive, send)
+                return
+            if int(declared) > self.max_body_bytes:
+                await self._too_large()(scope, receive, send)
+                return
+
+        received = 0
+        exceeded = False
+        response_started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_bytes:
+                    exceeded = True
+                    raise _BodyTooLargeError
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal response_started
+            if exceeded and not response_started:
+                return  # Suppress the app's response to an oversized body.
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            if not (exceeded and not response_started):
+                raise
+        if exceeded and not response_started:
+            await self._too_large()(scope, receive, send)
+
+    def _too_large(self) -> JSONResponse:
+        return error_response(
+            HTTPStatus.CONTENT_TOO_LARGE, "request_too_large", "The request body is too large."
+        )
