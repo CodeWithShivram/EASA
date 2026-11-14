@@ -103,7 +103,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 |---|---|---|
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
-| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Not started |
+| 3 | Embeddings and retrieval (PostgreSQL + pgvector) | In progress (P3-M1 embeddings done) |
 | 4 | Grounded RAG answering | Not started |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (266 automated tests today) |
+| Testability | App factory, injected dependencies, deterministic tests (285 automated tests today) |
 | Portability | SQLAlchemy and Alembic abstractions so PostgreSQL can replace SQLite ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003)) |
 
 ## 9. Risks

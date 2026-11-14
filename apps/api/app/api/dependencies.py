@@ -17,7 +17,10 @@ def get_db_session(request: Request) -> Iterator[Session]:
 
 
 def get_health_service(request: Request) -> HealthService:
-    return HealthService(database=SqlAlchemyDatabaseProbe(request.app.state.engine))
+    return HealthService(
+        database=SqlAlchemyDatabaseProbe(request.app.state.engine),
+        embeddings=request.app.state.embedder,
+    )
 
 
 def get_identity(request: Request) -> Identity:
@@ -41,4 +44,6 @@ def get_document_service(
             max_chars=settings.chunk_max_chars,
             overlap_chars=settings.chunk_overlap_chars,
         ),
+        embedder=request.app.state.embedder,
+        embedding_batch_size=settings.embedding_batch_size,
     )

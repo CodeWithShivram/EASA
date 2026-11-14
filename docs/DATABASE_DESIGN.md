@@ -1,6 +1,6 @@
 # EASA — Database Design
 
-> **Status:** `documents` and `document_chunks` are implemented (Phase 2, P2-M1). All other entities in section 6 are a provisional design, not an implemented schema.
+> **Status:** `documents`, `document_chunks` (Phase 2) and `chunk_embeddings` (Phase 3, P3-M1) are implemented. All other entities in section 6 are a provisional design, not an implemented schema.
 > Checked against the P2-M1 changes on 2026-11-14.
 
 Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) · [Security](SECURITY.md)
@@ -11,7 +11,7 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored) |
-| Tables | `documents`, `document_chunks` (plus Alembic's `alembic_version`) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`) |
 | Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
@@ -163,11 +163,28 @@ Naming convention ([app/db/base.py](../apps/api/app/db/base.py)):
 | Foreign key | `fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s` |
 | Primary key | `pk_%(table_name)s` |
 
-## 8. Vector data (Phase 3, planned)
+## 8. Vector data (Phase 3, implemented in P3-M1)
 
-When embeddings are introduced, each stored vector will record the embedding model name, version and dimensions. Vectors from incompatible models will never share a search space without explicit versioning and a re-embedding migration.
+`chunk_embeddings` ([app/db/embeddings.py](../apps/api/app/db/embeddings.py), migration `29b0c28209aa`):
 
-## 9. PostgreSQL path (Phase 3, planned)
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `chunk_id` | UUID | no | Foreign key to `document_chunks.id`, `ON DELETE CASCADE` (`fk_chunk_embeddings_chunk_id_document_chunks`) |
+| `model_id` | varchar(200) | no | Model name **and revision**, e.g. `bge-small-en-v1.5@aa8f8b060edb`; primary key `(chunk_id, model_id)` (`pk_chunk_embeddings`) |
+| `tenant_id` | UUID | no | Copied from the chunk so search can filter by tenant before scoring |
+| `dimensions` | integer | no | `> 0` (`ck_chunk_embeddings_dimensions_positive`); 384 for the default model |
+| `vector` | binary | no | float32 little-endian, L2-normalized; `dimensions × 4` bytes (checked when decoding) |
+| `created_at` | timestamp with time zone | no | UTC |
+
+Index `ix_chunk_embeddings_model_id_tenant_id` serves "all vectors of one model for one tenant".
+
+Rules:
+- Vectors from different models never share a search space. Search will select a single `model_id`, and changing the model means embedding again under the new ID (old rows can stay until deleted).
+- Deleting or replacing chunks deletes their vectors (database-level cascade).
+- Chunks without a vector for the active model (e.g. the model was missing at upload time) are found and embedded by `uv run python -m app.cli embed-missing`.
+- PostgreSQL will store vectors in a `pgvector` column (P3-M4); the model and versioning rules stay the same.
+
+## 9. PostgreSQL path (Phase 3, P3-M4)
 
 1. Install the `psycopg` driver (allowed by configuration today, not installed).
 2. Point `EASA_DATABASE_URL` at PostgreSQL and run `alembic upgrade head`.

@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     chunk_strategy: Literal["fixed", "structured"] = "structured"
     chunk_max_chars: int = Field(default=1200, ge=100, le=20000)
     chunk_overlap_chars: int = Field(default=150, ge=0)
+    # Embeddings (Phase 3). "onnx" = pinned local bge-small-en-v1.5 (run the
+    # download command first); "hashing" = deterministic, non-semantic test embedder.
+    embedding_provider: Literal["onnx", "hashing"] = "onnx"
+    embedding_model_dir: Path = Field(default_factory=lambda: API_ROOT / "var" / "models")
+    embedding_batch_size: int = Field(default=32, ge=1, le=256)
     # Development-only identity (ADR-014). Synthetic values; never taken from
     # requests. Document endpoints are not mounted in production.
     dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")

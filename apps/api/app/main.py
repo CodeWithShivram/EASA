@@ -22,6 +22,7 @@ from app.core.middleware import (
 )
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
+from app.embeddings.factory import build_embedder
 from app.storage.blob_store import LocalBlobStore
 
 # Allowance for multipart boundaries and headers on top of the file itself.
@@ -51,6 +52,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.blob_store = LocalBlobStore(settings.storage_dir)
+    # The ONNX model loads lazily on first use, so startup stays fast.
+    app.state.embedder = build_embedder(settings)
 
     register_exception_handlers(app)
     app.include_router(api_router)

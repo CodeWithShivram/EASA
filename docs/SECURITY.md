@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 2 (document intelligence). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -25,6 +25,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | Web dashboard | Static page; calls readiness from the browser without credentials |
 | SQLite file (`apps/api/var/easa.db`) | Local disk; holds synthetic document metadata and chunk text |
 | File store (`apps/api/var/uploads/`) | Local disk; uploaded bytes by SHA-256; never served directly |
+| Embedding model files (`apps/api/var/models/`) | Local disk, git-ignored; downloaded once by an explicit command; loaded by ONNX Runtime |
 | Temporary files | Starlette spools uploads larger than 1 MiB to an OS temporary file while the request is parsed |
 | Configuration | Environment variables and git-ignored `.env` files |
 
@@ -94,8 +95,19 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | A document interrupted mid-processing (process killed, final commit failed) stays `processing`; an identical re-upload more than 10 minutes later reprocesses it instead of returning it unchanged | [documents.py](../apps/api/app/services/documents.py) — tested |
 | Chunk text is returned only through the tenant-scoped chunks endpoint | [documents.py](../apps/api/app/services/documents.py) — tested |
 
-### Database
+### Embeddings (Phase 3, P3-M1)
 
+| Control | Where |
+|---|---|
+| The embedding model is pinned to an exact upstream revision (`Qdrant/bge-small-en-v1.5-onnx-Q@aa8f8b06…`, MIT licence) and an explicit file list, and downloaded only by an explicit command | [registry.py](../apps/api/app/embeddings/registry.py), [factory.py](../apps/api/app/embeddings/factory.py) |
+| No network access at runtime: the model loads from local files with `local_files_only=True`; missing files make readiness report `embeddings: unavailable` instead of triggering a download | [onnx.py](../apps/api/app/embeddings/onnx.py) — tested |
+| Vectors carry `tenant_id` (copied from the chunk) and the full `model_id` including the revision, so search can filter by tenant before scoring and never mixes models | [embeddings.py](../apps/api/app/db/embeddings.py) |
+| Embedding logs carry document ID, model ID, counts and error type only, never chunk text | [documents.py](../apps/api/app/services/documents.py) |
+| Unit tests and CI use a deterministic, offline hashing embedder; real-model checks run only where the model is present | [hashing.py](../apps/api/app/embeddings/hashing.py), `tests/model/` |
+
+Model files are trusted as pinned upstream artifacts; their integrity relies on Hugging Face's revision and hash checks in `huggingface_hub`.
+
+### Database
 - Parameterized access through SQLAlchemy; the only raw SQL is the constant `SELECT 1` probe.
 - Foreign keys enforced on SQLite connections.
 - Schema changes only through reviewed Alembic migrations.
@@ -146,7 +158,9 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 266 tests):
+**Automated tests** (part of the 285 tests; 2 real-model tests skip without the model):
+
+- Embeddings: one vector per chunk under the model's versioned ID; failed documents never embedded; embedding failures leave the document processed and are backfilled; vectors deleted with their chunks; readiness reports a missing model; the CLI refuses to run without the model.
 
 - Settings reject invalid values, wildcard/path CORS origins, non-allowlisted drivers, unknown `.env` keys and invalid chunk settings; secrets are not echoed.
 - Errors: 404/405/422/500 use the envelope; the 500 body has no internal details; validation errors omit input.

@@ -18,7 +18,9 @@ easa/
       schemas/             health.py, documents.py (response models)
       db/                  engine.py, session.py, base.py, models.py, probe.py,
                            types.py (UtcDateTime), documents.py (Document, DocumentChunk)
-      repositories/        documents.py (tenant-scoped DocumentRepository)
+      repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
+      embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
+                           hashing.py (test embedder), factory.py (provider + download)
       storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
     migrations/            Alembic env.py, script template, versions/
     tests/                 unit/ and integration/
@@ -143,6 +145,19 @@ stateDiagram-v2
 - Interrupted documents: an identical re-upload of a document still `uploaded`/`processing` whose `updated_at` is older than `STALE_PROCESSING_AFTER` (10 minutes) runs `_process` again with the uploaded bytes.
 - `DocumentService.list_chunks` first resolves the document for the tenant (404 otherwise), then returns a page of chunks and the total count.
 
+### 2.6c Embeddings (P3-M1)
+
+- [embeddings/base.py](../apps/api/app/embeddings/base.py): the `Embedder` protocol (`model_id`, `dimensions`, `is_available()`, `embed(texts)` returning an L2-normalized float32 array of shape `(n, dimensions)`) and `EmbeddingUnavailableError`.
+- [embeddings/registry.py](../apps/api/app/embeddings/registry.py): `EmbeddingModelSpec` and the default model, `bge-small-en-v1.5`: repo `Qdrant/bge-small-en-v1.5-onnx-Q`, revision `aa8f8b06…`, 384 dimensions, MIT licence, an explicit file list. `model_id` = `name@revision[:12]`.
+- [embeddings/onnx.py](../apps/api/app/embeddings/onnx.py) `OnnxEmbedder`: loads fastembed `TextEmbedding` lazily (thread-safe) from `<EASA_EMBEDDING_MODEL_DIR>/<name>/<revision>` with `specific_model_path` and `local_files_only=True`, so it never downloads at runtime. Missing files raise `EmbeddingUnavailableError`.
+- [embeddings/hashing.py](../apps/api/app/embeddings/hashing.py) `HashingEmbedder` (`hashing-v1-384`): **not semantic**. A signed bag of hashed word tokens; deterministic and offline, for tests, CI and development without the model.
+- [embeddings/factory.py](../apps/api/app/embeddings/factory.py): `build_embedder(settings)` (`EASA_EMBEDDING_PROVIDER` = `onnx` | `hashing`) and `download_model()` (`huggingface_hub.snapshot_download` at the pinned revision, allowed files only).
+- [services/embedding_service.py](../apps/api/app/services/embedding_service.py) `EmbeddingService`: `embed_chunks` (batches of `EASA_EMBEDDING_BATCH_SIZE`; checks the result shape; stores and commits) and `embed_missing` (backfill across tenants, for the CLI only).
+- [repositories/embeddings.py](../apps/api/app/repositories/embeddings.py): `add`, `chunks_without_embedding(model_id)` (chunks of processed documents only), `vectors_for_document(tenant_id, …)`; float32 encoding and decoding with a dimension check.
+- Processing: after a document commits as `processed`, `DocumentService._embed` embeds its chunks as a separate unit of work. A failure is rolled back and logged as `document embedding skipped` (with the error type), and the document stays `processed`.
+- `app.state.embedder` is built at startup (model loaded on first use) and is also the readiness probe (`checks.embeddings`).
+- [cli.py](../apps/api/app/cli.py): `python -m app.cli download-embedding-model` and `python -m app.cli embed-missing [--limit N]`.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -207,8 +222,9 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 169 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies |
-| Backend integration | `apps/api/tests/integration/` | 70 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 179 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies |
+| Backend integration | `apps/api/tests/integration/` | 77 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Real embedding model | `apps/api/tests/model/` | 2 | Skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).

@@ -13,7 +13,8 @@ from tests.conftest import sqlite_url
 BASELINE_REVISION = "7b339cea85fb"
 DOCUMENTS_REVISION = "eb5cd7e86396"
 CHUNKING_CONFIG_REVISION = "e57f12a3d5ed"
-HEAD_REVISION = CHUNKING_CONFIG_REVISION
+EMBEDDINGS_REVISION = "29b0c28209aa"
+HEAD_REVISION = EMBEDDINGS_REVISION
 
 
 @pytest.fixture
@@ -48,6 +49,7 @@ def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
     assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(EMBEDDINGS_REVISION).down_revision == CHUNKING_CONFIG_REVISION
     assert script.get_revision(CHUNKING_CONFIG_REVISION).down_revision == DOCUMENTS_REVISION
     assert script.get_revision(DOCUMENTS_REVISION).down_revision == BASELINE_REVISION
     assert script.get_revision(BASELINE_REVISION).down_revision is None
@@ -57,7 +59,7 @@ def test_upgrade_to_head_creates_document_tables(alembic_config: Config, databas
     command.upgrade(alembic_config, "head")
 
     tables, revision = _tables_and_revision(database_url)
-    assert tables == {"alembic_version", "documents", "document_chunks"}
+    assert tables == {"alembic_version", "documents", "document_chunks", "chunk_embeddings"}
     assert revision == HEAD_REVISION
 
 

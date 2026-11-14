@@ -27,6 +27,8 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "environment": "test",
         "database_url": sqlite_url(tmp_path / "var" / "test.db"),
         "storage_dir": tmp_path / "var" / "uploads",
+        # Deterministic, offline embedder; the real model has its own tests.
+        "embedding_provider": "hashing",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

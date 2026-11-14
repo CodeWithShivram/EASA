@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 2 (Document Intelligence) complete; Phase 3 (embeddings and retrieval) next.**
+> **Status: Phase 3 (Embeddings and Retrieval) in progress: P3-M1 embeddings done.**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -59,7 +59,7 @@ Endpoints:
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v1/health` | Liveness. Always `200 {"status":"ok"}` while the process is up; never touches the database |
-| `GET /api/v1/health/ready` | Readiness. Runs `SELECT 1`; `200 ready` or `503 not_ready` with `checks.database = "unavailable"` |
+| `GET /api/v1/health/ready` | Readiness: database (`SELECT 1`) and embedding model files; `200 ready` or `503 not_ready` with the failing check `unavailable` |
 | `POST /api/v1/documents` | Upload a PDF, DOCX or UTF-8 TXT file (validated; identical content returns the existing document). Development only |
 | `GET /api/v1/documents`, `GET /api/v1/documents/{id}` | List and get the current tenant's documents. Development only |
 | `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets. Development only |

@@ -14,8 +14,10 @@ from app.core.errors import AppError
 from app.core.identity import Identity
 from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.db.types import utc_now
+from app.embeddings.base import Embedder
 from app.repositories.documents import DocumentRepository
 from app.services.chunking import ChunkingConfig, chunk_document
+from app.services.embedding_service import EmbeddingService
 from app.services.extraction import ExtractionError, ExtractionResult, extract_document
 from app.services.uploads import DocxLimits, validate_upload
 from app.storage.blob_store import BlobStore
@@ -51,6 +53,8 @@ class DocumentService:
         max_upload_bytes: int,
         max_pdf_pages: int = 500,
         chunking: ChunkingConfig | None = None,
+        embedder: Embedder | None = None,
+        embedding_batch_size: int = 32,
         docx_limits: DocxLimits | None = None,
     ) -> None:
         self._session = session
@@ -59,6 +63,8 @@ class DocumentService:
         self._max_upload_bytes = max_upload_bytes
         self._max_pdf_pages = max_pdf_pages
         self._chunking = chunking or ChunkingConfig()
+        self._embedder = embedder
+        self._embedding_batch_size = embedding_batch_size
         self._docx_limits = docx_limits
 
     def upload(self, identity: Identity, raw_filename: str | None, data: bytes) -> UploadResult:
@@ -176,7 +182,41 @@ class DocumentService:
                 "chunk_count": chunk_count,
             },
         )
+        if document.status is DocumentStatus.PROCESSED:
+            self._embed(document)
         return result
+
+    def _embed(self, document: Document) -> None:
+        """Embed a processed document's chunks as a separate unit of work.
+
+        A failure (e.g. model files not downloaded) does not fail the document:
+        its text and chunks are stored, and the backfill command embeds them later.
+        """
+        if self._embedder is None:
+            return
+        try:
+            stored = EmbeddingService(
+                self._session, self._embedder, batch_size=self._embedding_batch_size
+            ).embed_chunks(document.chunks)
+        except Exception as exc:
+            self._session.rollback()
+            logger.warning(
+                "document embedding skipped",
+                extra={
+                    "document_id": str(document.id),
+                    "model_id": self._embedder.model_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return
+        logger.info(
+            "document embedded",
+            extra={
+                "document_id": str(document.id),
+                "model_id": self._embedder.model_id,
+                "embedded_chunks": stored,
+            },
+        )
 
     def list(self, identity: Identity, *, limit: int, offset: int) -> list[Document]:
         return self._repository.list_for_tenant(identity.tenant_id, limit=limit, offset=offset)

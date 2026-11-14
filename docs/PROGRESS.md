@@ -223,7 +223,7 @@ Decisions approved 2026-11-14: development-only identity from server configurati
 | P2-M2 | Upload endpoint, validation, idempotency, status, list/get endpoints, development identity, request body limit | COMPLETE | `6704107` |
 | P2-M3 | Text extraction (PDF, DOCX, TXT) and normalization, in-request processing with status | COMPLETE | `02117b6` |
 | P2-M4 | Chunking strategies, chunk persistence, chunks endpoint, recorded chunking config | COMPLETE | `9bd5df7` |
-| P2-M5 | Security review and hardening, documentation, Phase 2 report | COMPLETE | the commit that adds this row |
+| P2-M5 | Security review and hardening, documentation, Phase 2 report | COMPLETE | `bd41942` |
 
 ## P2-M1: Data model and storage
 
@@ -469,7 +469,7 @@ The DOCX external-entity and entity-expansion probes confirmed the existing prot
 | Make ingestion idempotent | Unique (tenant, SHA-256); identical re-upload returns the existing document; concurrent duplicates resolved | P2-M1, P2-M2 |
 | Tests with synthetic sample documents | Generated multi-page PDFs, `python-docx` documents, hostile variants (encrypted, bombs, XXE, `gridSpan`) | P2-M2 to P2-M5 |
 
-**Commits:** P2-M1 `1d549ee`, P2-M2 `6704107`, P2-M3 `02117b6`, P2-M4 `9bd5df7`, P2-M5 (the commit that adds this report).
+**Commits:** P2-M1 `1d549ee`, P2-M2 `6704107`, P2-M3 `02117b6`, P2-M4 `9bd5df7`, P2-M5 `bd41942`.
 
 **Dependencies added in Phase 2:** `python-multipart` (uploads), `pypdf` (PDF text), `python-docx` and `lxml` (DOCX text). All are prebuilt wheels for Python 3.14.
 
@@ -486,3 +486,67 @@ The DOCX external-entity and entity-expansion probes confirmed the existing prot
 3. Upload the same file again → `200` with the same `id`.
 
 **Recommended next phase:** Phase 3, embeddings and retrieval. It starts with an environment check (PostgreSQL and pgvector availability, a CPU-friendly local embedding model compatible with Python 3.14) and an embedding interface independent of any provider, plus a plan for your approval.
+
+## Phase 3: Embeddings and Retrieval
+
+Decisions approved 2026-11-14:
+1. SQLite first behind interfaces; PostgreSQL + pgvector via Docker in P3-M4.
+2. `fastembed` + ONNX Runtime.
+3. One-time download of the pinned 64 MB model.
+4. NumPy brute-force vector search on SQLite.
+
+| Milestone | Scope | Status | Commit |
+|---|---|---|---|
+| P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | the commit that adds this row |
+| P3-M2 | Vector index interface, SQLite semantic search, `POST /api/v1/search` with citations | NOT STARTED | |
+| P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | NOT STARTED | |
+| P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | NOT STARTED | |
+| P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | NOT STARTED | |
+
+## P3-M1: Embeddings
+
+**Scope:** embedding interface and implementations, vector storage, embedding during processing, backfill and download commands, readiness. No search yet.
+
+**Dependency added:** `fastembed` 0.9.1 (ONNX Runtime embeddings). It pulls in 22 packages, including `onnxruntime` 1.32.0, `numpy` 2.5.4, `tokenizers`, `huggingface-hub` (used only by the download command) and `httpx`. All are prebuilt wheels for Python 3.14. The test suite still uses `httpx2`, and no deprecation warnings returned.
+
+**Implemented**
+
+- `app/embeddings/`:
+  - The `Embedder` protocol.
+  - A pinned model registry (`bge-small-en-v1.5` at revision `aa8f8b06…`, 384 dimensions, MIT).
+  - `OnnxEmbedder`: lazy, thread-safe, local files only.
+  - `HashingEmbedder`: deterministic and **non-semantic**, for tests.
+  - The provider factory and `download_model`.
+- `chunk_embeddings` table (migration `29b0c28209aa`, reviewed): primary key `(chunk_id, model_id)`, cascade from chunks, `tenant_id`, `dimensions`, float32 vector, index `(model_id, tenant_id)`.
+- `EmbeddingRepository` and `EmbeddingService`.
+- Processing embeds chunks after the `processed` commit as a separate unit of work. On failure it rolls back, logs `document embedding skipped`, and keeps the document `processed`.
+- CLI: `python -m app.cli download-embedding-model`, `python -m app.cli embed-missing`.
+- Readiness adds `checks.embeddings` (model files present).
+- Settings: `EASA_EMBEDDING_PROVIDER`, `EASA_EMBEDDING_MODEL_DIR`, `EASA_EMBEDDING_BATCH_SIZE`. Tests default to `hashing`.
+- Docs: API spec (readiness), DATABASE_DESIGN (vector table and rules), LLD, SECURITY, DEVELOPMENT_GUIDE (commands and settings), HLD, README, `.env.example`, ADR-018.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `uv run ruff format --check .` / `uv run ruff check .` | Clean |
+| `uv run pytest` (before the model download) | 256 passed, 2 skipped (real-model tests) |
+| Migration on a scratch database: autogenerate, `upgrade`, `check`, `downgrade -1`, `upgrade` | Clean; head `29b0c28209aa` |
+| `uv run python -m app.cli download-embedding-model` | Downloaded in 19 s to `var/models/bge-small-en-v1.5/aa8f8b06…`: 6 files, `model_optimized.onnx` 66.5 MB; the files are git-ignored (`var/`, confirmed with `git check-ignore`) |
+| `uv run pytest tests/model` | 2 passed: normalized 384-dimension vectors; "How much vacation time do staff get?" scores closer to the annual-leave sentence than to the travel sentence, without shared words |
+| Live server with the real model (scratch database) | Readiness `ready` with `embeddings: ok`; PDF and DOCX `processed` (2.7 s for the first upload including the model load, 0.8 s for the second); 5 vectors stored under `bge-small-en-v1.5@aa8f8b060edb`, 384 dimensions, 1,536 bytes each; server tree stopped |
+
+Fixed during the work:
+
+- Two new tests queried the database after the test client had closed the app, which reopened pooled connections and caused a `ResourceWarning`. The fixtures now dispose the engine.
+- A test passed a string where a UUID was required.
+- `.env.example` got a literal `` `n`` from a PowerShell escaping slip.
+
+**Known limitations**
+
+- No search yet (P3-M2).
+- Real-model tests are skipped in CI, which never downloads the model.
+- Embedding happens during the upload request, which adds latency.
+- `embed-missing` operates across tenants and is a server-side command only.
+
+**Exit criteria:** met. Processed documents get versioned vectors from a pinned local model, failures are recoverable, there is no network access at runtime, and both the deterministic and the real-model paths are tested.

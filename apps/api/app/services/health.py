@@ -22,22 +22,34 @@ class DatabaseProbe(Protocol):
         ...
 
 
+class EmbeddingsProbe(Protocol):
+    def is_available(self) -> bool:
+        """Whether the configured embedding model can run (files present)."""
+        ...
+
+
 @dataclass(frozen=True)
 class ReadinessReport:
     database: CheckStatus
+    embeddings: CheckStatus = "ok"
 
     @property
     def is_ready(self) -> bool:
-        return self.database == "ok"
+        return self.database == "ok" and self.embeddings == "ok"
 
 
 class HealthService:
-    def __init__(self, database: DatabaseProbe) -> None:
+    def __init__(self, database: DatabaseProbe, embeddings: EmbeddingsProbe | None = None) -> None:
         self._database = database
+        self._embeddings = embeddings
 
     def check_readiness(self) -> ReadinessReport:
         try:
             self._database.ping()
+            database: CheckStatus = "ok"
         except DependencyUnavailableError:
-            return ReadinessReport(database="unavailable")
-        return ReadinessReport(database="ok")
+            database = "unavailable"
+        embeddings: CheckStatus = (
+            "ok" if self._embeddings is None or self._embeddings.is_available() else "unavailable"
+        )
+        return ReadinessReport(database=database, embeddings=embeddings)

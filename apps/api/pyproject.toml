@@ -20,6 +20,8 @@ dependencies = [
     "pypdf>=7.1",
     # DOCX paragraph, heading and table extraction (lxml parser, entities not resolved).
     "python-docx>=1.2",
+    # Local CPU embeddings via ONNX Runtime (pinned model, loaded from local files only).
+    "fastembed>=0.9.1",
 ]
 
 [dependency-groups]

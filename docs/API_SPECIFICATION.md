@@ -73,12 +73,12 @@ Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](AR
 
 | Item | Specification |
 |---|---|
-| Purpose | Reports whether required dependencies are usable. Currently checks the database with `SELECT 1` |
+| Purpose | Reports whether required dependencies are usable: the database (`SELECT 1`) and the configured embedding model (its pinned files are present; the model is not loaded) |
 | Authentication | None (public) |
 | Authorization | None |
 | Request | No parameters or body |
-| Response `200` | `{"status": "ready", "checks": {"database": "ok"}}` |
-| Response `503` | `{"status": "not_ready", "checks": {"database": "unavailable"}}` — a valid readiness answer, not an error envelope |
+| Response `200` | `{"status": "ready", "checks": {"database": "ok", "embeddings": "ok"}}` |
+| Response `503` | Any check `unavailable`, e.g. `{"status": "not_ready", "checks": {"database": "ok", "embeddings": "unavailable"}}` — a valid readiness answer, not an error envelope |
 | Errors | `405` envelope for other methods; `500` envelope on unexpected failure |
 | Validation | None (no input) |
 | Audit | No audit record. The request log line as above; when the database check fails, a `database ping failed` warning with only the error type (no driver message or connection details) |
@@ -89,8 +89,9 @@ Response schema:
 |---|---|---|
 | `status` | string | `ready`, `not_ready` |
 | `checks.database` | string | `ok`, `unavailable` |
+| `checks.embeddings` | string | `ok`, `unavailable` (always `ok` for the `hashing` test provider) |
 
-The web client accepts `503` as a valid result for this endpoint and validates both shapes with Zod.
+The web client accepts `503` as a valid result for this endpoint and validates both shapes with Zod; it displays the database check and ignores `checks.embeddings` (unknown keys are stripped).
 
 ### 3.3 Framework endpoints (non-production only)
 

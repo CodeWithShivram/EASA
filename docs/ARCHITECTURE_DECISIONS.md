@@ -22,6 +22,7 @@
 | [ADR-015](#adr-015) | Content-addressed file storage and tenant-scoped document data | P2-M1 |
 | [ADR-016](#adr-016) | In-request document processing with pypdf and python-docx | P2-M3 |
 | [ADR-017](#adr-017) | Character-based, structure-aware chunking with exact offsets | P2-M4 |
+| [ADR-018](#adr-018) | Local, pinned ONNX embeddings with versioned vectors | P3-M1 |
 
 ---
 
@@ -194,6 +195,21 @@
 - **Decision:** Character-based limits with two strategies selected by configuration: `structured` (default: whole blocks, never across pages or sections, headings start chunks, oversized blocks split into windows) and `fixed` (overlapping windows that break at whitespace). Offsets refer to the canonical normalized text, and every chunk's text equals that slice exactly. The configuration used is stored on each document (`chunking_config`).
 - **Trade-offs:** Character counts only approximate token counts, so `max_chars` must leave headroom once the embedding model is known. A chunk spanning blocks reports the page and section where it starts. The canonical text is not stored, so the offsets are reproducible only by re-extracting with the same code.
 - **Consequences:** Chunking is deterministic and fully unit-testable through the slice invariant. Phase 3 can re-chunk with other settings and compare retrieval quality per configuration. Token-based limits can be added as another strategy without changing storage.
+
+<a id="adr-018"></a>
+## ADR-018: Local, pinned ONNX embeddings with versioned vectors
+
+- **Status:** Accepted (P3-M1, 2026-11-14; runtime and model download approved in Phase 3 planning)
+- **Context:** Retrieval needs embeddings on a CPU-only Windows laptop, with no paid services, Python 3.14 and limited bandwidth. Tests must be deterministic and must not need the network. The guide requires recording the embedding model, its dimensions and version, and never mixing incompatible vectors.
+- **Options considered:** Runtime: `fastembed` + ONNX Runtime (~16 MB runtime, 64 MB quantized model); `sentence-transformers` + PyTorch (~121 MB for `torch` alone, same model); Ollama (not installed). Model: `BAAI/bge-small-en-v1.5` (384 dimensions, MIT). Tests: mock the embedder; use a deterministic stand-in.
+- **Decision:**
+  - An `Embedder` protocol with two implementations: `OnnxEmbedder` (fastembed, `bge-small-en-v1.5` quantized ONNX, pinned to revision `aa8f8b06…`, loaded only from local files) and `HashingEmbedder` (deterministic, explicitly non-semantic) for tests and CI.
+  - The model is downloaded by an explicit command, never at runtime.
+  - Vectors are stored per `(chunk_id, model_id)`, with `model_id = name@revision`.
+  - Chunks are embedded after processing as a separate unit of work; failures leave the document `processed`, and a backfill command fills the gaps.
+  - Readiness reports whether the model is available.
+- **Trade-offs:** The hashing embedder only approximates word overlap, so semantic quality can be tested only in the separate real-model path (`tests/model`, skipped in CI). Embedding adds latency to uploads (about 2.7 s for the first upload including the model load, then under 1 s for small documents). Pinning the revision means upstream fixes need a deliberate update and re-embedding.
+- **Consequences:** No vendor lock-in: other providers implement the same protocol. Switching models creates new vectors under a new `model_id` instead of silently mixing spaces. Searchability is visible in the database (chunks lacking vectors) and in readiness.
 
 ---
 

@@ -9,6 +9,7 @@ class LivenessResponse(BaseModel):
 
 class ReadinessChecks(BaseModel):
     database: Literal["ok", "unavailable"]
+    embeddings: Literal["ok", "unavailable"]
 
 
 class ReadinessResponse(BaseModel):
