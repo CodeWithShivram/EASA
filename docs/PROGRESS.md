@@ -12,8 +12,8 @@ Status labels: **COMPLETE** (implemented and verified), **PARTIAL**, **BLOCKED**
 | M1 | Backend skeleton: strict config, correlation IDs, JSON logs, standard errors, liveness/readiness | COMPLETE | `344e424` |
 | (guide) | Development guide: mandatory commit protocol/workflow (sections 15–16) | COMPLETE | `6ebf95f` |
 | M2 | Database sessions, settings-driven Alembic, empty baseline migration | COMPLETE | `77f692f` |
-| M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | COMPLETE | the commit that adds this row |
-| M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | NOT STARTED | |
+| M3 | Frontend shell: Next.js, strict TS, Tailwind, Zod-validated API client, Vitest | COMPLETE | `753742c` |
+| M4 | Documentation: HLD, LLD, DATABASE_DESIGN, API_SPECIFICATION, SECURITY, DEVELOPMENT_GUIDE, ARCHITECTURE_DECISIONS | COMPLETE | the commit that adds this row |
 | M5 | Dev/check scripts and GitHub Actions CI | NOT STARTED | |
 
 ## M2: Database foundation
@@ -118,3 +118,51 @@ Fixed during the work:
 - Two optional `sharp` binaries appear as "extraneous" in the local `node_modules`. This affects neither the lockfile nor the build.
 
 **Exit criteria:** met. The shell builds and is accessible, and every API response is validated at runtime with all failure paths tested.
+
+## M4: Documentation
+
+**Scope:** the seven documents required for Phase 1, README links and this progress record. No code changes.
+
+**Delivered**
+
+- [HLD.md](HLD.md): purpose, goals, current and target architecture, flows, roadmap, constraints, quality attributes, risks.
+- [LLD.md](LLD.md): module layout, application factory, configuration, middleware chain, errors, logging, health design, client algorithm, status-card states, test structure, sequence diagrams, extension points.
+- [DATABASE_DESIGN.md](DATABASE_DESIGN.md): current state, engine and session policy, migrations, a provisional logical model (clearly marked as not implemented), design rules, vector and PostgreSQL plans.
+- [API_SPECIFICATION.md](API_SPECIFICATION.md): conventions, error envelope and codes, full contracts for both endpoints (purpose, authentication, authorization, request, response, errors, validation, audit), planned groups without invented contracts.
+- [SECURITY.md](SECURITY.md): principles, attack surface, implemented controls with evidence, gaps by phase, threat notes, security tests.
+- [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md): setup, running, configuration, checks, migrations, dependency and Git rules, troubleshooting from real incidents.
+- [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md): ADR-001 to ADR-012 (context, options, decision, trade-offs, consequences) and open decisions.
+
+**Verification (executed 2026-11-08 to 2026-11-14)**
+
+Commands newly verified so the documents could include them:
+
+| Command / claim | Result |
+|---|---|
+| `NEXT_PUBLIC_API_BASE_URL=ftp://bad.example npm run build` | Build fails (exit 1, "Invalid NEXT_PUBLIC_API_BASE_URL"); normal rebuild passes |
+| `uv run alembic revision --autogenerate -m "…"` | Generates an empty migration and runs the ruff hooks; the test file was deleted afterwards |
+| `uv run uvicorn … --reload` | Starts the WatchFiles reloader, serves readiness, reloads on a file change |
+| `npm run dev` | Serves `GET / 200` on port 3000 (and writes `apps/web/AGENTS.md`, see limitations) |
+
+Document checks:
+
+| Check | Result |
+|---|---|
+| Relative links and anchors in `docs/*.md` and README | 102 checked, 0 broken |
+| Personal data and secret patterns | None found |
+| Independent fact-check of every document against the code | 14 inaccuracies found and corrected (for example: the web server binds to all interfaces, not localhost; FastAPI adds two framework middleware layers; Starlette always allows the CORS-safelisted headers) |
+| Test counts quoted in the documents | Re-run: backend 45 passed (ruff clean, lockfile consistent); frontend 27 passed (typecheck and lint clean) |
+
+**Correction to M3**
+
+The M3 live-check cleanup did not stop the API server. In this automation shell `Get-NetTCPConnection` and `netstat` report no listeners, so the port-based stop found no process, and the "port not listening" check was a false pass. The server kept running until it was found during M4 and stopped with `taskkill /T`. Server cleanup now kills the process tree by PID and confirms with a TCP connection probe. M3's code and test results are unaffected.
+
+**Known limitations and open items**
+
+- `next dev` writes `apps/web/AGENTS.md` (guidance for coding agents) unless `agentRules: false` is set. The file was deleted; whether to commit it or disable generation needs a decision.
+- `next dev` / `next start` listen on `0.0.0.0` by default. Changing the npm scripts to bind to localhost is proposed.
+- The Alembic post-write hook path (`.venv/Scripts/ruff`) is Windows-specific; it must be made portable before CI (M5).
+- Mermaid diagrams (6) were written with simple syntax but not rendered locally; the Chrome extension was unavailable. Check them on GitHub after pushing.
+- Documents state the commit they were checked against; they must be updated as later phases change the system.
+
+**Exit criteria:** met. All seven required documents exist, describe only implemented behaviour as implemented, label planned work, and every command they list has been run on this machine.

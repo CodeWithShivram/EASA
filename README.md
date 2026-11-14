@@ -3,7 +3,7 @@
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
 > **Status: Phase 1 (Foundation and Architecture), in progress.**
-> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend is a dashboard shell with an API status card. The architecture documentation is not written yet.
+> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
 ## Structure
@@ -12,7 +12,7 @@ A learning and portfolio project. The goal is an enterprise-style AI support age
 easa/
   apps/api/   FastAPI backend (Python 3.14, uv)          [M1–M2]       
   apps/web/   Next.js frontend (TypeScript, Tailwind)    [M3: shell]
-  docs/       Progress tracking (architecture docs: M4)  [PROGRESS.md]
+  docs/       Design, API, security and dev docs         [M4]
   scripts/    Development and check scripts              [not yet created]
 ```
 
@@ -87,7 +87,19 @@ The API base URL is set by `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost
 
 ## Local data
 
-Runtime data, including the SQLite database, is stored in `var/` directories. Git ignores these directories, as well as all `*.db` / `*.sqlite*` files and `.env` files.
+Runtime data, including the SQLite database, is stored in `var/` directories. Git ignores these directories, as well as `*.db` files (and their journal/WAL/SHM files), `*.sqlite`, `*.sqlite3` and `.env` files.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [HLD](docs/HLD.md) | System context, current and target architecture, roadmap |
+| [LLD](docs/LLD.md) | Modules, middleware chain, client design, sequence diagrams |
+| [Database design](docs/DATABASE_DESIGN.md) | Engine, sessions, migrations, provisional data model |
+| [API specification](docs/API_SPECIFICATION.md) | Conventions, error envelope, endpoint contracts |
+| [Security](docs/SECURITY.md) | Implemented controls, gaps, threat notes, tests |
+| [Development guide](docs/DEVELOPMENT_GUIDE.md) | Setup, running, checks, migrations, troubleshooting |
+| [Architecture decisions](docs/ARCHITECTURE_DECISIONS.md) | ADR-001 to ADR-012 |
 
 ## Progress
 
