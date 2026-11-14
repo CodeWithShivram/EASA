@@ -26,7 +26,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes only exact release tags (no floating "v10" tag).
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.12.9"
 

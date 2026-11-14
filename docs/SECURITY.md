@@ -70,7 +70,7 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 - Lockfiles committed: `apps/api/uv.lock`, `apps/web/package-lock.json` (resolved only from `registry.npmjs.org`).
 - Dependencies are added only with a stated purpose, after checking compatibility with Python 3.14 and Node 24.13.
-- CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags, not commit SHAs.
+- CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags (setup-uv to an exact release tag), not commit SHAs.
 - Ruff runs the bandit-derived `S` security rules on all Python code (`S101`, `assert`, is allowed in tests).
 - No web fonts are fetched at build time. Next.js telemetry is not disabled by repository configuration; set `NEXT_TELEMETRY_DISABLED=1` in your shell to opt out.
 

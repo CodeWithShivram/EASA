@@ -148,7 +148,7 @@
 - **Context:** The checks span two toolchains (uv and npm) and should be one command locally and automatic on every push. The development machine is Windows without `make`; CI runs on Linux.
 - **Options considered:** `make` (not installed); npm scripts at the repository root (would need a root `package.json`); Python task runners (new dependency); PowerShell scripts plus a GitHub Actions workflow.
 - **Decision:** `scripts/check.ps1` runs all checks and reports PASS/FAIL per check; `scripts/dev.ps1` starts both servers, stops both process trees on exit, and has a `-SmokeTest` mode. `.github/workflows/ci.yml` runs the same checks in two jobs (API and web) with locked installs, the same uv and Node versions as the dev machine, and a read-only token.
-- **Trade-offs:** The scripts are Windows PowerShell, so Linux/macOS developers run the individual commands (or CI). Actions are pinned to major tags rather than commit SHAs.
+- **Trade-offs:** The scripts are Windows PowerShell, so Linux/macOS developers run the individual commands (or CI). Actions are pinned to version tags (major tags, or an exact release where no major tag exists) rather than commit SHAs.
 - **Consequences:** One command reproduces CI locally. Platform-specific settings (such as the Alembic hook path) must stay portable because CI runs on Linux.
 
 ---
