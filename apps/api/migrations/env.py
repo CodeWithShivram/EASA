@@ -4,13 +4,17 @@ The database URL comes from the application's validated settings, never from
 alembic.ini, so migrations and the running API always target the same database.
 """
 
+from typing import Any
+
 from alembic import context
+from alembic.autogenerate.api import AutogenContext
 from sqlalchemy.engine import make_url
 
 from app.core.config import load_settings
 from app.core.logging import configure_logging
 from app.db.engine import create_db_engine
 from app.db.models import Base
+from app.db.types import UtcDateTime
 
 settings = load_settings()
 configure_logging(settings.log_level)
@@ -21,6 +25,14 @@ target_metadata = Base.metadata
 render_as_batch = make_url(database_url).get_backend_name() == "sqlite"
 
 
+def render_item(type_: str, obj: Any, autogen_context: AutogenContext) -> str | bool:
+    # Render app-specific column types as their portable storage type, so
+    # migrations never import application code.
+    if type_ == "type" and isinstance(obj, UtcDateTime):
+        return "sa.DateTime(timezone=True)"
+    return False
+
+
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without connecting (``alembic upgrade head --sql``)."""
     context.configure(
@@ -28,6 +40,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         compare_type=True,
         render_as_batch=render_as_batch,
+        render_item=render_item,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -44,6 +57,7 @@ def run_migrations_online() -> None:
                 target_metadata=target_metadata,
                 compare_type=True,
                 render_as_batch=render_as_batch,
+                render_item=render_item,
             )
             with context.begin_transaction():
                 context.run_migrations()

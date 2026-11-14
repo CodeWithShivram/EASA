@@ -3,7 +3,7 @@
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
 > **Status: Phase 1 (Foundation and Architecture), in progress.**
-> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. There are no domain tables yet. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
+> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 (document intelligence) has started: document and chunk tables, a tenant-scoped repository and content-addressed file storage exist; upload and processing endpoints come next. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
 ## Structure
@@ -69,7 +69,7 @@ Every response carries a server-generated `X-Correlation-ID` header. That ID als
 The database URL comes from the same validated settings as the app (`EASA_DATABASE_URL`, defaulting to the git-ignored `apps/api/var/easa.db`). `alembic.ini` contains no URL.
 
 ```powershell
-uv run alembic upgrade head      # apply migrations (currently only the empty baseline)
+uv run alembic upgrade head      # apply migrations (baseline + documents tables)
 uv run alembic current           # show the applied revision
 uv run alembic check             # fail if ORM models and migrations have drifted
 uv run alembic downgrade base    # revert all migrations

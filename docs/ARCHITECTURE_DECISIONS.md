@@ -18,6 +18,8 @@
 | [ADR-011](#adr-011) | Testing stack: pytest/ruff and Vitest/Testing Library | M1–M3 |
 | [ADR-012](#adr-012) | Version compatibility policy for a restricted machine | M1–M3 |
 | [ADR-013](#adr-013) | PowerShell developer scripts and GitHub Actions CI | M5 |
+| [ADR-014](#adr-014) | Development-only identity until authentication exists | Phase 2 |
+| [ADR-015](#adr-015) | Content-addressed file storage and tenant-scoped document data | P2-M1 |
 
 ---
 
@@ -150,6 +152,26 @@
 - **Decision:** `scripts/check.ps1` runs all checks and reports PASS/FAIL per check; `scripts/dev.ps1` starts both servers, stops both process trees on exit, and has a `-SmokeTest` mode. `.github/workflows/ci.yml` runs the same checks in two jobs (API and web) with locked installs, the same uv and Node versions as the dev machine, and a read-only token.
 - **Trade-offs:** The scripts are Windows PowerShell, so Linux/macOS developers run the individual commands (or CI). Actions are pinned to version tags (major tags, or an exact release where no major tag exists) rather than commit SHAs.
 - **Consequences:** One command reproduces CI locally. Platform-specific settings (such as the Alembic hook path) must stay portable because CI runs on Linux.
+
+<a id="adr-014"></a>
+## ADR-014: Development-only identity until authentication exists
+
+- **Status:** Accepted (Phase 2 planning, 2026-11-14). Implemented with the upload endpoints in P2-M2.
+- **Context:** The roadmap puts authentication and RBAC in Phase 6, but Phase 2 stores documents that must carry an owner and a tenant. The guide forbids trusting identity supplied by the browser.
+- **Options considered:** (a) a fixed development identity from server configuration; (b) bring minimal authentication forward; (c) no HTTP upload in Phase 2, only a command-line ingestion tool.
+- **Decision:** (a). The server reads a development tenant and user ID from its own configuration (`EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID`). It never takes identity from requests. Document endpoints are disabled when `EASA_ENVIRONMENT=production`. Tables carry real `tenant_id` and `owner_id` columns now; foreign keys are added in Phase 6.
+- **Trade-offs:** Everyone using a development server acts as the same user, so per-user authorization cannot be tested until Phase 6.
+- **Consequences:** Phase 6 replaces one dependency (the identity provider) without changing tables, repositories or services, which already take `tenant_id` explicitly.
+
+<a id="adr-015"></a>
+## ADR-015: Content-addressed file storage and tenant-scoped document data
+
+- **Status:** Accepted (P2-M1, 2026-11-14)
+- **Context:** Uploaded files are untrusted. Their names can contain path traversal or reserved characters, and the same file may be uploaded repeatedly. Document data must never leak across tenants.
+- **Options considered (storage):** store bytes in the database; store files under their original or a sanitized name; store files by content hash. **(Data access):** filter by tenant in each service; require the tenant in every repository method.
+- **Decision:** Bytes are stored on disk by SHA-256 (`<root>/ab/cd/<sha256>`, atomic writes) behind a `BlobStore` protocol; only validated hex digests become paths. `documents` is unique per `(tenant_id, sha256)`, which makes uploads idempotent. `DocumentRepository` takes `tenant_id` in every method, and `document_chunks` carries `tenant_id` for later retrieval filters. Allowed-value columns use explicit, convention-named check constraints, and timestamps use a UTC-enforcing column type.
+- **Trade-offs:** Blobs are shared across tenants with identical content, so deleting a document cannot simply delete its blob (reference counting is not implemented). Local disk only; object storage would be another `BlobStore` implementation.
+- **Consequences:** Filenames are display metadata only. Cross-tenant reads by guessed IDs return nothing at the repository level, which tests verify.
 
 ---
 

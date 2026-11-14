@@ -11,6 +11,8 @@ from app.db.engine import create_db_engine
 from tests.conftest import sqlite_url
 
 BASELINE_REVISION = "7b339cea85fb"
+DOCUMENTS_REVISION = "eb5cd7e86396"
+HEAD_REVISION = DOCUMENTS_REVISION
 
 
 @pytest.fixture
@@ -41,21 +43,29 @@ def _tables_and_revision(url: str) -> tuple[set[str], str | None]:
         engine.dispose()
 
 
-def test_history_has_single_head_at_baseline(alembic_config: Config) -> None:
+def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
-    assert script.get_heads() == [BASELINE_REVISION]
+    assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(DOCUMENTS_REVISION).down_revision == BASELINE_REVISION
     assert script.get_revision(BASELINE_REVISION).down_revision is None
 
 
-def test_upgrade_to_head_creates_no_domain_tables(
-    alembic_config: Config, database_url: str
-) -> None:
+def test_upgrade_to_head_creates_document_tables(alembic_config: Config, database_url: str) -> None:
     command.upgrade(alembic_config, "head")
 
     tables, revision = _tables_and_revision(database_url)
-    assert tables == {"alembic_version"}
-    assert revision == BASELINE_REVISION
+    assert tables == {"alembic_version", "documents", "document_chunks"}
+    assert revision == HEAD_REVISION
+
+
+def test_downgrade_to_baseline_removes_document_tables(
+    alembic_config: Config, database_url: str
+) -> None:
+    command.upgrade(alembic_config, "head")
+    command.downgrade(alembic_config, BASELINE_REVISION)
+
+    assert _tables_and_revision(database_url) == ({"alembic_version"}, BASELINE_REVISION)
 
 
 def test_downgrade_to_base_and_upgrade_again(alembic_config: Config, database_url: str) -> None:
@@ -64,7 +74,7 @@ def test_downgrade_to_base_and_upgrade_again(alembic_config: Config, database_ur
     assert _tables_and_revision(database_url)[1] is None
 
     command.upgrade(alembic_config, "head")
-    assert _tables_and_revision(database_url)[1] == BASELINE_REVISION
+    assert _tables_and_revision(database_url)[1] == HEAD_REVISION
 
 
 def test_models_and_migrations_are_in_sync(alembic_config: Config, database_url: str) -> None:

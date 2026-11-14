@@ -15,7 +15,10 @@ easa/
       api/                 dependencies.py, v1/router.py, v1/routes/health.py
       services/            health.py (HealthService, DatabaseProbe protocol)
       schemas/             health.py (response models)
-      db/                  engine.py, session.py, base.py, models.py, probe.py
+      db/                  engine.py, session.py, base.py, models.py, probe.py,
+                           types.py (UtcDateTime), documents.py (Document, DocumentChunk)
+      repositories/        documents.py (tenant-scoped DocumentRepository)
+      storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
     migrations/            Alembic env.py, script template, versions/
     tests/                 unit/ and integration/
     alembic.ini, pyproject.toml, uv.lock, .env.example
@@ -50,7 +53,7 @@ Routes stay thin: they resolve dependencies, call a service and map the result t
 2. Calls `configure_logging(settings.log_level)`.
 3. Creates the engine with `create_db_engine(...)`; a lifespan handler disposes it on shutdown.
 4. Builds `FastAPI(title="EASA API", version="0.1.0")`. `/docs` and `/openapi.json` are `None` (disabled) when `environment == "production"`; ReDoc is always disabled.
-5. Stores `settings`, `engine` and `session_factory` on `app.state`.
+5. Stores `settings`, `engine`, `session_factory` and `blob_store` (a `LocalBlobStore` rooted at `settings.storage_dir`) on `app.state`.
 6. Registers exception handlers and includes the `/api/v1` router.
 7. Adds middleware (see 2.4).
 
@@ -109,7 +112,7 @@ With `--reload`, the reloader supervisor process logs in plain text because it r
 
 ### 2.8 Database access
 
-See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for details. In short: `create_db_engine` (engine options and SQLite pragmas), `create_session_factory`, `session_scope` (commit or roll back) and `iter_session` / `get_db_session` (request-scoped, never commits implicitly).
+See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for details. In short: `create_db_engine` (engine options and SQLite pragmas), `create_session_factory`, `session_scope` (commit or roll back) and `iter_session` / `get_db_session` (request-scoped, never commits implicitly). Document data goes through `DocumentRepository`, which requires a `tenant_id` on every call; file contents go through the `BlobStore` protocol ([ADR-015](ARCHITECTURE_DECISIONS.md#adr-015)).
 
 ## 3. Frontend (`apps/web`)
 
@@ -165,8 +168,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 27 | Config, health service (stub probe), JSON formatter, sessions and engine |
-| Backend integration | `apps/api/tests/integration/` | 18 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency); migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 43 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type |
+| Backend integration | `apps/api/tests/integration/` | 34 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency); document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).

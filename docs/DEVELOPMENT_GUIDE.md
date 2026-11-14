@@ -92,6 +92,7 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_LOG_LEVEL` | API | `INFO` | `DEBUG` … `CRITICAL` |
 | `EASA_DATABASE_URL` | API | `sqlite:///…/apps/api/var/easa.db` | Drivers: `sqlite`, `sqlite+pysqlite`, `postgresql+psycopg` (driver not installed yet) |
 | `EASA_CORS_ALLOWED_ORIGINS` | API | `["http://localhost:3000"]` | JSON list; no wildcards |
+| `EASA_STORAGE_DIR` | API | `apps/api/var/uploads` | Uploaded file contents (content-addressed); git-ignored |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
 Invalid API settings stop the server at startup with a validation error that never shows the submitted value.
@@ -117,7 +118,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 45 tests; warnings are treated as errors
+uv run pytest                 # 77 tests; warnings are treated as errors
 ```
 
 **Frontend** (from `apps/web`):

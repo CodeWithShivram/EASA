@@ -105,7 +105,9 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 
 ## 6. Security testing
 
-**Automated today** (part of the 72 tests):
+**Automated today** (part of the 104 tests):
+
+- Documents: repository reads are tenant-scoped (another tenant gets nothing for a known document ID); the file store rejects path-traversal and malformed hashes and never uses filenames for paths.
 
 - Settings reject invalid values, wildcard/path CORS origins, non-allowlisted drivers and unknown `.env` keys; secrets are not echoed.
 - Errors: 404/405/422/500 use the envelope; the 500 body has no internal details; validation errors omit input.

@@ -16,6 +16,7 @@ def test_defaults_are_safe_for_local_development() -> None:
     assert settings.database_url.get_secret_value() == (
         f"sqlite:///{(API_ROOT / 'var' / 'easa.db').as_posix()}"
     )
+    assert settings.storage_dir == API_ROOT / "var" / "uploads"
 
 
 def test_reads_prefixed_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:

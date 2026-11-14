@@ -26,6 +26,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "environment": "test",
         "database_url": sqlite_url(tmp_path / "var" / "test.db"),
+        "storage_dir": tmp_path / "var" / "uploads",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

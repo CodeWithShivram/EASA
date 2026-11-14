@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: SecretStr = Field(default_factory=_default_database_url)
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Uploaded file contents (content-addressed). Never served directly; git-ignored.
+    storage_dir: Path = Field(default_factory=lambda: API_ROOT / "var" / "uploads")
 
     @field_validator("database_url")
     @classmethod

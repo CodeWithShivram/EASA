@@ -85,6 +85,8 @@ def test_iter_session_rolls_back_and_closes_on_error(factory: SessionFactory) ->
     assert _count(factory) == 0
 
 
-def test_metadata_has_naming_convention_and_no_tables() -> None:
+def test_metadata_has_naming_convention_and_only_document_tables() -> None:
+    import app.db.models  # noqa: F401 - registers all models
+
     assert Base.metadata.naming_convention == NAMING_CONVENTION
-    assert Base.metadata.tables == {}
+    assert set(Base.metadata.tables) == {"documents", "document_chunks"}
