@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
-from app.api.v1.routes import documents
+from app.api.v1.routes import documents, search
 from app.core.config import Settings, load_settings
 from app.core.correlation import CORRELATION_ID_HEADER
 from app.core.errors import register_exception_handlers
@@ -60,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if not settings.is_production:
         # Uses the development-only identity (ADR-014), so never in production.
         app.include_router(documents.router, prefix="/api/v1")
+        app.include_router(search.router, prefix="/api/v1")
 
     # Starlette wraps middleware in reverse order: the last one added is outermost.
     app.add_middleware(

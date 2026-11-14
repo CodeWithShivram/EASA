@@ -89,6 +89,9 @@ Uploading a document from PowerShell (uses the development identity; `curl.exe`,
 curl.exe -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
 curl.exe "http://127.0.0.1:8000/api/v1/documents?limit=10"
 curl.exe "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
+# Search: write the JSON body to a file to avoid PowerShell quoting issues
+[IO.File]::WriteAllText("$PWD\q.json", '{"query": "How much vacation time do staff get?", "top_k": 3}')
+curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
 ```
 
 Use synthetic documents only.
@@ -138,7 +141,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 258 tests (2 real-model tests skip if the model is not downloaded); warnings are errors
+uv run pytest                 # 283 tests (3 real-model tests skip if the model is not downloaded); warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

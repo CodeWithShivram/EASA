@@ -497,8 +497,8 @@ Decisions approved 2026-11-14:
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | the commit that adds this row |
-| P3-M2 | Vector index interface, SQLite semantic search, `POST /api/v1/search` with citations | NOT STARTED | |
+| P3-M1 | Embedding interface, pinned ONNX and hashing embedders, `chunk_embeddings`, embedding during processing, backfill CLI, readiness check | COMPLETE | `2691620` |
+| P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | the commit that adds this row |
 | P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | NOT STARTED | |
 | P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | NOT STARTED | |
 | P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | NOT STARTED | |
@@ -550,3 +550,38 @@ Fixed during the work:
 - `embed-missing` operates across tenants and is a server-side command only.
 
 **Exit criteria:** met. Processed documents get versioned vectors from a pinned local model, failures are recoverable, there is no network access at runtime, and both the deterministic and the real-model paths are tested.
+
+## P3-M2: Semantic search
+
+**Scope:** vector-index interface, exact brute-force implementation, search service and endpoint with citations. No keyword or hybrid search (P3-M3), no PostgreSQL (P3-M4). No new dependencies, no migrations.
+
+**Implemented**
+
+- `app/retrieval/`:
+  - The `VectorIndex` protocol; its contract requires tenant, status and model filtering before scoring.
+  - `BruteForceVectorIndex`: a single filtered SQL query, rows streamed in batches of 5,000, NumPy scoring, a running top-k, ties broken by chunk ID.
+- `Embedder.embed_query`: the ONNX implementation uses fastembed's query handling; the hashing embedder treats the query like a passage.
+- `SearchService`:
+  - Normalizes the query; rejects empty queries (`empty_query`); returns `503 embeddings_unavailable` when the model is missing.
+  - Enriches hits through a tenant-scoped `DocumentRepository.chunks_with_documents`.
+  - Logs metadata only; the query text is never logged.
+- `POST /api/v1/search`: `{query (1–1000), top_k (1–50, default 5)}`, unknown fields rejected. Returns `{model_id, results: [{score, text, citation}]}`. Mounted only outside production.
+- Docs: API spec section 3.5, LLD, SECURITY, HLD, README, DEVELOPMENT_GUIDE (search example), ADR-019.
+
+**Verification (executed 2026-11-14)**
+
+| Command / check | Result |
+|---|---|
+| `uv run ruff format --check .` / `uv run ruff check .` | Clean |
+| `uv run pytest` (model downloaded locally) | 283 passed (179 unit, 101 integration, 3 real-model); 25 new tests |
+| Real-model test through the API | "How much vacation time do staff get?" ranks the handbook's "Leave" section first, without shared words |
+| Live server with the real model (scratch database), 4 natural-language queries | All top hits correct: vacation → Leave (0.684); work from home → Remote Work (0.618); expense receipts deadline → travel.pdf page 2 (0.832); seat class → travel.pdf page 1 (0.707). Server-side search took ~30 ms; no query text in the log; server tree stopped |
+
+**Known limitations**
+
+- Search cost is linear in the tenant's chunk count; fine for the demo corpus, not for large ones (pgvector in P3-M4).
+- Semantic search only. Exact terms such as codes or names may rank poorly until keyword and hybrid search arrive (P3-M3).
+- Browsers cannot call search yet (CORS allows `GET` only). There is no authentication (development identity).
+- Scores are cosine similarities, not calibrated relevance probabilities.
+
+**Exit criteria:** met. Tenant-isolated, exact semantic search with citations works end to end with the real model, and isolation and filtering are covered by tests.

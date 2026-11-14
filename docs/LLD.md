@@ -21,6 +21,7 @@ easa/
       repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
       embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
                            hashing.py (test embedder), factory.py (provider + download)
+      retrieval/           base.py (VectorIndex protocol), brute_force.py (exact search)
       storage/             blob_store.py (BlobStore protocol, LocalBlobStore)
     migrations/            Alembic env.py, script template, versions/
     tests/                 unit/ and integration/
@@ -158,6 +159,13 @@ stateDiagram-v2
 - `app.state.embedder` is built at startup (model loaded on first use) and is also the readiness probe (`checks.embeddings`).
 - [cli.py](../apps/api/app/cli.py): `python -m app.cli download-embedding-model` and `python -m app.cli embed-missing [--limit N]`.
 
+### 2.6d Semantic search (P3-M2)
+
+- [retrieval/base.py](../apps/api/app/retrieval/base.py): the `VectorIndex` protocol, `search(tenant_id, model_id, query_vector, top_k) -> [ScoredChunk(chunk_id, score)]`. Implementations must filter by tenant, processed status and model **before** scoring.
+- [retrieval/brute_force.py](../apps/api/app/retrieval/brute_force.py) `BruteForceVectorIndex`: one SQL query joins `chunk_embeddings` → `document_chunks` → `documents`, filtered by `model_id`, `tenant_id` (on both the vector and the document) and `status = processed`. Rows are streamed in batches of 5,000 (`yield_per`), so memory is bounded by the batch size, and each batch is scored with one matrix-vector product. A running top-k is kept; ties are broken by chunk ID so results are deterministic and independent of batch size. Works on any SQL backend; exact.
+- [services/search.py](../apps/api/app/services/search.py) `SearchService.search(identity, query, top_k)`: normalizes the query like chunk text; rejects empty (`empty_query`) or out-of-range input; returns `503 embeddings_unavailable` when the model is missing. It embeds the query with `Embedder.embed_query` (fastembed's query handling for the ONNX model), asks the index, then loads chunk and document details in one tenant-scoped query (`DocumentRepository.chunks_with_documents`). It logs metadata only (never the query).
+- [routes/search.py](../apps/api/app/api/v1/routes/search.py): `POST /api/v1/search` (`SearchRequest` forbids unknown fields) → `SearchResponse` with a `Citation` per hit. Mounted only outside production, next to the document routes.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -223,8 +231,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 | Suite | Location | Count | Notes |
 |---|---|---|---|
 | Backend unit | `apps/api/tests/unit/` | 179 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies |
-| Backend integration | `apps/api/tests/integration/` | 77 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
-| Real embedding model | `apps/api/tests/model/` | 2 | Skipped unless the pinned model is downloaded (always skipped in CI) |
+| Backend integration | `apps/api/tests/integration/` | 101 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document endpoints); body-size middleware on a minimal app; document repository against a temporary database; migration tests drive Alembic commands against temporary SQLite files |
+| Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).

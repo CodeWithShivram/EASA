@@ -23,6 +23,7 @@
 | [ADR-016](#adr-016) | In-request document processing with pypdf and python-docx | P2-M3 |
 | [ADR-017](#adr-017) | Character-based, structure-aware chunking with exact offsets | P2-M4 |
 | [ADR-018](#adr-018) | Local, pinned ONNX embeddings with versioned vectors | P3-M1 |
+| [ADR-019](#adr-019) | Vector-index interface with exact brute-force search first | P3-M2 |
 
 ---
 
@@ -210,6 +211,19 @@
   - Readiness reports whether the model is available.
 - **Trade-offs:** The hashing embedder only approximates word overlap, so semantic quality can be tested only in the separate real-model path (`tests/model`, skipped in CI). Embedding adds latency to uploads (about 2.7 s for the first upload including the model load, then under 1 s for small documents). Pinning the revision means upstream fixes need a deliberate update and re-embedding.
 - **Consequences:** No vendor lock-in: other providers implement the same protocol. Switching models creates new vectors under a new `model_id` instead of silently mixing spaces. Searchability is visible in the database (chunks lacking vectors) and in readiness.
+
+<a id="adr-019"></a>
+## ADR-019: Vector-index interface with exact brute-force search first
+
+- **Status:** Accepted (P3-M2, 2026-11-14; SQLite-first and NumPy brute force approved in Phase 3 planning)
+- **Context:** Semantic search must be correct, tenant-isolated and testable now. PostgreSQL with pgvector is planned (P3-M4) but needs Docker. The corpus is small and synthetic.
+- **Options considered:** NumPy brute force over vectors stored in SQL; the `sqlite-vec` extension (fast, but a 0.1.x release and a native extension); an external vector database (new infrastructure); pgvector immediately.
+- **Decision:**
+  - A `VectorIndex` protocol whose contract requires tenant, status and model filtering **before** scoring.
+  - First implementation: `BruteForceVectorIndex`, which streams the tenant's vectors for one model in batches from any SQL backend, scores them with NumPy and keeps a deterministic top-k.
+  - Search results are enriched with a second tenant-scoped query.
+- **Trade-offs:** The cost is linear in the tenant's chunk count for every query (about 30 ms server-side on the demo corpus). Fine for thousands of chunks, not for millions. Exact results, so there are no recall losses to tune.
+- **Consequences:** Retrieval correctness and isolation are tested independently of any index technology. pgvector (P3-M4) becomes a second implementation of the same protocol, and results can be compared against the exact baseline in the evaluation (P3-M5).
 
 ---
 

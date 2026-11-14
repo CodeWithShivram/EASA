@@ -75,6 +75,23 @@ class DocumentRepository:
         )
         return list(self._session.scalars(statement))
 
+    def chunks_with_documents(
+        self, tenant_id: uuid.UUID, chunk_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[DocumentChunk, Document]]:
+        """Chunks and their documents by chunk ID, restricted to the tenant."""
+        if not chunk_ids:
+            return {}
+        statement = (
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(
+                DocumentChunk.id.in_(chunk_ids),
+                DocumentChunk.tenant_id == tenant_id,
+                Document.tenant_id == tenant_id,
+            )
+        )
+        return {chunk.id: (chunk, document) for chunk, document in self._session.execute(statement)}
+
     def count_chunks(self, tenant_id: uuid.UUID, document_id: uuid.UUID) -> int:
         statement = select(func.count()).where(
             DocumentChunk.document_id == document_id, DocumentChunk.tenant_id == tenant_id

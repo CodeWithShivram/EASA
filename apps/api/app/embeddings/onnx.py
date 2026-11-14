@@ -45,6 +45,11 @@ class OnnxEmbedder:
         )
         return l2_normalize(vectors)
 
+    def embed_query(self, text: str) -> Vectors:
+        # fastembed applies the model's query-specific handling, if it has one.
+        vector = np.asarray(list(self._load().query_embed([text])), dtype=np.float32)
+        return l2_normalize(vector)[0]
+
     def _load(self) -> Any:
         with self._lock:
             if self._model is None:

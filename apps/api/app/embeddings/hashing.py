@@ -40,3 +40,6 @@ class HashingEmbedder:
                 index = int.from_bytes(digest[:4], "little") % self._dimensions
                 vectors[row, index] += 1.0 if digest[4] & 1 else -1.0
         return l2_normalize(vectors)
+
+    def embed_query(self, text: str) -> Vectors:
+        return self.embed([text])[0]

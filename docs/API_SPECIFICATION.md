@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health endpoints and the first document endpoints (upload, list, get; Phase 2, P2-M2) are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) and semantic search (Phase 3, P3-M2) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -219,6 +219,32 @@ Chunk object:
 
 Chunk text is document content: it is returned only to the owning tenant and is never written to logs.
 
+### 3.5 `POST /api/v1/search` — semantic search (Phase 3, development only)
+
+| Item | Specification |
+|---|---|
+| Purpose | Find the chunks of the current tenant's documents most similar in meaning to a query, with citations |
+| Authentication / authorization | As for document endpoints: development identity; only the identity's tenant is searched. The tenant, "processed documents only" and embedding-model filters are applied in the database query **before** any scoring, so other tenants' content is never scored or returned |
+| Availability | Not mounted when `EASA_ENVIRONMENT=production` |
+| Request | JSON `{"query": string, "top_k": integer}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5. Unknown fields are rejected |
+| Validation | The query is normalized like chunk text (Unicode NFC, invisible characters removed, whitespace collapsed); a query that is empty after normalization is rejected |
+| Response `200` | `{"model_id": string, "results": [{"score": number, "text": string, "citation": Citation}, ...]}`, ordered by score (highest first); ties are broken by chunk ID. `results` may be empty |
+| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields); `422 empty_query`; `503 embeddings_unavailable` (embedding model not downloaded) |
+| Audit | No audit record yet. One `search completed` log line with model ID, `top_k`, result count and duration; **the query text is never logged** |
+
+Citation object:
+
+| Field | Type | Notes |
+|---|---|---|
+| `document_id` | UUID | |
+| `filename` | string | Sanitized display name |
+| `page_number` | integer or null | PDF page; `null` for DOCX and TXT |
+| `section` | string or null | Nearest heading (DOCX) |
+| `chunk_index` | integer | |
+| `char_start`, `char_end` | integer | Offsets into the document's canonical normalized text |
+
+`score` is the cosine similarity between the query and chunk embeddings (vectors are L2-normalized). Scores are comparable only within one `model_id`, and they are not probabilities. With the `hashing` test provider, scores reflect word overlap, not meaning.
+
 ## 4. Headers
 
 | Header | Direction | Notes |
@@ -236,6 +262,7 @@ Chunk text is document content: it is returned only to the owning tenant and is 
 | `/api/v1/auth` | Sign-in and identity | 6 |
 | `/api/v1/users` | User and role management | 6 |
 | `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
+| `/api/v1/search` | Semantic search **implemented** (section 3.5); keyword and hybrid modes in P3-M3 | 3 |
 | `/api/v1/chat` | Grounded question answering with citations | 4 |
 | `/api/v1/conversations` | Conversation history | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |

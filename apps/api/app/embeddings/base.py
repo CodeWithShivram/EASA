@@ -27,7 +27,12 @@ class Embedder(Protocol):
         ...
 
     def embed(self, texts: Sequence[str]) -> Vectors:
-        """Return an array of shape (len(texts), dimensions), rows L2-normalized."""
+        """Embed passages: shape (len(texts), dimensions), rows L2-normalized."""
+        ...
+
+    def embed_query(self, text: str) -> Vectors:
+        """Embed a search query: shape (dimensions,), L2-normalized. Models may
+        treat queries differently from passages."""
         ...
 
 
