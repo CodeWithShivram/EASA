@@ -65,6 +65,10 @@ class ToolExecutor:
         self._session_factory = session_factory
         self._pool = pool
 
+    @property
+    def registry(self) -> ToolRegistry:
+        return self._registry
+
     def execute(
         self,
         identity: Identity,

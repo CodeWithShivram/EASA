@@ -115,6 +115,14 @@ Asking a single question (needs `EASA_MODEL_PROVIDER` set; with `fake` the "answ
 curl.exe -H "Content-Type: application/json" --data-binary "@a.json" http://127.0.0.1:8000/api/v1/answers
 ```
 
+Tools (Phase 5), after `uv run python -m app.cli seed-tickets` (synthetic tickets, once):
+
+```powershell
+curl.exe http://127.0.0.1:8000/api/v1/tools
+[IO.File]::WriteAllText("$PWD\t.json", '{"arguments": {"number": 1}}')
+curl.exe -H "Content-Type: application/json" --data-binary "@t.json" http://127.0.0.1:8000/api/v1/tools/get_ticket/invoke
+```
+
 Use synthetic documents only.
 
 Stop servers with `Ctrl+C`. If you start them in the background from a script, stop the **whole process tree** (`taskkill /PID <pid> /T /F`); killing only the parent can leave the server running (see section 9).
@@ -169,7 +177,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 600 tests: 3 real-embedding tests skip without the model, 47 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 620 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

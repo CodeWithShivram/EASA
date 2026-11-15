@@ -13,7 +13,7 @@ easa/
       main.py              application factory: create_app()
       core/                config, correlation IDs, logging, errors, middleware, identity
       api/                 dependencies.py, v1/router.py, v1/routes/ (health, documents, search, answers,
-                           conversations)
+                           conversations, tools)
       services/            health.py (HealthService, DatabaseProbe protocol),
                            uploads.py (upload validation), documents.py (DocumentService)
       schemas/             health.py, documents.py (response models)
@@ -21,7 +21,8 @@ easa/
                            types.py (UtcDateTime), documents.py (Document, DocumentChunk),
                            embeddings.py (ChunkEmbedding), fts.py (FTS5 keyword index DDL)
       repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
-      tools/               base.py (Tool contract), registry.py (allowlist), executor.py (Phase 5)
+      tools/               base.py (Tool contract), registry.py (allowlist), executor.py,
+                           support.py (ticket and knowledge tools), seed.py (Phase 5)
       llm/                 base.py (ChatModel protocol), fake.py, http.py, llamacpp.py, ollama.py,
                            registry.py (pinned GGUF), factory.py (Phase 4)
       embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
@@ -249,6 +250,13 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - [tools/executor.py](../apps/api/app/tools/executor.py) `ToolExecutor(registry, audit, session_factory, pool=ThreadPoolExecutor)`. `execute(identity, name, arguments, confirmed=False)` checks in order: allowlist → permission (before arguments) → argument size (4 KB) and `Input` validation → confirmation for consequential tools → run in the pool with `timeout_seconds` (correlation ID carried into the thread), retrying `ToolTransientError` up to `retries`. Returns `ToolResult(tool, outcome, output, arguments, detail, message)`; never raises for tool problems. Unexpected exceptions become `failed` with the exception type as detail and a generic message. One audit record and one metadata-only log line per call.
 - [repositories/audit.py](../apps/api/app/repositories/audit.py): `AuditRepository(session_factory).record(...)` (own transaction), `list_for_tenant`, and `arguments_digest` (SHA-256 of canonical JSON).
 
+### 2.6l Support tools (P5-M2)
+
+- [db/tickets.py](../apps/api/app/db/tickets.py) `SupportTicket` (`TicketStatus`, `TicketPriority`); [repositories/tickets.py](../apps/api/app/repositories/tickets.py) `TicketRepository`: `get_own(tenant_id, reporter_id, number)`, `create(...)` (next number = max + 1 in the tenant, commits, up to 3 attempts on a unique-constraint race), `count`.
+- [tools/support.py](../apps/api/app/tools/support.py): `SearchKnowledgeBase(embedder)` (hybrid search, 3 hits, 600-character snippets, 20 s timeout, 1 retry), `GetTicket` and `GetTicketStatus` (own tickets only; missing and foreign tickets both raise `ToolError(code="ticket_not_found")`), `CreateDraftTicket` (consequential; normalizes title and description and creates a `draft`). `_expect` narrows the validated input type. `build_tool_registry(embedder)` is the allowlist.
+- [tools/seed.py](../apps/api/app/tools/seed.py) `seed_tickets(session, tenant_id, user_id)`: 5 tickets for the user and 2 for `OTHER_REPORTER`, once; CLI `seed-tickets`.
+- `create_app` builds `app.state.tool_executor` with a 4-thread pool (shut down on exit). [routes/tools.py](../apps/api/app/api/v1/routes/tools.py): `GET /api/v1/tools` and `POST /api/v1/tools/{name}/invoke` (never confirmed), development only.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -314,8 +322,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 | Suite | Location | Count | Notes |
 |---|---|---|---|
 | Backend unit | `apps/api/tests/unit/` | 359 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation, chat model adapters (fake, Ollama against a mock transport), model settings, answer pipeline with a stub retriever (citations, refusals, prompt separation and escaping, context budget, failures, no logging of questions), llama.cpp adapter, pinned model file verification, answer scoring and support check, answer-case validation, tool registry contracts, permissions, argument digests |
-| Backend integration | `apps/api/tests/integration/` | 187 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
-| PostgreSQL | `apps/api/tests/postgres/` | 47 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite), a small HNSW benchmark and a conversation round trip. Always run in CI |
+| Backend integration | `apps/api/tests/integration/` | 206 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| PostgreSQL | `apps/api/tests/postgres/` | 48 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite), a small HNSW benchmark, a conversation round trip, and ticket tools with audit records. Always run in CI |
 | Live chat model | `apps/api/tests/llm/` | 4 | Against a running llama.cpp server: readiness, a reply with token counts, an answerable question answered from the right source, an unanswerable one declined; skipped unless `EASA_TEST_LLM_URL` is set (never in CI) |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |

@@ -11,8 +11,8 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) by default; PostgreSQL 18.7 with pgvector 0.8.7 through `psycopg` 3.3 (Docker Compose, section 9) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored); PostgreSQL data lives in the Docker volume `easa_postgres-data` |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages`, `audit_logs` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations → `2883c37b9b4f` audit logs (head) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages`, `audit_logs`, `support_tickets` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations → `2883c37b9b4f` audit logs → `74e98c05b626` support tickets (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -92,6 +92,23 @@ Rules: a question and its reply are written together in one transaction, only af
 | `created_at` | timestamp with time zone | no | UTC |
 
 Index `ix_audit_logs_tenant_id_created_at`. Records are written by `AuditRepository` in their own session and transaction, so they survive a rollback of the operation. There is no API to change or delete them, and no retention policy yet.
+
+### 1.2c `support_tickets` (Phase 5, P5-M2)
+
+[app/db/tickets.py](../apps/api/app/db/tickets.py), migration `74e98c05b626`. Synthetic tickets that the agent's tools read and create.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Primary key |
+| `tenant_id`, `reporter_id` | UUID | no | Owning tenant and the user who reported it; index `ix_support_tickets_tenant_id_reporter_id` |
+| `number` | integer | no | Human-facing number, unique per tenant (`uq_support_tickets_tenant_id_number`); the next number is max + 1, retried on a unique-constraint race |
+| `title` | varchar(200) | no | Normalized text |
+| `description` | text | no | Normalized text |
+| `status` | varchar(20) | no | `draft`, `open`, `in_progress`, `resolved`, `closed` |
+| `priority` | varchar(10) | no | `low`, `normal`, `high` |
+| `created_at`, `updated_at` | timestamp with time zone | no | UTC |
+
+Rules: until roles exist (Phase 6) a user can read only tickets they reported, within their tenant; anything else is reported as not found. Tickets created by the agent start as `draft`. `python -m app.cli seed-tickets` creates 5 synthetic tickets for the development user and 2 for another synthetic user in the same tenant, once.
 
 ### 1.3 File storage
 

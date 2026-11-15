@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 in progress (P5-M1 tool framework and audit log). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 in progress (P5-M1 tool framework and audit log, P5-M2 support tools). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -22,6 +22,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | `GET /api/v1/health`, `GET /api/v1/health/ready` | Public, unauthenticated; coarse status only |
 | `POST /api/v1/search` | Development only; development identity; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
 | `/api/v1/conversations` (create, list, get, ask, delete) | Development only; development identity; conversations visible only to their owner in their tenant; stores questions and answers |
+| `/api/v1/tools` (list, invoke) | Development only; development identity and its configured permissions; every call goes through the tool executor and is audited; consequential tools cannot be confirmed here |
 | `POST /api/v1/answers` | Development only; development identity; retrieves evidence from the identity's tenant only and sends it with the question to the configured chat model; returns generated text and the cited chunk text |
 | `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Development only (not mounted in production); no authentication; act as a fixed development identity ([ADR-014](ARCHITECTURE_DECISIONS.md#adr-014)); accept untrusted files and parse them in the API process |
 | `/docs`, `/openapi.json` | Available outside `production` |
@@ -184,6 +185,9 @@ Residual risks: questions and answers are stored in plain text in the database w
 | Unexpected tool errors become a generic failure: no exception text reaches users, models or logs (the log line carries only the error type) | [executor.py](../apps/api/app/tools/executor.py) — tested |
 | Every attempt is audited (user, tenant, tool, outcome, permission or error code, correlation ID, duration) in its own transaction; arguments are stored only as a SHA-256 digest and are never logged | [audit.py](../apps/api/app/repositories/audit.py) — tested |
 
+| Ticket tools act as the caller: a user reads only tickets they reported in their tenant; other people's and missing tickets give the same "not found"; drafts are created with the caller as reporter and normalized text | [support.py](../apps/api/app/tools/support.py), [tickets.py](../apps/api/app/repositories/tickets.py) — tested on SQLite and PostgreSQL |
+| Knowledge search through a tool uses the same tenant-filtered hybrid search as the API | [support.py](../apps/api/app/tools/support.py) — tested |
+
 Residual risks: a timed-out tool keeps running in its thread until it finishes (Python threads cannot be stopped); no tool has side effects outside the database yet. The development identity's permissions come from configuration until authentication exists (Phase 6). Audit records have no retention policy and no tamper protection beyond the database itself.
 
 ### Database
@@ -249,10 +253,11 @@ Residual risks: a timed-out tool keeps running in its thread until it finishes (
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 600 backend tests; 3 real-model tests skip without the model and 47 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 620 backend tests; 3 real-model tests skip without the model and 48 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
+- Support tools: other reporters' and other tenants' tickets look missing; drafts need confirmation, take the caller as reporter and normalize text; invalid or extra draft fields are rejected; missing permissions are denied; the list endpoint shows only permitted tools; invocations are audited; not mounted in production.
 - Tools: unknown tools, missing permissions (also with invalid arguments), unknown or oversized arguments and missing confirmation never run a tool; timeouts return without waiting; transient errors are retried; unexpected exceptions and wrong outputs become safe failures without leaking exception text; every attempt is audited with a digest and without plaintext arguments.
 - Conversations: other users' and tenants' conversations are `404` for get, ask and delete; lists show only own conversations; model failures store nothing; stored sources have no text; the turn limit applies; deleting removes messages; content is not logged; not mounted in production; history cannot close its element.
 - Answers: no evidence means no model call; refusals (including refusals phrased in words), uncited and wrongly cited replies are withheld; another tenant's documents never reach the prompt; a document containing `</source>` and fake system instructions stays inside its source element; filenames and sections are escaped; questions and answers are not logged; answers are not mounted in production and return `503` without a model.

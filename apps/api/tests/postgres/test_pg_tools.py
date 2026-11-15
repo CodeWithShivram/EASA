@@ -1,0 +1,51 @@
+"""Ticket tools and audit records on PostgreSQL."""
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.core.identity import Identity
+from app.db.audit import AuditOutcome
+from app.main import create_app
+from app.repositories.audit import AuditRepository
+from app.tools.executor import ToolExecutor
+from app.tools.seed import seed_tickets
+from tests.conftest import make_settings
+
+
+@pytest.fixture
+def app(tmp_path: Path, pg_url: str, clean_tables: None) -> Iterator[FastAPI]:
+    app = create_app(make_settings(tmp_path, database_url=pg_url))
+    settings = app.state.settings
+    with app.state.session_factory() as session:
+        seed_tickets(session, settings.dev_tenant_id, settings.dev_user_id)
+    with TestClient(app):
+        yield app
+    app.state.engine.dispose()
+
+
+def test_ticket_tools_and_audit_on_postgres(app: FastAPI) -> None:
+    settings = app.state.settings
+    me = Identity(settings.dev_tenant_id, settings.dev_user_id, frozenset(settings.dev_permissions))
+    tools: ToolExecutor = app.state.tool_executor
+
+    own = tools.execute(me, "get_ticket", {"number": 1})
+    other = tools.execute(me, "get_ticket", {"number": 6})  # another reporter's ticket
+    draft = tools.execute(
+        me,
+        "create_draft_ticket",
+        {"title": "Badge not working", "description": "My badge stopped opening doors."},
+        confirmed=True,
+    )
+
+    assert own.outcome is AuditOutcome.SUCCEEDED
+    assert other.detail == "ticket_not_found"
+    assert draft.output == {"number": 8, "status": "draft", "title": "Badge not working"}
+    outcomes = [
+        r.outcome
+        for r in AuditRepository(app.state.session_factory).list_for_tenant(settings.dev_tenant_id)
+    ]
+    assert sorted(o.value for o in outcomes) == ["failed", "succeeded", "succeeded"]

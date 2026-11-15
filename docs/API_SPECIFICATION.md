@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid), grounded answer and conversation (Phase 4) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid), grounded answer and conversation (Phase 4), and tool (Phase 5) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -299,6 +299,26 @@ Follow-ups: retrieval searches the previous question plus the new one (within th
 Errors for asking: those of section 3.6, plus `404 conversation_not_found`, `409 conversation_full` (50 questions per conversation) and `409 conversation_busy` (another request added a turn at the same time; ask again). A question and its reply are stored only when the answer pipeline succeeds; on any error nothing is stored. `422 validation_error` for malformed IDs, bodies or limits.
 
 Audit: no audit record yet. Log lines `conversation created`, `conversation turn stored` (conversation ID, turn number, history turns used, status) and `conversation deleted`; **questions and answers are never logged**.
+### 3.8 Tools (Phase 5, development only)
+
+Direct access to the allowlisted tools through the same executor the agent will use, for development and testing. Uses the development identity and its configured permissions (`EASA_DEV_PERMISSIONS`). Not mounted in production.
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `GET /api/v1/tools` | | `200` `{"items": [{"name", "description", "consequential", "input_schema"}, ...]}`: only tools the identity may use |
+| `POST /api/v1/tools/{name}/invoke` | `{"arguments": {...}}` (unknown top-level fields rejected; `name` at most 64 characters) | `200` `{"tool", "outcome", "output", "arguments", "detail", "message"}` |
+
+Tool outcomes are reported in the body with status `200`; only a malformed request is an error (`422 validation_error`). `outcome` is one of `succeeded` (with `output`), `confirmation_required` (consequential tools; nothing ran; `arguments` shows what would run; confirming arrives with the agent in P5-M3), `denied` (`detail` = missing permission), `unknown_tool`, `invalid_arguments` (`detail` `schema` or `arguments_too_large`), `failed` (`detail` = error code such as `ticket_not_found`, or an error type) or `timeout`. `message` is always safe to display.
+
+| Tool | Permission | Input | Output |
+|---|---|---|---|
+| `search_knowledge_base` | `knowledge:search` | `{"query": string 1–1,000}` | `{"results": [{"filename", "page_number", "section", "text"}]}` (top 3 hybrid hits of the tenant, text at most 600 characters) |
+| `get_ticket` | `tickets:read` | `{"number": integer ≥ 1}` | `{"number", "title", "description", "status", "priority", "created_at", "updated_at"}`; own tickets only, otherwise `failed` / `ticket_not_found` |
+| `get_ticket_status` | `tickets:read` | `{"number": integer ≥ 1}` | `{"number", "status", "updated_at"}` |
+| `create_draft_ticket` (consequential) | `tickets:create` | `{"title": 5–200, "description": 10–2,000, "priority": "low"/"normal"/"high" (default normal)}` | `{"number", "status": "draft", "title"}` |
+
+Audit: every invocation writes one `audit_logs` record (section 1.2b of DATABASE_DESIGN) and one `tool call finished` log line with metadata only; arguments and outputs are never logged.
+
 ## 4. Headers
 
 | Header | Direction | Notes |
@@ -320,7 +340,8 @@ Audit: no audit record yet. Log lines `conversation created`, `conversation turn
 | `/api/v1/answers` | Single-question grounded answers **implemented** (section 3.6) | 4 |
 | `/api/v1/conversations` | Conversations with follow-up questions **implemented** (section 3.7) | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |
-| `/api/v1/audit` | Audit log queries | 6 |
+| `/api/v1/tools` | List and invoke allowlisted tools **implemented** (section 3.8) | 5 |
+| `/api/v1/audit` | Audit log queries (records are written since P5-M1) | 6 |
 
 Each will be documented here with purpose, authentication, authorization, request and response schemas, errors, validation rules and audit behaviour before or with its implementation. Protected endpoints will deny access by default and resolve identity from a verified authentication context.
 

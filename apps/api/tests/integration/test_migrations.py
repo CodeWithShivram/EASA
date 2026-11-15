@@ -20,7 +20,8 @@ KEYWORD_INDEX_REVISION = "6d544dac46b3"
 POSTGRES_SEARCH_REVISION = "e4353f12b34f"  # a no-op on SQLite; see tests/postgres
 CONVERSATIONS_REVISION = "c0002f4a144e"
 AUDIT_REVISION = "2883c37b9b4f"
-HEAD_REVISION = AUDIT_REVISION
+TICKETS_REVISION = "74e98c05b626"
+HEAD_REVISION = TICKETS_REVISION
 
 
 @pytest.fixture
@@ -60,6 +61,7 @@ def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
     assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(TICKETS_REVISION).down_revision == AUDIT_REVISION
     assert script.get_revision(AUDIT_REVISION).down_revision == CONVERSATIONS_REVISION
     assert script.get_revision(CONVERSATIONS_REVISION).down_revision == POSTGRES_SEARCH_REVISION
     assert script.get_revision(POSTGRES_SEARCH_REVISION).down_revision == KEYWORD_INDEX_REVISION
@@ -82,6 +84,7 @@ def test_upgrade_to_head_creates_document_tables(alembic_config: Config, databas
         "conversations",
         "conversation_messages",
         "audit_logs",
+        "support_tickets",
     }
     assert revision == HEAD_REVISION
 

@@ -5,6 +5,7 @@ Run from apps/api:
     uv run python -m app.cli download-chat-model
     uv run python -m app.cli embed-missing [--limit N]
     uv run python -m app.cli rebuild-keyword-index
+    uv run python -m app.cli seed-tickets
     uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
     uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
@@ -51,6 +52,7 @@ from app.evaluation.runner import (
 from app.llm.factory import build_chat_model
 from app.llm.registry import DEFAULT_CHAT_MODEL, ModelFileError, download_chat_model
 from app.services.embedding_service import EmbeddingService
+from app.tools.seed import seed_tickets
 
 logger = logging.getLogger("app.cli")
 
@@ -92,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "rebuild-keyword-index",
         help="rebuild the SQLite FTS5 keyword index from document_chunks (e.g. after VACUUM)",
+    )
+    commands.add_parser(
+        "seed-tickets",
+        help="create synthetic support tickets for the development identity (once)",
     )
     evaluate = commands.add_parser(
         "evaluate", help="measure retrieval quality on the labelled synthetic dataset (eval/)"
@@ -236,6 +242,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{stamp}-{args.backend}-{args.configs}",
             {"json": report_to_json(report), "md": report_to_markdown(report)},
         )
+        return 0
+
+    if args.command == "seed-tickets":
+        engine = create_db_engine(settings.database_url.get_secret_value())
+        try:
+            with create_session_factory(engine)() as session:
+                created = seed_tickets(session, settings.dev_tenant_id, settings.dev_user_id)
+        finally:
+            engine.dispose()
+        logger.info("synthetic tickets seeded", extra={"tickets_created": created})
         return 0
 
     if args.command == "rebuild-keyword-index":
