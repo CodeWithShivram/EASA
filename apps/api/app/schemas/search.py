@@ -10,7 +10,8 @@ class SearchRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=MAX_QUERY_CHARS)
     top_k: int = Field(default=5, ge=1, le=MAX_TOP_K)
-    mode: SearchMode = SearchMode.SEMANTIC
+    # Hybrid is the default since P4-M2 (the most robust mode in the evaluation).
+    mode: SearchMode = SearchMode.HYBRID
 
 
 class Citation(BaseModel):

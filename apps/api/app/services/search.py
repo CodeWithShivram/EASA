@@ -71,7 +71,7 @@ class SearchService:
         query: str,
         *,
         top_k: int,
-        mode: SearchMode = SearchMode.SEMANTIC,
+        mode: SearchMode = SearchMode.HYBRID,
     ) -> SearchResult:
         started = time.perf_counter()
         # Queries are normalized like chunk text, so invisible characters and

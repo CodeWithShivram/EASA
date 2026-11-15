@@ -67,7 +67,7 @@ def test_uploads_store_pgvector_embeddings(client: TestClient, app: FastAPI) -> 
 
 
 def test_semantic_mode(client: TestClient) -> None:
-    body = search(client, "annual leave days", top_k=3).json()
+    body = search(client, "annual leave days", mode="semantic", top_k=3).json()
 
     assert body["mode"] == "semantic"
     assert body["model_id"] == "hashing-v1-384"

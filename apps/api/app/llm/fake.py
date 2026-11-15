@@ -1,5 +1,6 @@
 """Deterministic chat model for tests and offline development (never in production)."""
 
+import re
 from collections.abc import Callable, Sequence
 
 from app.llm.base import ChatMessage, ChatResult, ModelUnavailableError
@@ -7,6 +8,25 @@ from app.llm.base import ChatMessage, ChatResult, ModelUnavailableError
 DEFAULT_REPLY = "This is a deterministic reply from the fake model."
 
 Reply = str | Callable[[Sequence[ChatMessage]], str]
+
+# Matches the answer prompt's source elements (app.services.answers).
+_FIRST_SOURCE = re.compile(r'<source id="(S\d+)"[^>]*>\s*(.*?)\s*</source>', re.DOTALL)
+_SENTENCE = re.compile(r"(.+?[.!?])(?:\s|$)", re.DOTALL)
+
+
+def extractive_reply(messages: Sequence[ChatMessage]) -> str:
+    """Quote the first sentence of the first source with its citation, or decline.
+
+    Used for ``EASA_MODEL_PROVIDER=fake`` so the answer pipeline can be tried
+    end to end without a real model. It does not understand the question.
+    """
+    match = _FIRST_SOURCE.search(messages[-1].content) if messages else None
+    if match is None:
+        return "INSUFFICIENT_EVIDENCE"
+    label, text = match.groups()
+    sentence = _SENTENCE.match(text)
+    quote = (sentence.group(1) if sentence else text)[:300].strip()
+    return f"{quote} [{label}]"
 
 
 class FakeChatModel:

@@ -94,9 +94,16 @@ curl.exe "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
 # Search: write the JSON body to a file to avoid PowerShell quoting issues
 [IO.File]::WriteAllText("$PWD\q.json", '{"query": "How much vacation time do staff get?", "top_k": 3}')
 curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
-# Other modes: add "mode": "keyword" (BM25, works without the model) or "mode": "hybrid"
+# Modes: "hybrid" (default), "semantic", or "keyword" (BM25, works without the embedding model)
 [IO.File]::WriteAllText("$PWD\q.json", '{"query": "receipts deadline", "top_k": 3, "mode": "hybrid"}')
 curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
+```
+
+Asking a question (needs `EASA_MODEL_PROVIDER` set; with `fake` the "answer" is the first sentence of the top source, which is enough to try the pipeline without a model):
+
+```powershell
+[IO.File]::WriteAllText("$PWD\a.json", '{"question": "How many days of annual leave do employees get?"}')
+curl.exe -H "Content-Type: application/json" --data-binary "@a.json" http://127.0.0.1:8000/api/v1/answers
 ```
 
 Use synthetic documents only.
@@ -150,7 +157,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 436 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
+uv run pytest                 # 473 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

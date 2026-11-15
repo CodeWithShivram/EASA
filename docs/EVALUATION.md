@@ -162,7 +162,7 @@ Reports (JSON with every query outcome, and Markdown tables) are written to `app
 
 ## 9. Recommendations
 
-1. Use **hybrid** retrieval for Phase 4 grounding, with 3–5 chunks of context. Changing the API's default mode from `semantic` to `hybrid` is a contract change, left for your decision.
+1. Use **hybrid** retrieval for Phase 4 grounding, with 3–5 chunks of context. *(Done in P4-M2: answers use hybrid retrieval with 5 chunks by default, and the search API's default mode is now `hybrid`.)*
 2. Keep the **structured-1200** default for now; re-evaluate 800 characters together with answer quality in Phase 4.
 3. On PostgreSQL, prefer hybrid over keyword-only search. Improving PostgreSQL keyword ranking (for example a BM25 extension or per-tenant term statistics) is possible future work.
 4. Keep **exact vector search** until a tenant has roughly 100,000 chunks or exact search exceeds the latency budget. Then add a partial HNSW index per model with `hnsw.iterative_scan = relaxed_order` and `ef_search` of at least 100, and re-measure recall on real embeddings with this runner.

@@ -44,10 +44,10 @@ flowchart LR
 | API (`apps/api`) | Python 3.14, FastAPI, Pydantic Settings, SQLAlchemy 2 | Strict configuration, correlation IDs, JSON logging, standard error envelope, liveness and readiness endpoints, session management |
 | Database | SQLite file (git-ignored) by default; PostgreSQL 18 + pgvector 0.8.7 (Docker Compose, P3-M4) | `documents`, `document_chunks` (Phase 2) and `chunk_embeddings` (P3-M1); tenant-scoped repositories. Keyword index: FTS5 on SQLite, a GIN full-text index on PostgreSQL. Vector search: NumPy brute force on SQLite, pgvector in the database on PostgreSQL |
 | File store | Local disk, content-addressed (git-ignored) | Stores uploaded bytes by SHA-256 |
-| Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3) |
+| Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3); grounded answers with citations and insufficient-evidence handling through a provider-independent chat model (P4-M1, P4-M2) |
 | Migrations | Alembic | Settings-driven environment; the same migration chain on SQLite and PostgreSQL (backend-specific steps are no-ops elsewhere) |
 
-There is **no** authentication, model integration or tool execution yet; document endpoints use a development-only identity. Those arrive in later phases (section 6).
+There is **no** authentication or tool execution yet, and no real language model is installed (answers run against a deterministic fake until P4-M3); document endpoints use a development-only identity. Those arrive in later phases (section 6).
 
 ## 4. Target architecture (planned)
 
@@ -104,7 +104,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Complete (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; see [EVALUATION.md](EVALUATION.md)) |
-| 4 | Grounded RAG answering | In progress (P4-M1 chat model interface done) |
+| 4 | Grounded RAG answering | In progress (P4-M1 chat model interface, P4-M2 grounded answers done) |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
 | 7 | Frontend and integration | Not started |
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (463 automated tests today: 436 backend including 46 PostgreSQL tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (500 automated tests today: 473 backend including 46 PostgreSQL tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

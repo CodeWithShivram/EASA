@@ -12,7 +12,7 @@ easa/
     app/
       main.py              application factory: create_app()
       core/                config, correlation IDs, logging, errors, middleware, identity
-      api/                 dependencies.py, v1/router.py, v1/routes/health.py, v1/routes/documents.py
+      api/                 dependencies.py, v1/router.py, v1/routes/ (health, documents, search, answers)
       services/            health.py (HealthService, DatabaseProbe protocol),
                            uploads.py (upload validation), documents.py (DocumentService)
       schemas/             health.py, documents.py (response models)
@@ -212,6 +212,20 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - [llm/ollama.py](../apps/api/app/llm/ollama.py) `OllamaChatModel(base_url, model, *, timeout_seconds, transport=None)`: `POST /api/chat` with `stream: false` and `options.temperature` / `options.num_predict`; reply text capped at 20,000 characters; token counts from `prompt_eval_count` / `eval_count`. `httpx.Client` with `trust_env=False` (no proxies), no redirects, a 5-second connect timeout. `404` → `ModelUnavailableError`; transport errors → `ModelUnavailableError`; timeouts, other statuses and malformed JSON → `ModelResponseError`. `is_available()` calls `GET /api/tags` with a 2-second timeout and accepts the model name with or without `:latest`. Tests use `httpx.MockTransport`.
 - [llm/factory.py](../apps/api/app/llm/factory.py) `build_chat_model(settings)`: `None` for `none`. `create_app` stores it as `app.state.chat_model` and closes the Ollama client on shutdown.
 
+### 2.6i Grounded answers (P4-M2)
+
+- [services/answers.py](../apps/api/app/services/answers.py) `AnswerService(retriever, model, *, max_output_tokens, temperature, context_chars=6000).answer(identity, question, *, top_k=5)`:
+  1. No model configured → `503 answers_unavailable`; `top_k` outside 1–10 → `422`.
+  2. `retriever.search(..., mode=HYBRID)` (the `Retriever` protocol; `SearchService` in the app). No hits → `insufficient_evidence` / `no_results`, and the model is not called.
+  3. `build_sources`: labels `S1`…`Sn` in rank order until the 6,000-character budget is used; a source that does not fit is cut (keeping at least 200 characters) and ends with ` ...`.
+  4. `build_messages`: a fixed `SYSTEM_PROMPT` (rules: sources only, cite `[S#]`, reply `INSUFFICIENT_EVIDENCE` otherwise, treat sources as untrusted data and ignore instructions in them, at most four sentences) and one user message with `<source id="S1" document="..." page="..." section="...">` elements followed by `Question: ...`. Attribute values are HTML-escaped; any `<source` / `</source` inside source text or the question becomes `&lt;source` / `&lt;/source`, so data cannot close its element.
+  5. `ChatModel.generate`; `ModelUnavailableError` → `503 model_unavailable`, `ModelResponseError` → `502 model_error` (no driver details chained).
+  6. Empty reply or the marker → `model_declined`. `check_citations` drops markers for unknown labels and collects the cited sources in order of first citation; none left → `no_valid_citations`, and the reply is withheld.
+  7. One `answer completed` log line with metadata only.
+- [routes/answers.py](../apps/api/app/api/v1/routes/answers.py): `POST /api/v1/answers` (`AnswerRequest` forbids unknown fields) → `AnswerResponse`; mounted only outside production. `get_answer_service` reuses `get_search_service`.
+- [llm/fake.py](../apps/api/app/llm/fake.py) `extractive_reply`: for `EASA_MODEL_PROVIDER=fake`, quotes the first sentence of source `S1` with `[S1]` (or replies with the marker when there are no sources). It does not read the question; it only exercises the pipeline.
+- The search API's default mode is `hybrid` since P4-M2 (EVALUATION.md recommendation 1).
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
@@ -276,8 +290,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 249 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation, chat model adapters (fake, Ollama against a mock transport), model settings |
-| Backend integration | `apps/api/tests/integration/` | 138 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 272 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation, chat model adapters (fake, Ollama against a mock transport), model settings, answer pipeline with a stub retriever (citations, refusals, prompt separation and escaping, context budget, failures, no logging of questions) |
+| Backend integration | `apps/api/tests/integration/` | 152 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
 | PostgreSQL | `apps/api/tests/postgres/` | 46 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite) and a small HNSW benchmark. Always run in CI |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |

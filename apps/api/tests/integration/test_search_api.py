@@ -163,8 +163,8 @@ def test_hybrid_mode_fuses_rankings(client: TestClient) -> None:
     assert all(0 < s <= 2 / 61 + 1e-6 for s in scores)
 
 
-def test_default_mode_is_semantic(client: TestClient) -> None:
-    assert search(client, "annual leave").json()["mode"] == "semantic"
+def test_default_mode_is_hybrid(client: TestClient) -> None:
+    assert search(client, "annual leave").json()["mode"] == "hybrid"
 
 
 def test_unknown_mode_is_rejected(client: TestClient) -> None:

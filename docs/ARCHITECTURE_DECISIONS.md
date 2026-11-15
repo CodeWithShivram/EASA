@@ -28,6 +28,7 @@
 | [ADR-021](#adr-021) | PostgreSQL + pgvector as a second backend with exact search | P3-M4 |
 | [ADR-022](#adr-022) | Keep exact vector search; criteria for adopting HNSW | P3-M5 |
 | [ADR-023](#adr-023) | Provider-independent chat model interface; Ollama as the local provider | P4-M1 |
+| [ADR-024](#adr-024) | Grounded answers: delimited sources, citation checks, explicit insufficient evidence | P4-M2 |
 
 ---
 
@@ -311,12 +312,35 @@
 - **Consequences:** answer generation (P4-M2) is built and tested against the fake model; a real model is plugged in by configuration (P4-M3). Other providers can be added as further adapters.
 
 ---
+
+<a id="adr-024"></a>
+## ADR-024: Grounded answers: delimited sources, citation checks, explicit insufficient evidence
+
+- **Status:** Accepted (P4-M2, 2026-11-15; hybrid default approved in the Phase 4 plan)
+- **Context:** Answers must come only from the caller's documents, cite them, and admit when the documents are silent. Retrieved documents are untrusted: any user who can upload can try to inject instructions. The future local model is small and runs on a CPU, so the context must be short.
+- **Options considered:**
+  - Prompt shape: free text with sources pasted in; JSON output with structured citations (small models break JSON often); delimited `<source>` elements with `[S#]` markers in plain text.
+  - Unsupported answers: return them with a warning; withhold them.
+  - Orchestration: a framework such as LangChain; plain code (about 250 lines).
+- **Decision:**
+  - Plain code in `AnswerService`; hybrid retrieval (5 chunks by default, 6,000-character budget).
+  - Rules only in the system message; sources as `<source id="S#" ...>` elements in the user message, with tag-like text escaped so a document cannot leave its element; the model replies in plain text with `[S#]` markers or an exact `INSUFFICIENT_EVIDENCE` marker.
+  - Check the reply: unknown citations removed; marker, empty or uncited replies withheld as `insufficient_evidence` with a reason. No retrieved evidence → the model is not called.
+  - Return only the cited sources, with the exact text the model saw.
+  - Make `hybrid` the default search mode for the search API as well (EVALUATION.md recommendation 1).
+- **Trade-offs:**
+  - Delimiters and rules reduce prompt injection but cannot prevent it; the citation check proves that a provided source is cited, not that it supports the claim. Both are measured with a real model in P4-M5.
+  - Withholding uncited replies may hide correct answers from a model that forgets to cite; that is preferred to showing unsupported text.
+  - The hybrid default changes the search API's scores (RRF, at most about 0.033) and can rank paraphrase matches slightly lower than semantic search (EVALUATION.md section 4.3); clients can still request `semantic`.
+- **Consequences:** answer quality now depends on retrieval quality and on the model following the format; P4-M3 adds a real model and P4-M5 evaluates citation validity, refusals and injection resistance.
+
+---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
-| Default search mode of the API (`semantic` today; evaluation recommends `hybrid`) and chunk size, judged with answer quality | 4 |
+| Chunk size, judged with answer quality | 4 (P4-M5) |
 | Which Ollama model to use (small, MIT or Apache-2.0 licensed), and running Ollama in Docker | 4 (P4-M3) |
 | Whether LangGraph is justified for agent workflows | 5 |

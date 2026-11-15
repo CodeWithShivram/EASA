@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health, document (Phase 2) and search (Phase 3: semantic, keyword, hybrid) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid) and grounded answer (Phase 4) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -227,7 +227,7 @@ Chunk text is document content: it is returned only to the owning tenant and is 
 | Purpose | Find the chunks of the current tenant's documents that best match a query, with citations. Modes: `semantic` (embedding similarity), `keyword` (BM25 full-text search) or `hybrid` (both, fused) |
 | Authentication / authorization | As for document endpoints: development identity; only the identity's tenant is searched. The tenant, "processed documents only" and embedding-model filters are applied in the database query **before** any scoring, so other tenants' content is never scored or returned |
 | Availability | Not mounted when `EASA_ENVIRONMENT=production` |
-| Request | JSON `{"query": string, "top_k": integer, "mode": string}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5; `mode`: `semantic` (default), `keyword` or `hybrid`. Unknown fields are rejected |
+| Request | JSON `{"query": string, "top_k": integer, "mode": string}`. `query`: 1–1,000 characters; `top_k`: 1–50, default 5; `mode`: `hybrid` (default since P4-M2; `semantic` before), `semantic` or `keyword`. Unknown fields are rejected |
 | Validation | The query is normalized like chunk text (Unicode NFC, invisible characters removed, whitespace collapsed); a query that is empty after normalization is rejected. For keyword search, the query is reduced to at most 32 distinct word tokens, each quoted and joined with `OR`, so full-text query syntax (operators, column filters, quotes) cannot be injected; a query with no word characters returns no keyword results |
 | Response `200` | `{"mode": string, "model_id": string or null, "results": [{"score": number, "text": string, "citation": Citation}, ...]}`, ordered by score (highest first); ties are broken by chunk ID. `model_id` is `null` in `keyword` mode. `results` may be empty |
 | Errors | `422 validation_error` (missing or out-of-range fields, unknown fields or modes); `422 empty_query`; `503 embeddings_unavailable` (`semantic` and `hybrid` only; `keyword` works without the model); `503 keyword_search_unavailable` (the keyword implementation does not match the database; not expected in normal operation, since the implementation is chosen from the database) |
@@ -254,6 +254,31 @@ Score meaning depends on the mode, and scores are never comparable across modes:
 
 None of these are probabilities.
 
+### 3.6 `POST /api/v1/answers` — grounded answers (Phase 4, development only)
+
+| Item | Specification |
+|---|---|
+| Purpose | Answer a question using only the current tenant's documents, with cited sources, or say that the evidence is insufficient |
+| Authentication | None yet; uses the development-only identity (ADR-014). Not mounted in production |
+| Authorization | Evidence comes only from the identity's tenant and from processed documents (the same filters as section 3.5) |
+| Request | JSON `{"question": string, "top_k": integer}`. `question`: 1–1,000 characters; `top_k`: chunks retrieved as evidence, 1–10, default 5. Unknown fields are rejected |
+| Processing | Hybrid search (top `top_k`) → numbered sources `[S1]`…`[Sn]` within a 6,000-character budget → the configured chat model, instructed to use only the sources, cite them and reply `INSUFFICIENT_EVIDENCE` otherwise → citation check |
+| Response `200` | `{"status": "answered" or "insufficient_evidence", "answer": string or null, "reason": string or null, "sources": [{"label": string, "text": string, "citation": Citation}, ...], "retrieved": integer, "model_id": string or null}` |
+| Errors | `422 validation_error` (missing or out-of-range fields, unknown fields); `422 empty_query`; `503 answers_unavailable` (no chat model configured, `EASA_MODEL_PROVIDER=none`); `503 model_unavailable` (model server unreachable or model not installed); `502 model_error` (the model timed out, failed or replied malformed); `503 embeddings_unavailable` (hybrid retrieval needs the embedding model) |
+| Audit | No audit record yet. One `answer completed` log line with status, reason, retrieved and cited counts, model ID, token counts and duration; **the question and the answer are never logged** |
+
+Response fields:
+
+| Field | Meaning |
+|---|---|
+| `status` | `answered`, or `insufficient_evidence` when the documents do not support an answer |
+| `answer` | The model's answer with `[S#]` citation markers; `null` unless `answered`. Markers for sources that were not provided are removed |
+| `reason` | `null` when answered; otherwise `no_results` (nothing retrieved; the model is not called), `model_declined` (the model replied `INSUFFICIENT_EVIDENCE` or nothing) or `no_valid_citations` (the reply cited no provided source, so it is withheld) |
+| `sources` | Only the sources the answer cites, in order of first citation. `text` is exactly what the model saw (a source cut to fit the budget ends with ` ...`); `citation` as in section 3.5 |
+| `retrieved` | Chunks retrieved before the model was asked |
+| `model_id` | The chat model that replied, e.g. `ollama:<model>` or `fake-chat-v1`; `null` when the model was not called |
+
+`insufficient_evidence` is a successful response, not an error. Answers are generated text: they can still be wrong even when cited, and the citations are the way to check them.
 ## 4. Headers
 
 | Header | Direction | Notes |
@@ -272,8 +297,8 @@ None of these are probabilities.
 | `/api/v1/users` | User and role management | 6 |
 | `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
 | `/api/v1/search` | Semantic, keyword and hybrid search **implemented** (section 3.5) | 3 |
-| `/api/v1/chat` | Grounded question answering with citations | 4 |
-| `/api/v1/conversations` | Conversation history | 4 / 7 |
+| `/api/v1/answers` | Single-question grounded answers **implemented** (section 3.6) | 4 |
+| `/api/v1/conversations` | Conversation history and follow-up questions | 4 (P4-M4) / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |
 | `/api/v1/audit` | Audit log queries | 6 |
 

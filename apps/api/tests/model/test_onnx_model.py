@@ -65,7 +65,8 @@ def test_semantic_search_finds_meaning_with_the_real_model(tmp_path: Path) -> No
             )
             # No content words shared with the "Leave" section.
             body = client.post(
-                "/api/v1/search", json={"query": "How much vacation time do staff get?"}
+                "/api/v1/search",
+                json={"query": "How much vacation time do staff get?", "mode": "semantic"},
             ).json()
     finally:
         app.state.engine.dispose()

@@ -749,8 +749,8 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P4-M1 | Chat model interface, fake model, Ollama adapter, model settings, readiness check | COMPLETE | the commit that adds this row |
-| P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | NOT STARTED | |
+| P4-M1 | Chat model interface, fake model, Ollama adapter, model settings, readiness check | COMPLETE | `0474246` |
+| P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | COMPLETE | the commit that adds this row |
 | P4-M3 | Ollama in Docker, model pull, live tests, latency and timeouts | NOT STARTED | |
 | P4-M4 | Conversation context (conversations and messages, bounded history) | NOT STARTED | |
 | P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | NOT STARTED | |
@@ -787,3 +787,35 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 - Non-streaming only. When Ollama is configured but stopped, the whole API reports not ready, although search still works (ADR-023).
 
 **Exit criteria:** met. Answer generation can be built against a tested, provider-independent interface, and model availability is visible in readiness.
+
+## P4-M2: Grounded answers
+
+**Scope:** an answer service and `POST /api/v1/answers` built against the fake model; the search API's default mode becomes `hybrid`. No real model (P4-M3), no conversation history (P4-M4). No new dependencies.
+
+**Implemented**
+
+- `app/services/answers.py` `AnswerService`: hybrid retrieval (default 5 chunks, at most 10) → numbered sources within a 6,000-character budget → the chat model → reply checks. No evidence → `insufficient_evidence` without a model call; marker, empty or uncited replies → `insufficient_evidence` with a reason; citations of unknown sources removed. Rules only in the system message; sources in `<source>` elements with tag-like text escaped and attributes HTML-escaped. Model errors → `503 model_unavailable` / `502 model_error`; no model configured → `503 answers_unavailable`. One metadata-only log line.
+- `POST /api/v1/answers` (`AnswerRequest`, `AnswerResponse`), mounted only outside production.
+- `extractive_reply` for `EASA_MODEL_PROVIDER=fake`: quotes the first sentence of source S1 with its citation, so the pipeline can be tried without a model.
+- Search: default `mode` is `hybrid` in the API schema and the service.
+- Tests: 23 unit (citations, refusals, prompt separation, escaping of hostile documents and attributes, context budget, model failures, bounded `top_k`, no logging of questions or answers, extractive fake) and 14 integration (end-to-end answer with citations, no documents, model refusal, other tenant's documents never in the prompt, injected `</source>` text, validation, no model → `503`, not mounted in production, no question in logs). Tests that relied on the old `semantic` default now request it explicitly (one integration, one real-model, one PostgreSQL test).
+- Docs: API spec section 3.6 and search default, LLD section 2.6i, SECURITY (answer controls and residual risks), DEVELOPMENT_GUIDE (answer example), README, HLD, EVALUATION.md (recommendation 1 done), ADR-024.
+
+**Verification (executed 2026-11-15)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL and `EASA_REQUIRE_POSTGRES_TESTS=1` | All checks passed |
+| `uv run pytest` with PostgreSQL | 473 passed (272 unit, 152 integration, 3 real-model, 46 PostgreSQL); no throwaway databases left |
+| `uv run pytest` without PostgreSQL | 427 passed, 46 skipped |
+| Live server (`fake` provider, `hashing` embedder, scratch database) | Readiness `ready` with `model: ok`. Before any upload: `insufficient_evidence` / `no_results` / `model_id: null`. After uploading the synthetic handbook and travel fixtures: "How many days of annual leave do employees get?" → answered, citing handbook.docx section "Leave"; "When must receipts be submitted?" → answered, citing travel.pdf page 2. `top_k: 50` → `422`. Search without `mode` → `hybrid`. 3 `answer completed` log lines; neither question appears in the log. Server tree stopped |
+| First test runs | Two answer tests failed and were fixed: a real bug (escaping lowercased `</SOURCE>`; it now escapes only `<` and keeps the text) and a test bug (it looked for "falcon" in the whole prompt, which includes the question). After the hybrid default, one integration, one real-model and one PostgreSQL test failed because they relied on the old default; they now request `semantic` explicitly |
+
+**Known limitations**
+
+- No real model yet: the `fake` provider quotes a sentence and does not answer the question. Prompt following, citation accuracy and injection resistance are untested with a real model until P4-M3 and P4-M5.
+- The citation check verifies that a provided source is cited, not that it supports the claim.
+- With the hybrid default, the real-model paraphrase example ("How much vacation time do staff get?") no longer ranks the Leave section first in search; `semantic` still does (EVALUATION.md section 4.3).
+- Browsers cannot call the endpoint yet (CORS allows `GET` only).
+
+**Exit criteria:** met. Questions are answered only from the caller's tenant with checked citations, unsupported replies are withheld, and the behaviour is covered by tests.

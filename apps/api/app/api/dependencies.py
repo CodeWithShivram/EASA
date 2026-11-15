@@ -8,6 +8,7 @@ from app.core.identity import Identity
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
 from app.retrieval.factory import build_indexes
+from app.services.answers import AnswerService
 from app.services.chunking import ChunkingConfig, ChunkingStrategy
 from app.services.documents import DocumentService
 from app.services.health import HealthService
@@ -58,3 +59,15 @@ def get_search_service(
     # pgvector and PostgreSQL full-text search on PostgreSQL; brute force and FTS5 on SQLite.
     vector_index, keyword_index = build_indexes(session)
     return SearchService(session, request.app.state.embedder, vector_index, keyword_index)
+
+
+def get_answer_service(
+    request: Request, search: Annotated[SearchService, Depends(get_search_service)]
+) -> AnswerService:
+    settings = request.app.state.settings
+    return AnswerService(
+        search,
+        request.app.state.chat_model,
+        max_output_tokens=settings.model_max_output_tokens,
+        temperature=settings.model_temperature,
+    )
