@@ -753,7 +753,8 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 | P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | COMPLETE | `83b25ff` |
 | P4-M3 | Local model: llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF (approved instead of Ollama, ADR-025), live tests, latency | COMPLETE | `2a6f715` |
 | P4-M4 | Conversation context (conversations and messages, bounded history) | COMPLETE | `71a7325` |
-| P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | COMPLETE | the commit that adds this row |
+| P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | COMPLETE | `9ab6e5a` |
+| P4-M5 follow-up | ADR-027 settings: 3 chunks by default, soft-refusal detection; confirmation run | COMPLETE | the commit that adds this row |
 
 ## P4-M1: Chat model interface
 
@@ -927,7 +928,7 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 
 ## Phase 4 completion report
 
-**Status: COMPLETE.** Phase 4 delivered grounded question answering over the caller's documents, with checked citations, explicit insufficient-evidence answers, a local CPU model, conversations with follow-up questions and an evaluation with the real model. Two setting changes are proposed (ADR-027) and await your decision.
+**Status: COMPLETE.** Phase 4 delivered grounded question answering over the caller's documents, with checked citations, explicit insufficient-evidence answers, a local CPU model, conversations with follow-up questions and an evaluation with the real model. The two setting changes proposed after the evaluation (ADR-027) were approved, implemented and confirmed (see the follow-up below).
 
 **Phase 4 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 4) against what was delivered**
 
@@ -943,7 +944,7 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 | Add conversation context carefully | Owner-scoped conversations, bounded history marked as not evidence, citations checked against current sources only | P4-M4 |
 | Test hallucination and retrieval failure cases | 43-case evaluation incl. unanswerable, false-premise, follow-up and injection cases; live model tests | P4-M3, P4-M5 |
 
-**Commits:** P4-M1 `0474246`, P4-M2 `83b25ff`, P4-M3 `2a6f715`, P4-M4 `71a7325`, P4-M5 the commit that adds this report.
+**Commits:** P4-M1 `0474246`, P4-M2 `83b25ff`, P4-M3 `2a6f715`, P4-M4 `71a7325`, P4-M5 `9ab6e5a`, follow-up: the commit that records it below.
 
 **Dependencies and downloads added in Phase 4:** `httpx` declared (already installed). Image `ghcr.io/ggml-org/llama.cpp:server-b12407`; model `Qwen/Qwen2.5-1.5B-Instruct-GGUF` Q4_K_M (Apache-2.0), pinned revision and SHA-256.
 
@@ -959,4 +960,27 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 2. `POST /api/v1/conversations`, ask a question and a follow-up in it, then `GET` it to see the stored turns.
 3. `uv run python -m app.cli evaluate-answers --limit 5` → a report in `var/eval/`.
 
-**Recommended next phase:** Phase 5, agent and controlled tool calling. Before it: decide on ADR-027 (3 chunks by default, soft-refusal detection). Phase 5 should assume the model will not follow instructions perfectly: strict tool schemas, server-side permission checks and confirmation for consequential actions.
+**Recommended next phase:** Phase 5, agent and controlled tool calling. Phase 5 should assume the model will not follow instructions perfectly: strict tool schemas, server-side permission checks and confirmation for consequential actions.
+
+## P4-M5 follow-up: ADR-027 settings
+
+**Scope:** the two changes proposed by the answer evaluation, approved on 2026-11-15: answers retrieve 3 chunks by default (was 5), and refusals phrased in words ("the sources do not provide information about …") become `insufficient_evidence`. The support check stays off.
+
+**Implemented**
+
+- `DEFAULT_TOP_K = 3` in `app/services/answers.py` (used by `POST /api/v1/answers` and conversations); `is_soft_refusal` (four phrase patterns, case-insensitive) applied with the marker check (`model_declined`).
+- `DEFAULT_ANSWER_CONFIG` of the answer evaluation follows the new default (3 chunks first; 5 chunks kept for comparison).
+- Tests: 12 unit (soft refusals seen in the evaluation detected, legitimate answers not matched, service behaviour, default of 3 chunks); the runner test's expected label updated.
+- Docs: ADR-027 accepted, EVALUATION.md section 10.6–10.7, API spec section 3.6, LLD.
+
+**Verification (executed 2026-11-15)**
+
+| Command / check | Result |
+|---|---|
+| Soft-refusal rule applied to the 129 recorded replies of the main run | Flags 5 replies, all refusals in words to unanswerable questions; 0 correct answers affected. A first version of the pattern missed two of them (subjects other than "sources", e.g. "The code of conduct does not provide specific information …") and was broadened before testing |
+| `evaluate-answers` (default setting, 43 cases, local model) | 13 min; correctness 0.79 (0.72 before), unanswerable declined 7 of 8 (4 before), answerable 0.75 (unchanged), 0 injected, citation precision 0.96 |
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 575 passed (349 unit, 172 integration, 3 real-embedding, 47 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 524 passed, 51 skipped |
+
+**Exit criteria:** met. The approved settings are in place and their effect is measured.

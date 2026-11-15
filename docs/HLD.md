@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (590 automated tests today: 563 backend including 47 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (602 automated tests today: 575 backend including 47 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

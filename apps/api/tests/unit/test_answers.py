@@ -23,6 +23,7 @@ from app.services.answers import (
     build_sources,
     check_citations,
     check_support,
+    is_soft_refusal,
     retrieval_query,
 )
 from app.services.search import MAX_QUERY_CHARS, SearchHit, SearchMode, SearchResult
@@ -397,3 +398,56 @@ def test_support_check_is_off_by_default_and_applied_when_enabled() -> None:
     assert default.status is AnswerStatus.ANSWERED
     assert checked.status is AnswerStatus.INSUFFICIENT_EVIDENCE
     assert checked.reason is InsufficientReason.NO_VALID_CITATIONS
+
+
+# --- soft refusals (ADR-027) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        # Phrasings seen in the P4-M5 evaluation:
+        "The sources do not provide information about the maximum salary for a senior "
+        "engineer. [S1]",
+        "The code of conduct does not provide specific information about the dress code. [S1]",
+        "Larkspur Analytics - Information Security Policy [S1] does not provide details about "
+        "office Wi-Fi passwords.",
+        "The documents don't mention a stock ticker. [S2]",
+        "There is no information about the founding year [S1].",
+        "The CEO's name is not mentioned in the sources.",
+    ],
+)
+def test_soft_refusals_are_detected(reply: str) -> None:
+    assert is_soft_refusal(reply)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Full-time employees receive 25 days of paid annual leave per calendar year. [S1]",
+        "The company does not reimburse traffic fines or personal entertainment. [S1]",
+        "Business class does not apply to flights under ten hours. [S2]",
+        "Information security training is completed every year. [S1]",
+    ],
+)
+def test_answers_are_not_mistaken_for_soft_refusals(reply: str) -> None:
+    assert not is_soft_refusal(reply)
+
+
+def test_a_soft_refusal_becomes_insufficient_evidence() -> None:
+    reply = "The sources do not provide information about the dress code. [S1]"
+
+    result = service(FakeChatModel(reply)).answer(IDENTITY, "What is the dress code?")
+
+    assert result.status is AnswerStatus.INSUFFICIENT_EVIDENCE
+    assert result.reason is InsufficientReason.MODEL_DECLINED
+    assert result.answer is None
+
+
+def test_answers_retrieve_three_chunks_by_default() -> None:
+    retriever = StubRetriever([LEAVE, TRAVEL, LEAVE, TRAVEL, LEAVE])
+    AnswerService(retriever, FakeChatModel("x [S1]"), max_output_tokens=64, temperature=0).answer(
+        IDENTITY, QUESTION
+    )
+
+    assert retriever.calls[0][1] == 3

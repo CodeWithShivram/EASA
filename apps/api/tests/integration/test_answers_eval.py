@@ -43,7 +43,7 @@ def test_runner_scores_every_kind_with_a_fake_model() -> None:
     data = json.loads(answer_report_to_json(report))
     assert data["model_id"] == "fake-chat-v1"
     assert {row["kind"] for row in data["summary"]} >= {"all", "answerable", "citation_precision"}
-    assert "| structured-1200-top5 | all (5) |" in answer_report_to_markdown(report)
+    assert "| structured-1200-top3 | all (5) |" in answer_report_to_markdown(report)
 
 
 def test_a_declining_model_refuses_everything() -> None:

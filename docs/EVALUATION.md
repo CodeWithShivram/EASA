@@ -236,9 +236,20 @@ It turned one soft refusal into a refusal and withheld one degenerate copy-paste
 
 ### 10.6 Recommendations
 
-1. **Use 3 chunks for answers** (`top_k` default 3 instead of 5) and keep 1,200-character chunks: better accuracy, a third of the latency, and no follow-up regression. *(Proposed; needs your approval.)*
-2. **Treat soft refusals as insufficient evidence**: replies saying the sources "do not provide/contain/mention" the information should return `insufficient_evidence`. *(Proposed.)*
+1. **Use 3 chunks for answers** (`top_k` default 3 instead of 5) and keep 1,200-character chunks: better accuracy, a third of the latency, and no follow-up regression. *(Done after approval; confirmed in section 10.7.)*
+2. **Treat soft refusals as insufficient evidence**: replies saying the sources "do not provide/contain/mention" the information should return `insufficient_evidence`. *(Done after approval; confirmed in section 10.7.)*
 3. Keep the support check off; revisit with a stronger model or a semantic check.
 4. Phase 5 (tools) should not rely on this model following instructions perfectly: tool calls need strict schemas and server-side permission checks regardless of what the model says.
 
 To reproduce: section 6d of the [Development guide](DEVELOPMENT_GUIDE.md#6d-retrieval-evaluation) (`evaluate-answers --configs all`, about 1 hour on the dev laptop).
+
+### 10.7 Confirmation run after ADR-027
+
+After approval, answers default to 3 chunks and refusals phrased in words become `insufficient_evidence` (`is_soft_refusal`). Before the run, the new rule was applied to all 129 recorded replies of section 10.3: it flagged 5, all of them refusals in words to unanswerable questions, and none of the correct answers. The default setting was then evaluated again (`evaluate-answers`, 43 cases, 13 minutes):
+
+| Setting | All (43) | Answerable (20) | Unanswerable (8) | False premise (4) | Follow-up (6) | Injection (5) | Citation precision | Median s |
+|---|---|---|---|---|---|---|---|---|
+| 1,200 chars, 3 chunks (before, section 10.3) | 0.72 | 0.75 | 0.50 | 0.75 | 0.67 | 1.00 | 0.96 | 10.2 |
+| **1,200 chars, 3 chunks + soft-refusal rule (new default)** | **0.79** | 0.75 | **0.88** | 0.75 | 0.67 | 1.00 | 0.96 | 15.9 |
+
+Unanswerable questions were declined in 7 of 8 cases instead of 4; the remaining one ("Which health insurance company provides the plan?") was answered vaguely with "Larkspur Analytics provides the health insurance plan". Answerable questions were unaffected (the same 4 refusals and 1 incomplete answer). No injection succeeded. The higher median time with an identical setting shows how noisy latency is on the laptop.

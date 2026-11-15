@@ -71,10 +71,11 @@ class AnswerEvalConfig:
         return f"{self.chunking.label}-top{self.top_k}"
 
 
-DEFAULT_ANSWER_CONFIG = AnswerEvalConfig(EvalConfig(ChunkingStrategy.STRUCTURED, 1200), 5)
+# The application default (3 chunks of 1,200 characters since ADR-027) comes first.
+DEFAULT_ANSWER_CONFIG = AnswerEvalConfig(EvalConfig(ChunkingStrategy.STRUCTURED, 1200), 3)
 ALL_ANSWER_CONFIGS = (
     DEFAULT_ANSWER_CONFIG,
-    AnswerEvalConfig(EvalConfig(ChunkingStrategy.STRUCTURED, 1200), 3),
+    AnswerEvalConfig(EvalConfig(ChunkingStrategy.STRUCTURED, 1200), 5),
     AnswerEvalConfig(EvalConfig(ChunkingStrategy.STRUCTURED, 800), 3),
 )
 

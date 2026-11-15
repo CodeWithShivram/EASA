@@ -261,8 +261,8 @@ None of these are probabilities.
 | Purpose | Answer a question using only the current tenant's documents, with cited sources, or say that the evidence is insufficient |
 | Authentication | None yet; uses the development-only identity (ADR-014). Not mounted in production |
 | Authorization | Evidence comes only from the identity's tenant and from processed documents (the same filters as section 3.5) |
-| Request | JSON `{"question": string, "top_k": integer}`. `question`: 1–1,000 characters; `top_k`: chunks retrieved as evidence, 1–10, default 5. Unknown fields are rejected |
-| Processing | Hybrid search (top `top_k`) → numbered sources `[S1]`…`[Sn]` within a 6,000-character budget → the configured chat model, instructed to use only the sources, cite them and reply `INSUFFICIENT_EVIDENCE` otherwise → citation check |
+| Request | JSON `{"question": string, "top_k": integer}`. `question`: 1–1,000 characters; `top_k`: chunks retrieved as evidence, 1–10, default 3 (5 before ADR-027). Unknown fields are rejected |
+| Processing | Hybrid search (top `top_k`) → numbered sources `[S1]`…`[Sn]` within a 6,000-character budget → the configured chat model, instructed to use only the sources, cite them and reply `INSUFFICIENT_EVIDENCE` otherwise → reply checks (marker or a refusal phrased in words, citations) |
 | Response `200` | `{"status": "answered" or "insufficient_evidence", "answer": string or null, "reason": string or null, "sources": [{"label": string, "text": string, "citation": Citation}, ...], "retrieved": integer, "model_id": string or null}` |
 | Errors | `422 validation_error` (missing or out-of-range fields, unknown fields); `422 empty_query`; `503 answers_unavailable` (no chat model configured, `EASA_MODEL_PROVIDER=none`); `503 model_unavailable` (model server unreachable or model not installed); `502 model_error` (the model timed out, failed or replied malformed); `503 embeddings_unavailable` (hybrid retrieval needs the embedding model) |
 | Audit | No audit record yet. One `answer completed` log line with status, reason, retrieved and cited counts, model ID, token counts and duration; **the question and the answer are never logged** |
@@ -273,7 +273,7 @@ Response fields:
 |---|---|
 | `status` | `answered`, or `insufficient_evidence` when the documents do not support an answer |
 | `answer` | The model's answer with `[S#]` citation markers; `null` unless `answered`. Markers for sources that were not provided are removed |
-| `reason` | `null` when answered; otherwise `no_results` (nothing retrieved; the model is not called), `model_declined` (the model replied `INSUFFICIENT_EVIDENCE` or nothing) or `no_valid_citations` (the reply cited no provided source, so it is withheld) |
+| `reason` | `null` when answered; otherwise `no_results` (nothing retrieved; the model is not called), `model_declined` (the model replied `INSUFFICIENT_EVIDENCE`, nothing, or said in words that the sources do not provide the information) or `no_valid_citations` (the reply cited no provided source, so it is withheld) |
 | `sources` | Only the sources the answer cites, in order of first citation. `text` is exactly what the model saw (a source cut to fit the budget ends with ` ...`); `citation` as in section 3.5 |
 | `retrieved` | Chunks retrieved before the model was asked |
 | `model_id` | The chat model that replied, e.g. `ollama:<model>` or `fake-chat-v1`; `null` when the model was not called |

@@ -44,7 +44,8 @@ from app.services.search import MAX_QUERY_CHARS, SearchHit, SearchMode, SearchRe
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOP_K = 5
+# 3 chunks: better answers at a third of the latency of 5 (EVALUATION.md section 10, ADR-027).
+DEFAULT_TOP_K = 3
 MAX_TOP_K = 10
 # Upper bound on source text placed in the prompt (small local models have
 # small context windows; about 1,500 tokens).
@@ -58,6 +59,19 @@ HISTORY_CHAR_BUDGET = 1_500
 
 _CITATION = re.compile(r"\[S(\d{1,3})\]")
 _ELEMENT_TAG = re.compile(r"<(/?)(source|history)", re.IGNORECASE)
+# Refusals phrased in words instead of the marker, e.g. "The sources do not provide
+# information about the dress code. [S1]" (ADR-027).
+_SOFT_REFUSAL = re.compile(
+    # "... does not provide (specific) information/details ..." whatever the subject
+    r"\b(?:do|does|did)\s*(?:not|n't)\s+(?:provide|contain|mention|include|specify|give|cover"
+    r"|offer|say|state)\s+(?:any\s+)?(?:specific\s+)?(?:information|details|data)\b"
+    # "the sources do not mention ..."
+    r"|\b(?:sources?|documents?)\s+(?:do|does|did)\s*(?:not|n't)\s+(?:provide|contain|mention"
+    r"|include|specify|say|state|give|cover)"
+    r"|\bno\s+(?:specific\s+)?information\s+(?:about|on|regarding|is\s+(?:provided|available))"
+    r"|\bnot\s+(?:mentioned|specified|provided|stated|covered)\s+in\s+the\s+(?:sources?|documents?)",
+    re.IGNORECASE,
+)
 _WORD = re.compile(r"\w+")
 # Sentence boundaries: end punctuation followed by whitespace.
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -282,6 +296,15 @@ def build_messages(
     return [ChatMessage("system", SYSTEM_PROMPT), ChatMessage("user", user)]
 
 
+def is_soft_refusal(reply: str) -> bool:
+    """True when the reply says the sources lack the information instead of using the marker.
+
+    Conservative by design: a reply that also states an answer but mentions a
+    missing detail is withheld too (ADR-027 trade-off).
+    """
+    return _SOFT_REFUSAL.search(reply) is not None
+
+
 def check_citations(reply: str, sources: Sequence[Source]) -> tuple[str, list[Source]]:
     """Remove citations of unknown sources; return the cleaned text and the cited sources."""
     by_number = {int(s.label[1:]): s for s in sources}
@@ -428,7 +451,7 @@ class AnswerService:
 
         text = reply.text.strip()
         # Case-insensitive: small models sometimes write "Insufficient_Evidence".
-        if not text or INSUFFICIENT_MARKER.lower() in text.lower():
+        if not text or INSUFFICIENT_MARKER.lower() in text.lower() or is_soft_refusal(text):
             return self._finish(
                 started,
                 AnswerStatus.INSUFFICIENT_EVIDENCE,
