@@ -7,6 +7,7 @@ Nothing here logs prompt or response text.
 
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 import httpx
 
@@ -51,19 +52,27 @@ class LlamaCppChatModel:
         return self._model in names
 
     def generate(
-        self, messages: Sequence[ChatMessage], *, max_tokens: int, temperature: float
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        json_schema: dict[str, Any] | None = None,
     ) -> ChatResult:
-        data = post_json(
-            self._client,
-            "/v1/chat/completions",
-            {
-                "model": self._model,
-                "messages": [{"role": m.role, "content": m.content} for m in messages],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "stream": False,
-            },
-        )
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+        if json_schema is not None:
+            # Grammar-constrained decoding (verified with build b12407, P5-M3).
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "reply", "schema": json_schema, "strict": True},
+            }
+        data = post_json(self._client, "/v1/chat/completions", payload)
         try:
             text = data["choices"][0]["message"]["content"]
             if not isinstance(text, str):

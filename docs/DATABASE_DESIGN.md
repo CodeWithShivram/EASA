@@ -11,8 +11,8 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) by default; PostgreSQL 18.7 with pgvector 0.8.7 through `psycopg` 3.3 (Docker Compose, section 9) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored); PostgreSQL data lives in the Docker volume `easa_postgres-data` |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages`, `audit_logs`, `support_tickets` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations → `2883c37b9b4f` audit logs → `74e98c05b626` support tickets (head) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages`, `audit_logs`, `support_tickets`, `pending_actions` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations → `2883c37b9b4f` audit logs → `74e98c05b626` support tickets → `758b76fd91fc` pending actions (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -109,6 +109,22 @@ Index `ix_audit_logs_tenant_id_created_at`. Records are written by `AuditReposit
 | `created_at`, `updated_at` | timestamp with time zone | no | UTC |
 
 Rules: until roles exist (Phase 6) a user can read only tickets they reported, within their tenant; anything else is reported as not found. Tickets created by the agent start as `draft`. `python -m app.cli seed-tickets` creates 5 synthetic tickets for the development user and 2 for another synthetic user in the same tenant, once.
+
+### 1.2d `pending_actions` (Phase 5, P5-M3)
+
+[app/db/pending_actions.py](../apps/api/app/db/pending_actions.py), migration `758b76fd91fc`. Consequential tool calls proposed by the agent, waiting for the owner's decision.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Primary key |
+| `tenant_id`, `user_id` | UUID | no | Owner; index `ix_pending_actions_tenant_id_user_id_status` |
+| `tool` | varchar(64) | no | Tool name |
+| `arguments` | JSON | no | Arguments as validated by the tool's input model (the user's own request data) |
+| `status` | varchar(16) | no | `pending`, `confirmed`, `failed` (confirmed but the tool did not succeed), `cancelled` |
+| `result` | JSON | yes | The tool output, or the failure outcome and code |
+| `created_at`, `expires_at`, `decided_at` | timestamp with time zone | no / no / yes | Actions expire after 10 minutes |
+
+Rules: an action is decided once by an atomic update (`WHERE status = 'pending' AND expires_at > now`), so a double confirmation can never run the tool twice; other users' actions are not found. Expired actions stay `pending` and can no longer be confirmed or cancelled.
 
 ### 1.3 File storage
 

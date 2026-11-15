@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from app.llm.base import ChatMessage, ChatResult, ModelUnavailableError
 
@@ -38,16 +39,24 @@ class FakeChatModel:
         self._reply = reply
         self._available = available
         self.calls: list[tuple[ChatMessage, ...]] = []
+        # The json_schema of each call (None when not constrained).
+        self.schemas: list[dict[str, Any] | None] = []
 
     def is_available(self) -> bool:
         return self._available
 
     def generate(
-        self, messages: Sequence[ChatMessage], *, max_tokens: int, temperature: float
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        json_schema: dict[str, Any] | None = None,
     ) -> ChatResult:
         if not self._available:
             raise ModelUnavailableError("fake model configured as unavailable")
         self.calls.append(tuple(messages))
+        self.schemas.append(json_schema)
         text = self._reply(messages) if callable(self._reply) else self._reply
         return ChatResult(
             text=text,

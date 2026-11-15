@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
-from app.api.v1.routes import answers, conversations, documents, search, tools
+from app.api.v1.routes import agent, answers, conversations, documents, search, tools
 from app.core.config import Settings, load_settings
 from app.core.correlation import CORRELATION_ID_HEADER
 from app.core.errors import register_exception_handlers
@@ -86,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(answers.router, prefix="/api/v1")
         app.include_router(conversations.router, prefix="/api/v1")
         app.include_router(tools.router, prefix="/api/v1")
+        app.include_router(agent.router, prefix="/api/v1")
 
     # Starlette wraps middleware in reverse order: the last one added is outermost.
     app.add_middleware(

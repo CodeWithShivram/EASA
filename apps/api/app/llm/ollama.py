@@ -6,6 +6,7 @@ app.llm.http). Nothing here logs prompt or response text.
 
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 import httpx
 
@@ -49,18 +50,22 @@ class OllamaChatModel:
         return self._model in names or f"{self._model}:latest" in names
 
     def generate(
-        self, messages: Sequence[ChatMessage], *, max_tokens: int, temperature: float
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        json_schema: dict[str, Any] | None = None,
     ) -> ChatResult:
-        data = post_json(
-            self._client,
-            "/api/chat",
-            {
-                "model": self._model,
-                "messages": [{"role": m.role, "content": m.content} for m in messages],
-                "stream": False,
-                "options": {"temperature": temperature, "num_predict": max_tokens},
-            },
-        )
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        if json_schema is not None:
+            payload["format"] = json_schema  # Ollama structured outputs
+        data = post_json(self._client, "/api/chat", payload)
         try:
             text = data["message"]["content"]
             if not isinstance(text, str):

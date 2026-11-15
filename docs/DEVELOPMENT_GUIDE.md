@@ -123,6 +123,15 @@ curl.exe http://127.0.0.1:8000/api/v1/tools
 curl.exe -H "Content-Type: application/json" --data-binary "@t.json" http://127.0.0.1:8000/api/v1/tools/get_ticket/invoke
 ```
 
+The agent (needs a configured model, e.g. the local one in section 6e):
+
+```powershell
+[IO.File]::WriteAllText("$PWD\g.json", '{"message": "What is the status of my ticket 3?"}')
+curl.exe -H "Content-Type: application/json" --data-binary "@g.json" http://127.0.0.1:8000/api/v1/agent
+# a proposed draft ticket returns "pending_action"; review it, then:
+curl.exe -X POST http://127.0.0.1:8000/api/v1/agent/actions/<id>/confirm    # or /cancel
+```
+
 Use synthetic documents only.
 
 Stop servers with `Ctrl+C`. If you start them in the background from a script, stop the **whole process tree** (`taskkill /PID <pid> /T /F`); killing only the parent can leave the server running (see section 9).
@@ -177,7 +186,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 620 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 651 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

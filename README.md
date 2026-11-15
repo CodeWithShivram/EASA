@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) complete: grounded answers with checked citations, a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker), conversations with follow-up questions, and an answer evaluation ([results](docs/EVALUATION.md#10-answer-evaluation-phase-4-p4-m5)). Phase 5 (agent and controlled tools) in progress: tool framework with allowlist, permissions, confirmation and audit log (P5-M1), synthetic support tickets and four tools (P5-M2).**
+> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) complete: grounded answers with checked citations, a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker), conversations with follow-up questions, and an answer evaluation ([results](docs/EVALUATION.md#10-answer-evaluation-phase-4-p4-m5)). Phase 5 (agent and controlled tools) in progress: tool framework with allowlist, permissions, confirmation and audit log (P5-M1), synthetic support tickets and four tools (P5-M2), and an agent whose consequential actions wait for your confirmation (P5-M3).**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -66,6 +66,7 @@ Endpoints:
 | `POST /api/v1/search` | Hybrid (default), semantic or keyword (BM25) search over the current tenant's documents, with citations. Development only |
 | `POST /api/v1/answers` | An answer from the current tenant's documents only, with cited sources, or `insufficient_evidence`. Needs a configured chat model. Development only |
 | `/api/v1/conversations` | Create, list, read and delete your conversations; ask follow-up questions that use the last turns. Development only |
+| `/api/v1/agent` | Ask the agent; it uses your permitted tools and proposes consequential actions for you to confirm or cancel. Development only |
 | `/api/v1/tools` | List your permitted tools and invoke one (knowledge search, ticket lookup, draft tickets that need confirmation); every call audited. Development only |
 | `GET /docs` | OpenAPI UI (disabled when `EASA_ENVIRONMENT=production`) |
 

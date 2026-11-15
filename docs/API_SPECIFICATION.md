@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid), grounded answer and conversation (Phase 4), and tool (Phase 5) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid), grounded answer and conversation (Phase 4), and tool and agent (Phase 5) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -319,6 +319,23 @@ Tool outcomes are reported in the body with status `200`; only a malformed reque
 
 Audit: every invocation writes one `audit_logs` record (section 1.2b of DATABASE_DESIGN) and one `tool call finished` log line with metadata only; arguments and outputs are never logged.
 
+### 3.9 Agent (Phase 5, development only)
+
+The agent handles a request by proposing steps that the server checks and runs. Uses the development identity and its permissions; needs a configured chat model. Not mounted in production.
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `POST /api/v1/agent` | `{"message": string 1–1,000}` (unknown fields rejected) | `200` `{"status", "answer", "reason", "steps": [{"tool", "outcome", "detail"}], "pending_action": PendingAction or null, "model_id"}` |
+| `GET /api/v1/agent/actions/{id}` | | `200` PendingAction; `404 action_not_found` |
+| `POST /api/v1/agent/actions/{id}/confirm` | | `200` `{"action": PendingAction, "result": ToolResult}` (ToolResult as in section 3.8); `404`; `409 action_expired` or `409 action_not_pending` |
+| `POST /api/v1/agent/actions/{id}/cancel` | | `200` PendingAction; `404`; `409` as above |
+
+`status`: `answered`, `confirmation_required` (a consequential tool was proposed; nothing ran; see `pending_action`) or `failed` (`reason` `invalid_model_output`). `steps` lists every tool call the model proposed with its executor outcome (section 3.8) or `repeated` (an identical call that was not run again). PendingAction: `{"id", "tool", "arguments", "status": "pending"/"confirmed"/"failed"/"cancelled", "result", "created_at", "expires_at", "decided_at"}`.
+
+Behaviour: each model reply is constrained to a JSON schema offering only the tools the caller may use plus a final answer; at most 3 tool calls, then only a final answer; tool results return to the model in escaped `<tool_result>` elements as data. Confirming runs the tool once, with the permission checked again at that moment; an action expires 10 minutes after it was proposed. The final answer is generated text and is not citation-checked.
+
+Errors: `422 validation_error` / `invalid_message`; `503 agent_unavailable` (no model configured) or `model_unavailable`; `502 model_error`. Audit: every tool call is an `audit_logs` record (section 3.8); one `agent run finished` log line with status and step outcomes; messages and answers are never logged.
+
 ## 4. Headers
 
 | Header | Direction | Notes |
@@ -341,6 +358,7 @@ Audit: every invocation writes one `audit_logs` record (section 1.2b of DATABASE
 | `/api/v1/conversations` | Conversations with follow-up questions **implemented** (section 3.7) | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |
 | `/api/v1/tools` | List and invoke allowlisted tools **implemented** (section 3.8) | 5 |
+| `/api/v1/agent` | Agent requests and pending actions **implemented** (section 3.9) | 5 |
 | `/api/v1/audit` | Audit log queries (records are written since P5-M1) | 6 |
 
 Each will be documented here with purpose, authentication, authorization, request and response schemas, errors, validation rules and audit behaviour before or with its implementation. Protected endpoints will deny access by default and resolve identity from a verified authentication context.

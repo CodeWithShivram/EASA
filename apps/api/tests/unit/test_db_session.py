@@ -97,4 +97,5 @@ def test_metadata_has_naming_convention_and_expected_tables() -> None:
         "conversation_messages",
         "audit_logs",
         "support_tickets",
+        "pending_actions",
     }

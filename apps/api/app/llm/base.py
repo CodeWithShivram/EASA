@@ -7,7 +7,7 @@ content or user questions.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 Role = Literal["system", "user", "assistant"]
 
@@ -43,10 +43,17 @@ class ChatModel(Protocol):
         ...
 
     def generate(
-        self, messages: Sequence[ChatMessage], *, max_tokens: int, temperature: float
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        json_schema: dict[str, Any] | None = None,
     ) -> ChatResult:
         """Return the model's reply to the conversation.
 
+        With ``json_schema`` the server constrains the reply to JSON matching it
+        (grammar-based decoding); callers must still validate the result.
         Raises ModelUnavailableError or ModelResponseError.
         """
         ...

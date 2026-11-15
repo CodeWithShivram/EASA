@@ -90,7 +90,10 @@ def clean_tables(pg_engine: Engine) -> Iterator[None]:
     yield
     with pg_engine.begin() as connection:
         connection.execute(
-            text("TRUNCATE documents, conversations, support_tickets, audit_logs CASCADE")
+            text(
+                "TRUNCATE documents, conversations, support_tickets, audit_logs, "
+                "pending_actions CASCADE"
+            )
         )
 
 

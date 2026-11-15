@@ -33,6 +33,7 @@
 | [ADR-026](#adr-026) | Conversations: owner-scoped tables, history as context not evidence, no extra model call | P4-M4 |
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
+| [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
 
 ---
 
@@ -409,6 +410,22 @@
   - An `audit_logs` table records every attempt in its own transaction, with a SHA-256 digest of the arguments instead of their values.
 - **Trade-offs:** Threads cannot be killed, so a timed-out tool runs on in the background (tools use their own sessions to stay isolated). Digests prove what was requested only to someone who already has the arguments. Checking permission before arguments means an authorized caller can still probe argument errors; that is intended.
 - **Consequences:** P5-M2 adds the ticket tools on this framework; P5-M3 adds the model loop, which can only call `ToolExecutor.execute`, so every model decision passes the same checks as any other caller.
+
+---
+
+<a id="adr-029"></a>
+## ADR-029: Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools
+
+- **Status:** Accepted (P5-M3, 2026-11-15; schema-constrained JSON approved in the Phase 5 plan)
+- **Context:** The local 1.5B model must choose tools and arguments. Free-text tool calls from a small model are unreliable, and its choices must never be trusted for anything consequential.
+- **Options considered:** free-text JSON parsed leniently; the server's native tool-calling templates (model-specific); grammar-constrained JSON schema per step (verified with llama.cpp b12407, also supported by Ollama).
+- **Decision:**
+  - Each step is constrained to an `anyOf` schema of permitted tool calls (with their input schemas) and a final answer; replies are still parsed and validated, and invalid ones end the run as `failed`.
+  - At most 3 tool calls per request; a call identical to an earlier one is not run again and only a final answer is offered next (added after the live probe showed a model repeating the same search three times, 114 s; 38 s with the guard).
+  - A consequential call becomes a `pending_actions` row (10-minute TTL) decided once by its owner through separate endpoints; confirmation re-runs the executor with `confirmed=True`, re-checking the permission. Nothing consequential runs inside the loop.
+  - Tool results go back as escaped `<tool_result>` data; messages and answers are never logged.
+- **Trade-offs:** The schema guarantees the format, not good choices: in the live probe an instruction to "delete all tickets" became a proposed draft ticket, stopped only by the confirmation gate. Final answers are not citation-checked. One request can take tens of seconds on the CPU (up to 4 model calls).
+- **Consequences:** P5-M4 attacks this loop (injection through documents and tickets, unauthorized and malformed calls); P5-M5 measures task success and checks that confirmation is never bypassed.
 
 ---
 ## Open decisions (not yet made)
