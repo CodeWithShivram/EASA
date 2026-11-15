@@ -11,8 +11,8 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) by default; PostgreSQL 18.7 with pgvector 0.8.7 through `psycopg` 3.3 (Docker Compose, section 9) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored); PostgreSQL data lives in the Docker volume `easa_postgres-data` |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations (head) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages`, `audit_logs` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations → `2883c37b9b4f` audit logs (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -73,6 +73,25 @@ Chunks are written in the same transaction that marks the document `processed`; 
 | `created_at` | timestamp with time zone | no | UTC |
 
 Rules: a question and its reply are written together in one transaction, only after the answer pipeline succeeds; a concurrent write at the same position fails on the unique constraint and returns `409 conversation_busy`. Deleting a conversation deletes its messages (database cascade). At most 50 turns per conversation. Cited documents can later be deleted or reprocessed; stored citations are then historical and may no longer resolve.
+
+### 1.2b `audit_logs` (Phase 5, P5-M1)
+
+[app/db/audit.py](../apps/api/app/db/audit.py), migration `2883c37b9b4f`. One row per attempt at a protected operation (today: tool executions), whatever the outcome.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Primary key |
+| `tenant_id`, `user_id` | UUID | no | Who attempted it (no foreign keys until users and tenants exist) |
+| `action` | varchar(64) | no | e.g. `tool.execute` |
+| `target` | varchar(128) | no | e.g. the tool name (truncated) |
+| `outcome` | varchar(32) | no | `succeeded`, `confirmation_required`, `denied`, `unknown_tool`, `invalid_arguments`, `failed`, `timeout` (`ck_audit_logs_outcome_allowed`) |
+| `detail` | varchar(128) | yes | Short code: the missing permission, an error code or type |
+| `arguments_digest` | varchar(64) | yes | SHA-256 of the canonical JSON arguments; **never the arguments themselves** |
+| `correlation_id` | varchar(64) | yes | Links the record to the request's log lines |
+| `duration_ms` | integer | yes | |
+| `created_at` | timestamp with time zone | no | UTC |
+
+Index `ix_audit_logs_tenant_id_created_at`. Records are written by `AuditRepository` in their own session and transaction, so they survive a rollback of the operation. There is no API to change or delete them, and no retention policy yet.
 
 ### 1.3 File storage
 
@@ -164,7 +183,7 @@ erDiagram
 | `document_chunks` | Chunk text, page and section, tenant copied from the document; embeddings in Phase 3 | 2 — **implemented** / 3 |
 | `conversations`, `conversation_messages` | Chat history owned by a user | 4 — **implemented** (section 1.2a) / 7 |
 | `tool_executions` | Tool name, arguments, requesting user, authorization result, outcome, correlation ID | 5 |
-| `audit_logs` | Protected operations with actor, action, target, result, correlation ID | 5 / 6 |
+| `audit_logs` | Protected operations with actor, action, target, result, correlation ID | 5 — **implemented** (section 1.2b) / 6 |
 
 ## 7. Design rules for future tables
 

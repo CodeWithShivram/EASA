@@ -95,4 +95,5 @@ def test_metadata_has_naming_convention_and_expected_tables() -> None:
         "chunk_embeddings",
         "conversations",
         "conversation_messages",
+        "audit_logs",
     }

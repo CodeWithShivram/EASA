@@ -32,7 +32,11 @@ def get_identity(request: Request) -> Identity:
     # Development-only identity from server configuration (ADR-014). Nothing in
     # the request influences it. Replaced by real authentication in Phase 6.
     settings = request.app.state.settings
-    return Identity(tenant_id=settings.dev_tenant_id, user_id=settings.dev_user_id)
+    return Identity(
+        tenant_id=settings.dev_tenant_id,
+        user_id=settings.dev_user_id,
+        permissions=frozenset(settings.dev_permissions),
+    )
 
 
 def get_document_service(

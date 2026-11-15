@@ -21,6 +21,7 @@ API_ROOT = Path(__file__).resolve().parents[2]
 # Database drivers the application is designed and tested for.
 ALLOWED_DATABASE_DRIVERS = frozenset({"sqlite", "sqlite+pysqlite", "postgresql+psycopg"})
 # Model names such as "family:1.5b-instruct", "namespace/model:tag" or a GGUF alias.
+_PERMISSION = re.compile(r"[a-z][a-z_]{0,39}:[a-z][a-z_]{0,39}")
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")
 
 
@@ -79,6 +80,11 @@ class Settings(BaseSettings):
     # requests. Document endpoints are not mounted in production.
     dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")
     dev_user_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000002")
+    # Permissions of the development identity (Phase 5 tools; deny by default:
+    # anything not listed is refused). Format "area:action".
+    dev_permissions: list[str] = Field(
+        default_factory=lambda: ["knowledge:search", "tickets:read", "tickets:create"]
+    )
 
     @field_validator("database_url")
     @classmethod
@@ -129,6 +135,14 @@ class Settings(BaseSettings):
                 "paths, queries or fragments"
             )
         return value.rstrip("/")
+
+    @field_validator("dev_permissions")
+    @classmethod
+    def _validate_dev_permissions(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not _PERMISSION.fullmatch(value):
+                raise ValueError("each permission must look like area:action (lowercase, _)")
+        return sorted(set(values))
 
     @model_validator(mode="after")
     def _validate_model_provider(self) -> Settings:

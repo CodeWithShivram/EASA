@@ -19,7 +19,8 @@ EMBEDDINGS_REVISION = "29b0c28209aa"
 KEYWORD_INDEX_REVISION = "6d544dac46b3"
 POSTGRES_SEARCH_REVISION = "e4353f12b34f"  # a no-op on SQLite; see tests/postgres
 CONVERSATIONS_REVISION = "c0002f4a144e"
-HEAD_REVISION = CONVERSATIONS_REVISION
+AUDIT_REVISION = "2883c37b9b4f"
+HEAD_REVISION = AUDIT_REVISION
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ def test_history_is_linear_with_a_single_head(alembic_config: Config) -> None:
     script = ScriptDirectory.from_config(alembic_config)
 
     assert script.get_heads() == [HEAD_REVISION]
+    assert script.get_revision(AUDIT_REVISION).down_revision == CONVERSATIONS_REVISION
     assert script.get_revision(CONVERSATIONS_REVISION).down_revision == POSTGRES_SEARCH_REVISION
     assert script.get_revision(POSTGRES_SEARCH_REVISION).down_revision == KEYWORD_INDEX_REVISION
     assert script.get_revision(KEYWORD_INDEX_REVISION).down_revision == EMBEDDINGS_REVISION
@@ -79,6 +81,7 @@ def test_upgrade_to_head_creates_document_tables(alembic_config: Config, databas
         "chunk_embeddings",
         "conversations",
         "conversation_messages",
+        "audit_logs",
     }
     assert revision == HEAD_REVISION
 

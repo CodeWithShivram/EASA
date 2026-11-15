@@ -142,6 +142,7 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_CHAT_MODEL_DIR` | API | `apps/api/var/models/llm` | Where `download-chat-model` stores the GGUF file (git-ignored; mounted read-only into the `llm` container) |
 | `EASA_MODEL_TIMEOUT_SECONDS`, `EASA_MODEL_MAX_OUTPUT_TOKENS`, `EASA_MODEL_TEMPERATURE` | API | `120`, `512`, `0.1` | Per-call limits (0–600 s, 16–4096 tokens, 0–1) |
 | `EASA_ANSWER_SUPPORT_CHECK` | API | `false` | Drop citations whose source shares no content words with the citing sentence (P4-M5; see EVALUATION.md section 10) |
+| `EASA_DEV_PERMISSIONS` | API | `["knowledge:search","tickets:read","tickets:create"]` | Permissions of the development identity for tools (Phase 5); anything not listed is denied. Format `area:action` |
 | `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
@@ -168,7 +169,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 575 tests: 3 real-embedding tests skip without the model, 47 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 600 tests: 3 real-embedding tests skip without the model, 47 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

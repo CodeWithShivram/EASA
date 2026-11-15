@@ -32,6 +32,7 @@
 | [ADR-025](#adr-025) | llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF as the local model | P4-M3 |
 | [ADR-026](#adr-026) | Conversations: owner-scoped tables, history as context not evidence, no extra model call | P4-M4 |
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
+| [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 
 ---
 
@@ -393,10 +394,26 @@
 - **Consequences:** `DEFAULT_TOP_K` for answers and conversations is 3; `is_soft_refusal` marks such replies `model_declined`. A reply that answers but also says a detail is missing is withheld too; none of the evaluated correct answers were.
 
 ---
+
+<a id="adr-028"></a>
+## ADR-028: Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph
+
+- **Status:** Accepted (P5-M1, 2026-11-15; approved in the Phase 5 plan)
+- **Context:** Phase 5 lets a model propose tool calls. The answer evaluation showed that the local model does not follow instructions reliably, so safety cannot depend on it. The guide asks for typed contracts, an allowlist, permission checks, confirmation for consequential actions, timeout handling and audit records, and allows LangGraph only when justified.
+- **Options considered:** LangGraph (graph orchestration, checkpointing; a large dependency for a loop of at most three steps); a model vendor's native tool-calling format (ties the design to one provider and still needs server checks); a small in-house executor with typed tools.
+- **Decision:**
+  - No LangGraph: the agent loop (P5-M3) stays plain code; revisit if workflows grow branches, long-running state or human-in-the-loop steps beyond one confirmation.
+  - Tools are classes with Pydantic `Input` (unknown fields forbidden) and `Output` models, a required permission, a timeout, a `consequential` flag and a retry count (zero for consequential tools); a registry is the allowlist and refuses badly specified tools at startup.
+  - `ToolExecutor` checks allowlist, permission (before arguments), argument size and schema, then confirmation, then runs the tool in a thread pool with a timeout; tool problems become structured results, never exceptions or stack traces.
+  - Identities carry explicit permissions, deny by default; the development identity's set is configured (`EASA_DEV_PERMISSIONS`) until RBAC (Phase 6).
+  - An `audit_logs` table records every attempt in its own transaction, with a SHA-256 digest of the arguments instead of their values.
+- **Trade-offs:** Threads cannot be killed, so a timed-out tool runs on in the background (tools use their own sessions to stay isolated). Digests prove what was requested only to someone who already has the arguments. Checking permission before arguments means an authorized caller can still probe argument errors; that is intended.
+- **Consequences:** P5-M2 adds the ticket tools on this framework; P5-M3 adds the model loop, which can only call `ToolExecutor.execute`, so every model decision passes the same checks as any other caller.
+
+---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
-| Whether LangGraph is justified for agent workflows | 5 |
