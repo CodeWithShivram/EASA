@@ -19,7 +19,10 @@ def test_readiness_reports_ready_with_working_database(client: TestClient) -> No
     response = client.get("/api/v1/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"database": "ok", "embeddings": "ok"}}
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"database": "ok", "embeddings": "ok", "model": "disabled"},
+    }
 
 
 def test_readiness_reports_database_failure(broken_db_client: TestClient) -> None:
@@ -28,6 +31,6 @@ def test_readiness_reports_database_failure(broken_db_client: TestClient) -> Non
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"database": "unavailable", "embeddings": "ok"},
+        "checks": {"database": "unavailable", "embeddings": "ok", "model": "disabled"},
     }
     assert response.headers["X-Correlation-ID"]

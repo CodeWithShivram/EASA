@@ -501,7 +501,7 @@ Decisions approved 2026-11-14:
 | P3-M2 | Vector index interface, exact brute-force semantic search, `POST /api/v1/search` with citations | COMPLETE | `d6e8781` |
 | P3-M3 | FTS5 keyword search, hybrid (Reciprocal Rank Fusion), search modes | COMPLETE | `97a2b93` |
 | P3-M4 | PostgreSQL + pgvector implementation (Docker Compose, CI service) | COMPLETE | `2b28388` |
-| P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | COMPLETE | the commit that adds this row |
+| P3-M5 | Evaluation dataset, recall@k/MRR, chunk-size and top-k comparison, report | COMPLETE | `ce2117f` |
 
 ## P3-M1: Embeddings
 
@@ -725,7 +725,7 @@ Fixed during the work:
 | Citations with document and page references | Filename, document ID, chunk index, page, section and offsets on every result | P3-M2 |
 | Unauthorized content cannot enter model context | Other tenants' and unprocessed documents are filtered before scoring and never returned (tests in every mode and backend). No model context exists yet; Phase 4 must only use these results | P3-M2 to P3-M4 |
 
-**Commits:** P3-M1 `2691620`, P3-M2 `d6e8781`, P3-M3 `97a2b93`, P3-M4 `2b28388`, P3-M5 the commit that adds this report.
+**Commits:** P3-M1 `2691620`, P3-M2 `d6e8781`, P3-M3 `97a2b93`, P3-M4 `2b28388`, P3-M5 `ce2117f`. CI passed for `ce2117f` with the PostgreSQL guard enabled, which proves the PostgreSQL tests ran in CI.
 
 **Dependencies added in Phase 3:** `fastembed` (ONNX Runtime embeddings), `psycopg[binary]` (PostgreSQL driver), `pgvector` (vector type). Container image: `pgvector/pgvector:0.8.7-pg18`. Model: `Qdrant/bge-small-en-v1.5-onnx-Q` at a pinned revision (64 MB, downloaded once on request).
 
@@ -742,3 +742,48 @@ Fixed during the work:
 3. Run `uv run python -m app.cli evaluate` → a report in `var/eval/`.
 
 **Recommended next phase:** Phase 4, grounded RAG answering. Open decisions to settle in its plan: the model provider (a free local option such as Ollama, which is not installed), whether the API's default search mode becomes `hybrid`, and the chunk size, judged by answer quality.
+
+## Phase 4: Grounded RAG Answering
+
+Plan approved on 2026-11-14 with the recommended options: a provider-independent chat model interface with a deterministic fake for tests, Ollama running in Docker as the real provider (model chosen and downloads approved in P4-M3), and `hybrid` as the default search mode (P4-M2).
+
+| Milestone | Scope | Status | Commit |
+|---|---|---|---|
+| P4-M1 | Chat model interface, fake model, Ollama adapter, model settings, readiness check | COMPLETE | the commit that adds this row |
+| P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | NOT STARTED | |
+| P4-M3 | Ollama in Docker, model pull, live tests, latency and timeouts | NOT STARTED | |
+| P4-M4 | Conversation context (conversations and messages, bounded history) | NOT STARTED | |
+| P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | NOT STARTED | |
+
+## P4-M1: Chat model interface
+
+**Scope:** the model port and its adapters, configuration and readiness. No answer endpoint (P4-M2), no real model or downloads (P4-M3).
+
+**Environment:** 4-core i5-1135G7, 16 GB RAM, Intel Iris Xe (no usable GPU); Docker has 8 CPUs and 8 GB. Ollama is not installed. `httpx` 0.28.1 was already installed (through fastembed) and is now a declared dependency; nothing new was downloaded.
+
+**Implemented**
+
+- `app/llm/`: the `ChatModel` protocol with `ChatMessage`, `ChatResult`, `ModelUnavailableError` and `ModelResponseError`; `FakeChatModel` (fixed or computed replies, call recording); `OllamaChatModel` (`/api/chat` non-streaming, `/api/tags` availability, no proxies, no redirects, timeouts, 20,000-character reply cap, errors without prompt text); `build_chat_model`.
+- Settings: `model_provider` (`none` default, `fake`, `ollama`), `ollama_base_url` (validated `http(s)://host[:port]`), `model_name` (required and pattern-checked for Ollama), `model_timeout_seconds`, `model_max_output_tokens`, `model_temperature`; `fake` is rejected in production.
+- `app.state.chat_model`; the Ollama client is closed on shutdown.
+- Readiness gains `checks.model` (`ok`, `unavailable`, `disabled`); a configured but unavailable model makes readiness `503`, a disabled one does not. The web client ignores the new key.
+- Tests: 37 unit (fake model, Ollama adapter against `httpx.MockTransport`, settings, factory, readiness), 2 integration (fake model ready; unreachable Ollama → `503`); 4 readiness assertions in 3 test files updated for the new key.
+- Docs: API spec section 3.2, LLD section 2.6h, SECURITY (chat model controls), DEVELOPMENT_GUIDE configuration, `apps/api/.env.example`, HLD, README, ADR-023.
+
+**Verification (executed 2026-11-14 and 2026-11-15)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL and `EASA_REQUIRE_POSTGRES_TESTS=1` | All checks passed |
+| `uv run pytest` with PostgreSQL | 436 passed (249 unit, 138 integration, 3 real-model, 46 PostgreSQL); no throwaway databases left |
+| `uv run pytest` without PostgreSQL | 390 passed, 46 skipped |
+| Live server with `EASA_MODEL_PROVIDER=fake` | `GET /api/v1/health/ready` → `{"status":"ready","checks":{"database":"ok","embeddings":"ok","model":"ok"}}`; server tree stopped |
+| `EASA_MODEL_PROVIDER=fake` with `EASA_ENVIRONMENT=production` | Settings refuse to load: `model_provider "fake" is not allowed in production` |
+| First run of the checks on 2026-11-15 | Stalled because Docker Desktop was not running after a restart; the run was stopped, Docker Desktop and the `easa` container were started again, and the checks were rerun |
+
+**Known limitations**
+
+- The Ollama adapter is tested only against a mock transport; it meets a real server in P4-M3.
+- Non-streaming only. When Ollama is configured but stopped, the whole API reports not ready, although search still works (ADR-023).
+
+**Exit criteria:** met. Answer generation can be built against a tested, provider-independent interface, and model availability is visible in readiness.

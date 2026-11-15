@@ -31,5 +31,7 @@ def readiness(
         response.status_code = HTTPStatus.SERVICE_UNAVAILABLE
     return ReadinessResponse(
         status="ready" if report.is_ready else "not_ready",
-        checks=ReadinessChecks(database=report.database, embeddings=report.embeddings),
+        checks=ReadinessChecks(
+            database=report.database, embeddings=report.embeddings, model=report.model
+        ),
     )

@@ -26,6 +26,8 @@ dependencies = [
     "psycopg[binary]>=3.3.9",
     # pgvector column type for SQLAlchemy (vector search on PostgreSQL, P3-M4).
     "pgvector>=0.5.1",
+    # HTTP client for the local model server (Ollama, Phase 4); already used by fastembed.
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]

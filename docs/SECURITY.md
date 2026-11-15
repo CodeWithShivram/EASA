@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -125,6 +125,18 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **Known limitation (keyword search on SQLite):** BM25 uses term statistics (document frequency, average length) computed over the whole FTS5 table, which holds every tenant's chunks. Results are filtered to the caller's tenant, but their **scores and order** are slightly influenced by other tenants' text. In theory, repeated probing could reveal whether a rare term is common elsewhere. This is accepted for the single-tenant development build and must be revisited before real multi-tenant use on SQLite (Phase 6). PostgreSQL's `ts_rank_cd` uses only the matched chunk's own text, so the PostgreSQL implementation does not have this issue.
 
+### Chat models (Phase 4, P4-M1)
+
+| Control | Where |
+|---|---|
+| Answer generation is off by default (`EASA_MODEL_PROVIDER=none`); the fake model is rejected in production at startup | [config.py](../apps/api/app/core/config.py) — tested |
+| The Ollama URL must be `http(s)://host[:port]` without credentials, paths or queries; model names are restricted to letters, digits and `. _ : / -` | [config.py](../apps/api/app/core/config.py) — tested |
+| Model calls ignore proxy environment variables (`trust_env=False`) and do not follow redirects, so prompts, which will contain document text, go only to the configured server | [ollama.py](../apps/api/app/llm/ollama.py) |
+| Timeouts on every call (connect 5 s, total configurable, readiness 2 s); output length bounded by `num_predict` and a 20,000-character cap | [ollama.py](../apps/api/app/llm/ollama.py) — tested |
+| Model errors carry no prompt or reply text and do not chain driver exceptions; the availability warning logs only the error type | [ollama.py](../apps/api/app/llm/ollama.py) — tested |
+
+Not yet: prompt construction, the separation of retrieved text from instructions, citation validation and refusal on insufficient evidence (P4-M2); a real model (P4-M3).
+
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
 
@@ -188,10 +200,11 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 397 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 436 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
+- Chat models: model errors never include the prompt; the fake provider is rejected in production; invalid Ollama URLs (credentials, paths, queries, non-http schemes) and model names are rejected; an unreachable model server makes readiness `503`.
 - Keyword index: FTS5 syntax in queries (`NEAR(...)`, unbalanced quotes, column filters, `*`, `AND NOT`, `^`) is harmless; queries without words return nothing; the index follows chunk replacement, text updates and cascade deletes (FTS5 `integrity-check` passes); the migrated index matches the application module.
 
 - Embeddings: one vector per chunk under the model's versioned ID; failed documents never embedded; embedding failures leave the document processed and are backfilled; vectors deleted with their chunks; readiness reports a missing model; the CLI refuses to run without the model.

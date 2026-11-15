@@ -120,6 +120,10 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_EMBEDDING_PROVIDER` | API | `onnx` | `onnx` (pinned local bge-small-en-v1.5; download first) or `hashing` (deterministic, non-semantic; used by tests) |
 | `EASA_EMBEDDING_MODEL_DIR` | API | `apps/api/var/models` | Where the pinned model files live (git-ignored) |
 | `EASA_EMBEDDING_BATCH_SIZE` | API | `32` | Chunks per embedding batch (1–256) |
+| `EASA_MODEL_PROVIDER` | API | `none` | Answer generation: `none` (disabled), `fake` (deterministic test double; rejected in production) or `ollama` |
+| `EASA_OLLAMA_BASE_URL` | API | `http://127.0.0.1:11434` | `http(s)://host[:port]` only; proxy environment variables are ignored for model calls |
+| `EASA_MODEL_NAME` | API | empty | Required for `ollama`; letters, digits and `. _ : / -` |
+| `EASA_MODEL_TIMEOUT_SECONDS`, `EASA_MODEL_MAX_OUTPUT_TOKENS`, `EASA_MODEL_TEMPERATURE` | API | `120`, `512`, `0.1` | Per-call limits (0–600 s, 16–4096 tokens, 0–1) |
 | `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
@@ -146,7 +150,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 397 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
+uv run pytest                 # 436 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

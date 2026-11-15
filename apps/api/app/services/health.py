@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 CheckStatus = Literal["ok", "unavailable"]
+# "disabled" when answer generation is not configured; it does not affect readiness.
+ModelStatus = Literal["ok", "unavailable", "disabled"]
 
 
 class DependencyUnavailableError(Exception):
@@ -28,20 +30,34 @@ class EmbeddingsProbe(Protocol):
         ...
 
 
+class ModelProbe(Protocol):
+    def is_available(self) -> bool:
+        """Whether the configured chat model can serve requests."""
+        ...
+
+
 @dataclass(frozen=True)
 class ReadinessReport:
     database: CheckStatus
     embeddings: CheckStatus = "ok"
+    model: ModelStatus = "disabled"
 
     @property
     def is_ready(self) -> bool:
-        return self.database == "ok" and self.embeddings == "ok"
+        # A configured model must be available; a disabled one is not required.
+        return self.database == "ok" and self.embeddings == "ok" and self.model != "unavailable"
 
 
 class HealthService:
-    def __init__(self, database: DatabaseProbe, embeddings: EmbeddingsProbe | None = None) -> None:
+    def __init__(
+        self,
+        database: DatabaseProbe,
+        embeddings: EmbeddingsProbe | None = None,
+        model: ModelProbe | None = None,
+    ) -> None:
         self._database = database
         self._embeddings = embeddings
+        self._model = model
 
     def check_readiness(self) -> ReadinessReport:
         try:
@@ -52,4 +68,7 @@ class HealthService:
         embeddings: CheckStatus = (
             "ok" if self._embeddings is None or self._embeddings.is_available() else "unavailable"
         )
-        return ReadinessReport(database=database, embeddings=embeddings)
+        model: ModelStatus = "disabled"
+        if self._model is not None:
+            model = "ok" if self._model.is_available() else "unavailable"
+        return ReadinessReport(database=database, embeddings=embeddings, model=model)

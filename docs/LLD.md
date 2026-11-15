@@ -20,6 +20,7 @@ easa/
                            types.py (UtcDateTime), documents.py (Document, DocumentChunk),
                            embeddings.py (ChunkEmbedding), fts.py (FTS5 keyword index DDL)
       repositories/        documents.py (tenant-scoped DocumentRepository), embeddings.py
+      llm/                 base.py (ChatModel protocol), fake.py, ollama.py, factory.py (Phase 4)
       embeddings/          base.py (Embedder protocol), registry.py (pinned models), onnx.py,
                            hashing.py (test embedder), factory.py (provider + download)
       retrieval/           base.py (VectorIndex, KeywordIndex protocols), brute_force.py (exact search),
@@ -204,10 +205,17 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - [db/migrate.py](../apps/api/app/db/migrate.py) `upgrade_to_head(url)`: runs Alembic with the URL in `config.attributes["database_url"]`; `env.py` uses it instead of the settings URL and leaves logging to the caller.
 - CLI: `evaluate [--backend sqlite|postgres] [--configs default|all] [--output-dir]` and `evaluate-hnsw [--vectors] [--tenants] [--queries] [--noise]`; PostgreSQL URL from `EASA_EVAL_POSTGRES_URL`.
 
+### 2.6h Chat models (P4-M1)
+
+- [llm/base.py](../apps/api/app/llm/base.py): `ChatMessage(role, content)`, `ChatResult(text, model_id, prompt_tokens, completion_tokens)`, the `ChatModel` protocol (`model_id`, `is_available()`, `generate(messages, *, max_tokens, temperature)`), and two errors: `ModelUnavailableError` (server unreachable or model not installed) and `ModelResponseError` (timeout, error status, malformed reply). Error messages never contain prompt or reply text, and adapters do not chain driver exceptions.
+- [llm/fake.py](../apps/api/app/llm/fake.py) `FakeChatModel(reply, *, available)`: a fixed reply or a function of the messages; records every call. Configurable as `EASA_MODEL_PROVIDER=fake` outside production.
+- [llm/ollama.py](../apps/api/app/llm/ollama.py) `OllamaChatModel(base_url, model, *, timeout_seconds, transport=None)`: `POST /api/chat` with `stream: false` and `options.temperature` / `options.num_predict`; reply text capped at 20,000 characters; token counts from `prompt_eval_count` / `eval_count`. `httpx.Client` with `trust_env=False` (no proxies), no redirects, a 5-second connect timeout. `404` → `ModelUnavailableError`; transport errors → `ModelUnavailableError`; timeouts, other statuses and malformed JSON → `ModelResponseError`. `is_available()` calls `GET /api/tags` with a 2-second timeout and accepts the model name with or without `:latest`. Tests use `httpx.MockTransport`.
+- [llm/factory.py](../apps/api/app/llm/factory.py) `build_chat_model(settings)`: `None` for `none`. `create_app` stores it as `app.state.chat_model` and closes the Ollama client on shutdown.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.
-- [services/health.py](../apps/api/app/services/health.py): `DatabaseProbe` protocol (`ping() -> None`, raises `DependencyUnavailableError`), immutable `ReadinessReport(database: "ok" | "unavailable")`, `HealthService.check_readiness()`.
+- [services/health.py](../apps/api/app/services/health.py): `DatabaseProbe` protocol (`ping() -> None`, raises `DependencyUnavailableError`), `EmbeddingsProbe` and `ModelProbe` protocols (`is_available() -> bool`), immutable `ReadinessReport(database, embeddings, model)` where `model` is `"ok" | "unavailable" | "disabled"` (no chat model configured); `is_ready` requires database and embeddings `ok` and a model that is not `unavailable`. `HealthService.check_readiness()`.
 - [db/probe.py](../apps/api/app/db/probe.py): `SqlAlchemyDatabaseProbe.ping()` runs `SELECT 1`. On `SQLAlchemyError` it logs `database ping failed` with only `error_type` (driver messages can contain connection details) and raises `DependencyUnavailableError("database")`.
 
 ### 2.8 Database access
@@ -268,8 +276,8 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 | Suite | Location | Count | Notes |
 |---|---|---|---|
-| Backend unit | `apps/api/tests/unit/` | 212 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation |
-| Backend integration | `apps/api/tests/integration/` | 136 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
+| Backend unit | `apps/api/tests/unit/` | 249 | Config, health service (stub probe), JSON formatter, sessions and engine, blob store, UTC timestamp type, filename sanitizing and upload validation, text normalization, PDF/DOCX/TXT extraction, chunking strategies, embeddings (hashing embedder, vector encoding), reciprocal rank fusion, FTS5 and tsquery building, evaluation metrics and dataset validation, chat model adapters (fake, Ollama against a mock transport), model settings |
+| Backend integration | `apps/api/tests/integration/` | 138 | Real app via `TestClient` with temporary SQLite files (health, errors, correlation IDs, CORS, logs, session dependency, document and search endpoints in all three modes); body-size middleware on a minimal app; document repository, embedding pipeline, vector index and keyword index against temporary databases (tenant and status isolation, FTS syntax injection, trigger synchronization, rebuild command); migration tests drive Alembic commands against temporary SQLite files |
 | PostgreSQL | `apps/api/tests/postgres/` | 46 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite) and a small HNSW benchmark. Always run in CI |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
 | Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |

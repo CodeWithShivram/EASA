@@ -27,6 +27,7 @@
 | [ADR-020](#adr-020) | SQLite FTS5 keyword search and reciprocal-rank-fusion hybrid | P3-M3 |
 | [ADR-021](#adr-021) | PostgreSQL + pgvector as a second backend with exact search | P3-M4 |
 | [ADR-022](#adr-022) | Keep exact vector search; criteria for adopting HNSW | P3-M5 |
+| [ADR-023](#adr-023) | Provider-independent chat model interface; Ollama as the local provider | P4-M1 |
 
 ---
 
@@ -295,6 +296,21 @@
 
 ---
 
+<a id="adr-023"></a>
+## ADR-023: Provider-independent chat model interface; Ollama as the local provider
+
+- **Status:** Accepted (P4-M1, 2026-11-14; Ollama in Docker approved in the Phase 4 plan, the model itself still to be chosen in P4-M3)
+- **Context:** Phase 4 needs a language model for grounded answers. The project must stay free and local, the laptop has no usable GPU (4 CPU cores, 16 GB RAM), and Ollama is not installed. Most of the grounding logic (context construction, citation checks, refusals) must be testable without any model.
+- **Options considered:** a provider-specific SDK called from the answer service; the `ollama` Python package; a small `ChatModel` protocol with adapters over plain HTTP; hosted APIs (paid, external, not allowed for this project).
+- **Decision:**
+  - A `ChatModel` protocol (`model_id`, `is_available`, `generate`) with two typed errors; business code depends only on it.
+  - `FakeChatModel`: deterministic and scriptable, for tests and offline development; rejected in production.
+  - `OllamaChatModel`: plain `httpx` against Ollama's documented `/api/chat` and `/api/tags`, no extra SDK. Proxies ignored, redirects off, strict timeouts and output caps.
+  - Off by default (`model_provider = "none"`). When configured, readiness requires the model; when disabled, readiness reports `disabled` and is unaffected.
+- **Trade-offs:** plain HTTP means maintaining a small adapter instead of using an SDK, but avoids a dependency and keeps the request fully visible and testable. Non-streaming calls are simpler but show nothing until the reply is complete (acceptable at first; streaming can be added behind the same interface). Making readiness depend on a configured model means a stopped Ollama marks the whole API not ready, even though search still works; this is consistent with the embedding check and keeps the signal honest.
+- **Consequences:** answer generation (P4-M2) is built and tested against the fake model; a real model is plugged in by configuration (P4-M3). Other providers can be added as further adapters.
+
+---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
@@ -302,5 +318,5 @@
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
 | Default search mode of the API (`semantic` today; evaluation recommends `hybrid`) and chunk size, judged with answer quality | 4 |
-| Model provider (Ollama or another free option) behind the model interface | 4 |
+| Which Ollama model to use (small, MIT or Apache-2.0 licensed), and running Ollama in Docker | 4 (P4-M3) |
 | Whether LangGraph is justified for agent workflows | 5 |

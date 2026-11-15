@@ -52,7 +52,7 @@ def test_readiness_on_postgres(client: TestClient) -> None:
     response = client.get("/api/v1/health/ready")
 
     assert response.status_code == 200
-    assert response.json()["checks"] == {"database": "ok", "embeddings": "ok"}
+    assert response.json()["checks"] == {"database": "ok", "embeddings": "ok", "model": "disabled"}
 
 
 def test_uploads_store_pgvector_embeddings(client: TestClient, app: FastAPI) -> None:

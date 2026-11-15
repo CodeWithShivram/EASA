@@ -134,7 +134,7 @@ def test_readiness_reports_a_missing_embedding_model(tmp_path: Path) -> None:
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"database": "ok", "embeddings": "unavailable"},
+        "checks": {"database": "ok", "embeddings": "unavailable", "model": "disabled"},
     }
 
 

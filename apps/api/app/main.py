@@ -23,6 +23,8 @@ from app.core.middleware import (
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder
+from app.llm.factory import build_chat_model
+from app.llm.ollama import OllamaChatModel
 from app.storage.blob_store import LocalBlobStore
 
 # Allowance for multipart boundaries and headers on top of the file itself.
@@ -34,10 +36,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(settings.log_level)
     engine = create_db_engine(settings.database_url.get_secret_value())
 
+    # None when answer generation is disabled (model_provider = "none").
+    chat_model = build_chat_model(settings)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         engine.dispose()
+        if isinstance(chat_model, OllamaChatModel):
+            chat_model.close()
 
     # Interactive API docs are disabled in production.
     app = FastAPI(
@@ -54,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.blob_store = LocalBlobStore(settings.storage_dir)
     # The ONNX model loads lazily on first use, so startup stays fast.
     app.state.embedder = build_embedder(settings)
+    app.state.chat_model = chat_model
 
     register_exception_handlers(app)
     app.include_router(api_router)

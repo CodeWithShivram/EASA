@@ -22,6 +22,7 @@ def get_health_service(request: Request) -> HealthService:
     return HealthService(
         database=SqlAlchemyDatabaseProbe(request.app.state.engine),
         embeddings=request.app.state.embedder,
+        model=request.app.state.chat_model,
     )
 
 
