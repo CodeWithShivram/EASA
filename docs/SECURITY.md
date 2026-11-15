@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -21,6 +21,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 |---|---|
 | `GET /api/v1/health`, `GET /api/v1/health/ready` | Public, unauthenticated; coarse status only |
 | `POST /api/v1/search` | Development only; development identity; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
+| `/api/v1/conversations` (create, list, get, ask, delete) | Development only; development identity; conversations visible only to their owner in their tenant; stores questions and answers |
 | `POST /api/v1/answers` | Development only; development identity; retrieves evidence from the identity's tenant only and sends it with the question to the configured chat model; returns generated text and the cited chunk text |
 | `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Development only (not mounted in production); no authentication; act as a fixed development identity ([ADR-014](ARCHITECTURE_DECISIONS.md#adr-014)); accept untrusted files and parse them in the API process |
 | `/docs`, `/openapi.json` | Available outside `production` |
@@ -158,6 +159,18 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 - Retrieved text from any document the tenant has uploaded goes into the prompt. Document-level permissions (Phase 6) must filter evidence before this step.
 - With `EASA_MODEL_PROVIDER=fake`, answers are a quoted first sentence, not an answer to the question; the fake is rejected in production.
 
+### Conversations (Phase 4, P4-M4)
+
+| Control | Where |
+|---|---|
+| Every conversation query filters by tenant **and** owner; another user's or tenant's conversation returns the same `404` as a missing one, for reading, asking and deleting | [conversations.py](../apps/api/app/repositories/conversations.py) — tested |
+| Stored answers keep citation metadata only, never chunk text, so document content is not duplicated into chat history; a user can delete a conversation permanently | [conversations.py](../apps/api/app/services/conversations.py) — tested |
+| Conversation history enters the prompt in its own `<history>` element, escaped like sources, with a rule that it is not evidence; citations are checked against the current sources only | [answers.py](../apps/api/app/services/answers.py) — tested |
+| Bounded: 50 questions per conversation, 2 turns and 1,500 characters of history in the prompt | [conversations.py](../apps/api/app/services/conversations.py), [answers.py](../apps/api/app/services/answers.py) |
+| Nothing is stored when answering fails; question and answer text are never logged | [conversations.py](../apps/api/app/services/conversations.py) — tested |
+
+Residual risks: questions and answers are stored in plain text in the database without a retention limit (only synthetic data is used; a retention policy is needed before real use). A previous answer in history may itself be wrong; the rule that history is not evidence and the citation check against current sources limit, but do not remove, its influence.
+
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
 
@@ -221,10 +234,11 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 506 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 529 backend tests; 3 real-model tests skip without the model and 47 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
+- Conversations: other users' and tenants' conversations are `404` for get, ask and delete; lists show only own conversations; model failures store nothing; stored sources have no text; the turn limit applies; deleting removes messages; content is not logged; not mounted in production; history cannot close its element.
 - Answers: no evidence means no model call; refusals, uncited and wrongly cited replies are withheld; another tenant's documents never reach the prompt; a document containing `</source>` and fake system instructions stays inside its source element; filenames and sections are escaped; questions and answers are not logged; answers are not mounted in production and return `503` without a model.
 - Local model: the downloaded file is rejected unless its size and SHA-256 match the pinned values; llama.cpp errors never include the prompt; a server still loading its model is reported unavailable.
 - Chat models: model errors never include the prompt; the fake provider is rejected in production; invalid Ollama URLs (credentials, paths, queries, non-http schemes) and model names are rejected; an unreachable model server makes readiness `503`.

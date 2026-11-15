@@ -10,6 +10,7 @@ from app.db.session import iter_session
 from app.retrieval.factory import build_indexes
 from app.services.answers import AnswerService
 from app.services.chunking import ChunkingConfig, ChunkingStrategy
+from app.services.conversations import ConversationService
 from app.services.documents import DocumentService
 from app.services.health import HealthService
 from app.services.search import SearchService
@@ -71,3 +72,10 @@ def get_answer_service(
         max_output_tokens=settings.model_max_output_tokens,
         temperature=settings.model_temperature,
     )
+
+
+def get_conversation_service(
+    session: Annotated[Session, Depends(get_db_session)],
+    answers: Annotated[AnswerService, Depends(get_answer_service)],
+) -> ConversationService:
+    return ConversationService(session, answers)

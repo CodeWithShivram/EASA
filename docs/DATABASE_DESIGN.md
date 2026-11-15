@@ -11,8 +11,8 @@ Related: [LLD](LLD.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md) ·
 |---|---|
 | Engine | SQLite (Python's built-in `sqlite3`, SQLite 3.50.4 on the dev machine) by default; PostgreSQL 18.7 with pgvector 0.8.7 through `psycopg` 3.3 (Docker Compose, section 9) |
 | Default location | `apps/api/var/easa.db` (directory created on startup; git-ignored); PostgreSQL data lives in the Docker volume `easa_postgres-data` |
-| Tables | `documents`, `document_chunks`, `chunk_embeddings` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
-| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search (head) |
+| Tables | `documents`, `document_chunks`, `chunk_embeddings`, `conversations`, `conversation_messages` (plus Alembic's `alembic_version`); keyword index: SQLite FTS5 table `chunk_fts` or a PostgreSQL GIN index (section 8.1) |
+| Migrations | `7b339cea85fb` empty baseline → `eb5cd7e86396` documents and chunks → `e57f12a3d5ed` chunking config → `29b0c28209aa` chunk embeddings → `6d544dac46b3` keyword index (SQLite) → `e4353f12b34f` PostgreSQL search → `c0002f4a144e` conversations (head) |
 | ORM | SQLAlchemy 2.1 declarative models in [app/db/documents.py](../apps/api/app/db/documents.py), registered in [app/db/models.py](../apps/api/app/db/models.py) |
 | File contents | Not in the database; stored content-addressed on disk (section 1.3) |
 
@@ -52,6 +52,27 @@ Unique `(tenant_id, sha256)` (`uq_documents_tenant_id_sha256`): the same content
 | `created_at` | timestamp with time zone | no | UTC |
 
 Chunks are written in the same transaction that marks the document `processed`; a failure discards partial chunks. Reprocessing would replace all chunks of a document (`replace_chunks`). Access to a chunk is decided through its document (tenant now; document permissions in Phase 6). Embedding columns arrive in Phase 3 (section 8).
+
+### 1.2a `conversations` and `conversation_messages` (Phase 4, P4-M4)
+
+[app/db/conversations.py](../apps/api/app/db/conversations.py), migration `c0002f4a144e`.
+
+`conversations`: `id` (UUID, primary key), `tenant_id` and `owner_id` (UUIDs from the identity; no foreign keys until users and tenants exist), `created_at`, `updated_at` (set when a turn is added). Index `ix_conversations_tenant_id_owner_id_updated_at` serves "my recent conversations". There is no title column, which would be another copy of question text.
+
+| `conversation_messages` column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Primary key |
+| `conversation_id` | UUID | no | Foreign key to `conversations.id`, `ON DELETE CASCADE` |
+| `tenant_id` | UUID | no | Copied from the conversation; message queries filter by it |
+| `position` | integer | no | 0, 1, 2, … within the conversation (a question, then its reply); unique with `conversation_id` |
+| `role` | varchar(16) | no | `user` or `assistant` (`ck_conversation_messages_role_allowed`) |
+| `content` | text | yes | The normalized question, or the answer; null when the evidence was insufficient |
+| `status`, `reason` | varchar(32) | yes | Assistant messages: `answered` / `insufficient_evidence` and the reason |
+| `sources` | JSON | yes | Assistant messages: cited sources as `{label, document_id, filename, page_number, section, chunk_index, char_start, char_end}`, **never the chunk text** |
+| `model_id` | varchar(200) | yes | Chat model that produced the reply |
+| `created_at` | timestamp with time zone | no | UTC |
+
+Rules: a question and its reply are written together in one transaction, only after the answer pipeline succeeds; a concurrent write at the same position fails on the unique constraint and returns `409 conversation_busy`. Deleting a conversation deletes its messages (database cascade). At most 50 turns per conversation. Cited documents can later be deleted or reprocessed; stored citations are then historical and may no longer resolve.
 
 ### 1.3 File storage
 
@@ -141,7 +162,7 @@ erDiagram
 | `documents` | Uploaded file metadata, owner, tenant, processing status, content hash for idempotent ingestion | 2 — **implemented** |
 | `document_permissions` | Which roles or users may read a document | 2 / 6 |
 | `document_chunks` | Chunk text, page and section, tenant copied from the document; embeddings in Phase 3 | 2 — **implemented** / 3 |
-| `conversations`, `messages` | Chat history owned by a user | 4 / 7 |
+| `conversations`, `conversation_messages` | Chat history owned by a user | 4 — **implemented** (section 1.2a) / 7 |
 | `tool_executions` | Tool name, arguments, requesting user, authorization result, outcome, correlation ID | 5 |
 | `audit_logs` | Protected operations with actor, action, target, result, correlation ID | 5 / 6 |
 

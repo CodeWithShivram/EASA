@@ -89,7 +89,7 @@ def pg_engine(pg_url: str) -> Iterator[Engine]:
 def clean_tables(pg_engine: Engine) -> Iterator[None]:
     yield
     with pg_engine.begin() as connection:
-        connection.execute(text("TRUNCATE documents CASCADE"))
+        connection.execute(text("TRUNCATE documents, conversations CASCADE"))
 
 
 @pytest.fixture

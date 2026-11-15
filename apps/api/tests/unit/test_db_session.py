@@ -89,4 +89,10 @@ def test_metadata_has_naming_convention_and_expected_tables() -> None:
     import app.db.models  # noqa: F401 - registers all models
 
     assert Base.metadata.naming_convention == NAMING_CONVENTION
-    assert set(Base.metadata.tables) == {"documents", "document_chunks", "chunk_embeddings"}
+    assert set(Base.metadata.tables) == {
+        "documents",
+        "document_chunks",
+        "chunk_embeddings",
+        "conversations",
+        "conversation_messages",
+    }

@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) in progress: chat model interface (P4-M1), grounded answers with citations (P4-M2) and a local CPU model, Qwen2.5 1.5B on llama.cpp in Docker (P4-M3).**
+> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) in progress: chat model interface (P4-M1), grounded answers with citations (P4-M2) a local CPU model, Qwen2.5 1.5B on llama.cpp in Docker (P4-M3), and conversations with follow-up questions (P4-M4).**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -65,6 +65,7 @@ Endpoints:
 | `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets. Development only |
 | `POST /api/v1/search` | Hybrid (default), semantic or keyword (BM25) search over the current tenant's documents, with citations. Development only |
 | `POST /api/v1/answers` | An answer from the current tenant's documents only, with cited sources, or `insufficient_evidence`. Needs a configured chat model. Development only |
+| `/api/v1/conversations` | Create, list, read and delete your conversations; ask follow-up questions that use the last turns. Development only |
 | `GET /docs` | OpenAPI UI (disabled when `EASA_ENVIRONMENT=production`) |
 
 Every response carries a server-generated `X-Correlation-ID` header. That ID also appears in the JSON logs and in error bodies (`{"error": {"code", "message", "correlation_id"}}`).

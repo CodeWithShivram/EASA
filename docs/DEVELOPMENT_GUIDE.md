@@ -99,7 +99,16 @@ curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.
 curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
 ```
 
-Asking a question (needs `EASA_MODEL_PROVIDER` set; with `fake` the "answer" is the first sentence of the top source, which is enough to try the pipeline without a model):
+Conversations keep earlier turns for follow-up questions (same model requirement):
+
+```powershell
+$c = (curl.exe -s -X POST http://127.0.0.1:8000/api/v1/conversations | ConvertFrom-Json).id
+[IO.File]::WriteAllText("$PWD\a.json", '{"question": "How many days of annual leave do employees get?"}')
+curl.exe -H "Content-Type: application/json" --data-binary "@a.json" "http://127.0.0.1:8000/api/v1/conversations/$c/messages"
+curl.exe "http://127.0.0.1:8000/api/v1/conversations/$c"
+```
+
+Asking a single question (needs `EASA_MODEL_PROVIDER` set; with `fake` the "answer" is the first sentence of the top source, which is enough to try the pipeline without a model):
 
 ```powershell
 [IO.File]::WriteAllText("$PWD\a.json", '{"question": "How many days of annual leave do employees get?"}')
@@ -158,7 +167,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 506 tests: 3 real-embedding tests skip without the model, 46 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 529 tests: 3 real-embedding tests skip without the model, 47 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

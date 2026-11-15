@@ -8,7 +8,7 @@ from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.schemas.answers import AnswerRequest, AnswerResponse, AnswerSource
 from app.schemas.search import Citation
-from app.services.answers import AnswerService
+from app.services.answers import AnswerResult, AnswerService
 
 router = APIRouter(prefix="/answers", tags=["answers"])
 
@@ -22,14 +22,7 @@ _ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 
-@router.post("", response_model=AnswerResponse, responses=_ERRORS)
-def answer(
-    request: AnswerRequest,
-    service: Annotated[AnswerService, Depends(get_answer_service)],
-    identity: Annotated[Identity, Depends(get_identity)],
-) -> AnswerResponse:
-    """Answer a question from the tenant's documents only, with cited sources."""
-    result = service.answer(identity, request.question, top_k=request.top_k)
+def to_answer_response(result: AnswerResult) -> AnswerResponse:
     return AnswerResponse(
         status=result.status,
         answer=result.answer,
@@ -53,3 +46,13 @@ def answer(
             for source in result.sources
         ],
     )
+
+
+@router.post("", response_model=AnswerResponse, responses=_ERRORS)
+def answer(
+    request: AnswerRequest,
+    service: Annotated[AnswerService, Depends(get_answer_service)],
+    identity: Annotated[Identity, Depends(get_identity)],
+) -> AnswerResponse:
+    """Answer a question from the tenant's documents only, with cited sources."""
+    return to_answer_response(service.answer(identity, request.question, top_k=request.top_k))

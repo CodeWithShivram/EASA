@@ -1,6 +1,6 @@
 # EASA — API Specification
 
-> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid) and grounded answer (Phase 4) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
+> **Status:** health, document (Phase 2) search (Phase 3: semantic, keyword, hybrid), grounded answer and conversation (Phase 4) endpoints are implemented. Other endpoint groups are planned and have **no contract yet**.
 > Checked against the P2-M2 changes on 2026-11-14. The machine-readable schema is served at `/openapi.json` outside production.
 
 Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -279,6 +279,26 @@ Response fields:
 | `model_id` | The chat model that replied, e.g. `ollama:<model>` or `fake-chat-v1`; `null` when the model was not called |
 
 `insufficient_evidence` is a successful response, not an error. Answers are generated text: they can still be wrong even when cited, and the citations are the way to check them.
+
+### 3.7 Conversations (Phase 4, development only)
+
+Multi-turn grounded answering. A conversation belongs to the current user in the current tenant (development identity, ADR-014); any other user's or tenant's conversation returns the same `404 conversation_not_found` as a missing one. Not mounted in production.
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `POST /api/v1/conversations` | No body | `201` `{"id", "created_at", "updated_at", "messages": 0}` |
+| `GET /api/v1/conversations?limit=20` | `limit` 1–100 | `200` `{"items": [{"id", "created_at", "updated_at", "messages"}, ...]}`, own conversations only, most recently updated first |
+| `GET /api/v1/conversations/{id}` | | `200` `{"id", "created_at", "updated_at", "messages": [Message, ...]}` in order; `404` |
+| `POST /api/v1/conversations/{id}/messages` | `{"question": string, "top_k": integer}` as in section 3.6 (unknown fields rejected) | `200` `{"conversation_id", "turn", "answer": AnswerResponse}` where `answer` has exactly the shape of section 3.6 (including source text) |
+| `DELETE /api/v1/conversations/{id}` | | `204`; the conversation and its messages are deleted permanently; `404` |
+
+`Message`: `{"id", "position", "role": "user" or "assistant", "content": string or null, "status", "reason", "sources": [{"label", "citation": Citation}], "model_id", "created_at"}`. Stored sources contain citation metadata only, **not** the chunk text; `status`, `reason`, `sources` and `model_id` are set on assistant messages.
+
+Follow-ups: retrieval searches the previous question plus the new one (within the 1,000-character search limit); the prompt includes the last 2 turns (at most 1,500 characters, old citation markers removed) in a `<history>` element that the model is told is context, not evidence. Citations are checked against the current sources only.
+
+Errors for asking: those of section 3.6, plus `404 conversation_not_found`, `409 conversation_full` (50 questions per conversation) and `409 conversation_busy` (another request added a turn at the same time; ask again). A question and its reply are stored only when the answer pipeline succeeds; on any error nothing is stored. `422 validation_error` for malformed IDs, bodies or limits.
+
+Audit: no audit record yet. Log lines `conversation created`, `conversation turn stored` (conversation ID, turn number, history turns used, status) and `conversation deleted`; **questions and answers are never logged**.
 ## 4. Headers
 
 | Header | Direction | Notes |
@@ -298,7 +318,7 @@ Response fields:
 | `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
 | `/api/v1/search` | Semantic, keyword and hybrid search **implemented** (section 3.5) | 3 |
 | `/api/v1/answers` | Single-question grounded answers **implemented** (section 3.6) | 4 |
-| `/api/v1/conversations` | Conversation history and follow-up questions | 4 (P4-M4) / 7 |
+| `/api/v1/conversations` | Conversations with follow-up questions **implemented** (section 3.7) | 4 / 7 |
 | `/api/v1/admin` | Administrative views | 6 / 7 |
 | `/api/v1/audit` | Audit log queries | 6 |
 

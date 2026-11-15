@@ -30,6 +30,7 @@
 | [ADR-023](#adr-023) | Provider-independent chat model interface; Ollama as the local provider | P4-M1 |
 | [ADR-024](#adr-024) | Grounded answers: delimited sources, citation checks, explicit insufficient evidence | P4-M2 |
 | [ADR-025](#adr-025) | llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF as the local model | P4-M3 |
+| [ADR-026](#adr-026) | Conversations: owner-scoped tables, history as context not evidence, no extra model call | P4-M4 |
 
 ---
 
@@ -354,6 +355,27 @@
   - A 1.5B model is fast enough on a CPU but follows instructions less reliably than larger models; P4-M5 measures how well it cites and refuses.
   - The image is pinned by tag, not digest.
 - **Consequences:** `EASA_MODEL_PROVIDER=llamacpp` with `EASA_MODEL_NAME=qwen2.5-1.5b-instruct-q4_k_m` gives real answers locally. Larger or different models can be added as further registry entries without code changes elsewhere.
+
+---
+
+<a id="adr-026"></a>
+## ADR-026: Conversations: owner-scoped tables, history as context not evidence, no extra model call
+
+- **Status:** Accepted (P4-M4, 2026-11-15; design approved before implementation)
+- **Context:** Follow-up questions ("Can unused ones be carried over?") need earlier turns. History is user data, and earlier answers may be wrong; the model is slow on the CPU (6–17 s per call in P4-M3).
+- **Options considered:**
+  - Follow-ups: ask the model to rewrite each follow-up into a standalone question first (more robust for vague references, one extra model call per question); search with the previous question plus the new one and give the model a short history (no extra call).
+  - Stored citations: full source text (a second copy of document content); citation metadata only.
+  - Storage: one JSON document per conversation; one row per message.
+- **Decision:**
+  - Tables `conversations` (tenant, owner) and `conversation_messages` (one row per message, unique position, cascade delete); every query filters by tenant and owner, and others' conversations are `404`.
+  - Retrieval query = previous question + new question (within 1,000 characters); prompt history = last 2 turns, at most 1,500 characters, old citation markers removed, in a `<history>` element escaped like sources; system rule: history explains references, it is not evidence. Citations are checked against the current sources only.
+  - Store citation metadata only; store a turn only after a successful answer; 50 turns per conversation; permanent deletion by the owner.
+- **Trade-offs:**
+  - No extra model call keeps latency down, but vague follow-ups depend on the previous question's words being enough for retrieval. In the live probe, history improved one follow-up and did not rescue another that the model also missed without history.
+  - Stored citations may point to documents that are later deleted or reprocessed.
+  - Chat history is stored without a retention limit (synthetic data only); a retention policy is needed before real use.
+- **Consequences:** `POST /api/v1/answers` stays stateless; conversations reuse the same answer pipeline. P4-M5 can evaluate follow-up questions alongside single questions.
 
 ---
 ## Open decisions (not yet made)
