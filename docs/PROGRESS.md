@@ -750,8 +750,8 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
 | P4-M1 | Chat model interface, fake model, Ollama adapter, model settings, readiness check | COMPLETE | `0474246` |
-| P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | COMPLETE | the commit that adds this row |
-| P4-M3 | Ollama in Docker, model pull, live tests, latency and timeouts | NOT STARTED | |
+| P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | COMPLETE | `83b25ff` |
+| P4-M3 | Local model: llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF (approved instead of Ollama, ADR-025), live tests, latency | COMPLETE | the commit that adds this row |
 | P4-M4 | Conversation context (conversations and messages, bounded history) | NOT STARTED | |
 | P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | NOT STARTED | |
 
@@ -819,3 +819,42 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 - Browsers cannot call the endpoint yet (CORS allows `GET` only).
 
 **Exit criteria:** met. Questions are answered only from the caller's tenant with checked citations, unsupported replies are withheld, and the behaviour is covered by tests.
+
+## P4-M3: Local chat model
+
+**Scope:** a real model for answers, running locally on the CPU. After comparing runtimes and models (sizes and licence files read from the registries), the approved choice was the llama.cpp server in Docker with Qwen2.5 1.5B Instruct instead of the planned Ollama image (ADR-025). No conversation history (P4-M4), no answer evaluation (P4-M5).
+
+**Downloads (approved):** `ghcr.io/ggml-org/llama.cpp:server-b12407` (282 MB compressed, 1.16 GB on disk, index digest `sha256:89fe93c2…`) and `qwen2.5-1.5b-instruct-q4_k_m.gguf` (1,117,320,736 bytes) from `Qwen/Qwen2.5-1.5B-Instruct-GGUF` at revision `91cad511…`, SHA-256 verified. No new Python dependencies.
+
+**Implemented**
+
+- `app/llm/registry.py`: the pinned model file, `download_chat_model` and `verify_model_file` (size and SHA-256); CLI `download-chat-model`.
+- `app/llm/llamacpp.py` `LlamaCppChatModel` (OpenAI-compatible chat completions; readiness via `/health` and `/v1/models`) and `app/llm/http.py` (client rules and error mapping shared with the Ollama adapter, which was refactored onto it).
+- Settings: `model_provider = "llamacpp"`, `llamacpp_base_url` (validated like the Ollama URL), `chat_model_dir`; `model_name` required for both HTTP providers.
+- `compose.yaml`: `llm` service under the `llm` profile, `127.0.0.1:8082`, model directory mounted read-only, 4 threads, 4,096-token context, healthcheck.
+- Answer prompt: `ANSWER_REMINDER` repeated after the question, and case-insensitive detection of the insufficient-evidence marker (see the probe results below). Token counts are now logged for declined and uncited replies too.
+- Tests: 29 unit (adapter against `httpx.MockTransport`, file verification, settings, prompt reminder, marker case) and 4 live tests in `tests/llm` (skipped without `EASA_TEST_LLM_URL`).
+- Docs: DEVELOPMENT_GUIDE section 6e, LLD, API spec readiness, SECURITY (supply chain, residual risks seen with the real model), `apps/api/.env.example`, README, HLD, ADR-025.
+
+**Verification (executed 2026-11-15)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 506 passed (301 unit, 152 integration, 3 real-embedding, 46 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 456 passed, 50 skipped |
+| `download-chat-model` | Downloaded and verified in 21 s (see the first attempt below) |
+| `docker compose --profile llm up -d llm` | Healthy after 66 s (model load about 55 s); serves `qwen2.5-1.5b-instruct-q4_k_m`; bound to `127.0.0.1:8082`; about 780 MB memory |
+| Prompt probe: 8 questions over two synthetic sources, temperature 0, strict scoring (right source label and key fact, or a refusal) | Original prompt 4/8 (3 answers without citations, 1 incomplete); first reminder 6/8 (one junk reply listing file names, one wrong source label); adopted reminder 7/8 (one correct but incomplete answer). All 3 unanswerable questions were declined in every variant |
+| End-to-end through the API (real embeddings, real model, synthetic handbook and travel fixtures, scratch database) | Leave question: answered correctly ("20 days", handbook section Leave) in 7.2 s, and 7.8 s when repeated. CEO question: declined in 6.0 s. Receipts question: withheld as `no_valid_citations` (17.2 s), a lost correct answer. Work-from-home question: "answered" in 16.3 s by listing facts from all 5 sources with valid citations, mostly irrelevant. Prompt 376 tokens. No question text in the log; API server stopped |
+| First download attempt | Stalled at 0 bytes through Hugging Face's Xet transfer backend while a 5 MB plain HTTPS range request worked; restarted with `HF_HUB_DISABLE_XET=1` (same file and hash check) and finished in 21 s. Documented in DEVELOPMENT_GUIDE section 6e |
+| Image pull | Slow from `ghcr.io` (about 56 KB/s measured on the largest layer); a stalled first pull was stopped and restarted, and finished |
+| First full run with the live model | 2 failures in unrelated tests: the live-test fixture never closed the model's HTTP client, and the garbage-collected socket raised a `ResourceWarning` (warnings are errors) during later tests. The fixture now closes the client |
+
+**Known limitations**
+
+- Answer quality with a 1.5B model is uneven: correct answers are sometimes withheld for missing citations, and some answers dump unrelated cited facts or cite the wrong source; the citation check cannot detect the last two. P4-M5 measures this and evaluates fixes (fewer chunks, a per-sentence support check).
+- 6–17 s per answer on 4 CPU cores; one request at a time.
+- Image pinned by tag, not digest. The `llm` container is left running after this milestone; stop it with `docker compose --profile llm stop llm`.
+
+**Exit criteria:** met. Answers come from a real, pinned, locally running model through the same interface, readiness reflects it, and its behaviour on probe questions is measured and recorded.

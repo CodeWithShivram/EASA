@@ -1,30 +1,24 @@
 """Chat model served by a local Ollama server (https://github.com/ollama/ollama).
 
-Uses the non-streaming ``POST /api/chat`` endpoint. Proxy environment
-variables are ignored (``trust_env=False``), so prompts containing document
-text go only to the configured server. Nothing here logs prompt or response
-text.
+Uses the non-streaming ``POST /api/chat`` endpoint (client rules in
+app.llm.http). Nothing here logs prompt or response text.
 """
 
 import logging
 from collections.abc import Sequence
-from typing import Any
 
 import httpx
 
-from app.llm.base import ChatMessage, ChatResult, ModelResponseError, ModelUnavailableError
+from app.llm.base import ChatMessage, ChatResult, ModelResponseError
+from app.llm.http import (
+    AVAILABILITY_TIMEOUT_SECONDS,
+    MAX_REPLY_CHARS,
+    build_client,
+    count,
+    post_json,
+)
 
 logger = logging.getLogger(__name__)
-
-# Readiness must stay fast even if the server hangs.
-AVAILABILITY_TIMEOUT_SECONDS = 2.0
-CONNECT_TIMEOUT_SECONDS = 5.0
-# Defensive cap on reply text; max_tokens normally keeps replies far shorter.
-MAX_REPLY_CHARS = 20_000
-
-
-def _count(value: Any) -> int | None:
-    return value if isinstance(value, int) and value >= 0 else None
 
 
 class OllamaChatModel:
@@ -38,13 +32,7 @@ class OllamaChatModel:
     ) -> None:
         self.model_id = f"ollama:{model}"
         self._model = model
-        self._client = httpx.Client(
-            base_url=base_url,
-            timeout=httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT_SECONDS),
-            transport=transport,
-            follow_redirects=False,
-            trust_env=False,
-        )
+        self._client = build_client(base_url, timeout_seconds, transport)
 
     def is_available(self) -> bool:
         """True if the server answers and has the configured model installed."""
@@ -63,34 +51,27 @@ class OllamaChatModel:
     def generate(
         self, messages: Sequence[ChatMessage], *, max_tokens: int, temperature: float
     ) -> ChatResult:
-        payload = {
-            "model": self._model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "stream": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
-        }
+        data = post_json(
+            self._client,
+            "/api/chat",
+            {
+                "model": self._model,
+                "messages": [{"role": m.role, "content": m.content} for m in messages],
+                "stream": False,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
+            },
+        )
         try:
-            response = self._client.post("/api/chat", json=payload)
-        except httpx.TimeoutException:
-            raise ModelResponseError("the model did not answer in time") from None
-        except httpx.TransportError:
-            raise ModelUnavailableError("the model server cannot be reached") from None
-        if response.status_code == httpx.codes.NOT_FOUND:
-            raise ModelUnavailableError("the configured model is not installed")
-        if response.status_code != httpx.codes.OK:
-            raise ModelResponseError(f"the model server returned status {response.status_code}")
-        try:
-            data = response.json()
             text = data["message"]["content"]
             if not isinstance(text, str):
                 raise TypeError
-        except ValueError, KeyError, TypeError:
+        except KeyError, TypeError:
             raise ModelResponseError("the model server returned a malformed response") from None
         return ChatResult(
             text=text[:MAX_REPLY_CHARS],
             model_id=self.model_id,
-            prompt_tokens=_count(data.get("prompt_eval_count")),
-            completion_tokens=_count(data.get("eval_count")),
+            prompt_tokens=count(data.get("prompt_eval_count")),
+            completion_tokens=count(data.get("eval_count")),
         )
 
     def close(self) -> None:

@@ -73,7 +73,7 @@ Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](AR
 
 | Item | Specification |
 |---|---|
-| Purpose | Reports whether required dependencies are usable: the database (`SELECT 1`), the configured embedding model (its pinned files are present; the model is not loaded) and, when answer generation is configured, the chat model (Ollama: the server answers `GET /api/tags` within 2 seconds and lists the configured model) |
+| Purpose | Reports whether required dependencies are usable: the database (`SELECT 1`), the configured embedding model (its pinned files are present; the model is not loaded) and, when answer generation is configured, the chat model (llama.cpp: `GET /health` is `200`, so the model has loaded, and `GET /v1/models` lists the configured name; Ollama: `GET /api/tags` lists it; each call has a 2-second timeout) |
 | Authentication | None (public) |
 | Authorization | None |
 | Request | No parameters or body |

@@ -1,7 +1,8 @@
-# Local PostgreSQL 18 + pgvector for EASA (Phase 3, P3-M4). Development only.
+# Local services for EASA. Development only; ports are bound to localhost.
 #
-#   docker compose up -d postgres      (from the repository root)
-#   docker compose down                (stop; add -v to also delete the data volume)
+#   docker compose up -d postgres            PostgreSQL 18 + pgvector (Phase 3, P3-M4)
+#   docker compose --profile llm up -d llm   llama.cpp chat model server (Phase 4, P4-M3)
+#   docker compose down                      (stop; add -v to also delete the data volume)
 #
 # The password comes from EASA_POSTGRES_PASSWORD in the git-ignored .env next to
 # this file (see .env.example). The port is bound to localhost only.
@@ -24,6 +25,37 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+
+  # CPU-only llama.cpp server for answer generation. The pinned GGUF file is
+  # downloaded first with `uv run python -m app.cli download-chat-model`
+  # (from apps/api) and mounted read-only.
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-b12407
+    profiles: ["llm"]
+    command:
+      - "--model"
+      - "/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+      - "--alias"
+      - "qwen2.5-1.5b-instruct-q4_k_m"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "4096"
+      - "--threads"
+      - "4"
+      - "--parallel"
+      - "1"
+    ports:
+      - "127.0.0.1:${EASA_LLM_PORT:-8082}:8080"
+    volumes:
+      - ./apps/api/var/models/llm:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
 volumes:
   postgres-data:

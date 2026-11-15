@@ -24,7 +24,6 @@ from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder
 from app.llm.factory import build_chat_model
-from app.llm.ollama import OllamaChatModel
 from app.storage.blob_store import LocalBlobStore
 
 # Allowance for multipart boundaries and headers on top of the file itself.
@@ -43,8 +42,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         engine.dispose()
-        if isinstance(chat_model, OllamaChatModel):
-            chat_model.close()
+        # HTTP-based models hold a connection pool.
+        close = getattr(chat_model, "close", None)
+        if close is not None:
+            close()
 
     # Interactive API docs are disabled in production.
     app = FastAPI(

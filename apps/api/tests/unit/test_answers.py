@@ -9,6 +9,7 @@ from app.core.identity import Identity
 from app.llm.base import ChatMessage, ModelResponseError, ModelUnavailableError
 from app.llm.fake import FakeChatModel, extractive_reply
 from app.services.answers import (
+    ANSWER_REMINDER,
     INSUFFICIENT_MARKER,
     MIN_SOURCE_CHARS,
     SYSTEM_PROMPT,
@@ -119,6 +120,7 @@ def test_citations_of_unknown_sources_are_removed() -> None:
     [
         (INSUFFICIENT_MARKER, InsufficientReason.MODEL_DECLINED),
         (f"Sorry. {INSUFFICIENT_MARKER}", InsufficientReason.MODEL_DECLINED),
+        ("[S1] [Insufficient_Evidence]", InsufficientReason.MODEL_DECLINED),
         ("   ", InsufficientReason.MODEL_DECLINED),
         ("Everyone gets 40 days.", InsufficientReason.NO_VALID_CITATIONS),
         ("Everyone gets 40 days [S9].", InsufficientReason.NO_VALID_CITATIONS),
@@ -166,7 +168,7 @@ def test_prompt_separates_instructions_from_sources() -> None:
     assert user.role == "user"
     assert '<source id="S1" document="leave.txt" section="Leave">' in user.content
     assert '<source id="S2" document="travel.pdf" page="1">' in user.content
-    assert user.content.endswith(f"Question: {QUESTION}")
+    assert user.content.endswith(f"Question: {QUESTION}\n\n{ANSWER_REMINDER}")
 
 
 def test_documents_cannot_close_their_source_element() -> None:

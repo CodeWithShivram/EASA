@@ -47,7 +47,7 @@ flowchart LR
 | Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3); grounded answers with citations and insufficient-evidence handling through a provider-independent chat model (P4-M1, P4-M2) |
 | Migrations | Alembic | Settings-driven environment; the same migration chain on SQLite and PostgreSQL (backend-specific steps are no-ops elsewhere) |
 
-There is **no** authentication or tool execution yet, and no real language model is installed (answers run against a deterministic fake until P4-M3); document endpoints use a development-only identity. Those arrive in later phases (section 6).
+There is **no** authentication or tool execution yet. Answers use a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker, optional) or a deterministic fake; document endpoints use a development-only identity. Those arrive in later phases (section 6).
 
 ## 4. Target architecture (planned)
 
@@ -104,7 +104,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Complete (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; see [EVALUATION.md](EVALUATION.md)) |
-| 4 | Grounded RAG answering | In progress (P4-M1 chat model interface, P4-M2 grounded answers done) |
+| 4 | Grounded RAG answering | In progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model done) |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
 | 7 | Frontend and integration | Not started |
@@ -117,7 +117,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 - Windows 11 company laptop with installation restrictions; no administrator rights; no system-level installs.
 - CPU-only inference baseline; no CUDA assumptions.
 - Python 3.14 and Node.js 24.13 as installed; dependencies must be compatible with them ([ADR-012](ARCHITECTURE_DECISIONS.md#adr-012)).
-- No paid services or API keys. Docker is optional (local PostgreSQL); Ollama is not used yet.
+- No paid services or API keys. Docker is optional (local PostgreSQL and the local chat model).
 
 ## 8. Quality attributes
 
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (500 automated tests today: 473 backend including 46 PostgreSQL tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (533 automated tests today: 506 backend including 46 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

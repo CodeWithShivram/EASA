@@ -127,9 +127,10 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_EMBEDDING_PROVIDER` | API | `onnx` | `onnx` (pinned local bge-small-en-v1.5; download first) or `hashing` (deterministic, non-semantic; used by tests) |
 | `EASA_EMBEDDING_MODEL_DIR` | API | `apps/api/var/models` | Where the pinned model files live (git-ignored) |
 | `EASA_EMBEDDING_BATCH_SIZE` | API | `32` | Chunks per embedding batch (1–256) |
-| `EASA_MODEL_PROVIDER` | API | `none` | Answer generation: `none` (disabled), `fake` (deterministic test double; rejected in production) or `ollama` |
-| `EASA_OLLAMA_BASE_URL` | API | `http://127.0.0.1:11434` | `http(s)://host[:port]` only; proxy environment variables are ignored for model calls |
-| `EASA_MODEL_NAME` | API | empty | Required for `ollama`; letters, digits and `. _ : / -` |
+| `EASA_MODEL_PROVIDER` | API | `none` | Answer generation: `none` (disabled), `fake` (deterministic test double; rejected in production), `llamacpp` (local llama.cpp server, section 6e) or `ollama` |
+| `EASA_LLAMACPP_BASE_URL`, `EASA_OLLAMA_BASE_URL` | API | `http://127.0.0.1:8082`, `http://127.0.0.1:11434` | `http(s)://host[:port]` only; proxy environment variables are ignored for model calls |
+| `EASA_MODEL_NAME` | API | empty | Required for `llamacpp` and `ollama`; letters, digits and `. _ : / -`. For the local model: `qwen2.5-1.5b-instruct-q4_k_m` |
+| `EASA_CHAT_MODEL_DIR` | API | `apps/api/var/models/llm` | Where `download-chat-model` stores the GGUF file (git-ignored; mounted read-only into the `llm` container) |
 | `EASA_MODEL_TIMEOUT_SECONDS`, `EASA_MODEL_MAX_OUTPUT_TOKENS`, `EASA_MODEL_TEMPERATURE` | API | `120`, `512`, `0.1` | Per-call limits (0–600 s, 16–4096 tokens, 0–1) |
 | `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
@@ -157,7 +158,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 473 tests: 3 real-model tests skip without the model, 46 PostgreSQL tests skip without EASA_TEST_POSTGRES_URL; warnings are errors
+uv run pytest                 # 506 tests: 3 real-embedding tests skip without the model, 46 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -248,6 +249,32 @@ $env:EASA_EVAL_POSTGRES_URL = $null
 ```
 
 The dataset is in `apps/api/eval/`; reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
+
+## 6e. Local chat model (llama.cpp)
+
+Answers can use a real model running on the CPU: Qwen2.5 1.5B Instruct (Apache-2.0, 4-bit GGUF, 1.12 GB) served by llama.cpp in Docker.
+
+```powershell
+# from apps/api: download the pinned file (revision and SHA-256 are checked)
+uv run python -m app.cli download-chat-model
+# from the repository root: start the server (image ghcr.io/ggml-org/llama.cpp:server-b12407, 282 MB)
+docker compose --profile llm up -d llm
+docker compose --profile llm ps       # wait for "healthy": loading took about a minute on the dev laptop
+```
+
+Then set, for example in `apps/api/.env`: `EASA_MODEL_PROVIDER=llamacpp` and `EASA_MODEL_NAME=qwen2.5-1.5b-instruct-q4_k_m`. Readiness reports `model: ok` once the server has loaded the model. On the dev laptop (4 cores) an answer took 6–17 seconds and the server used about 780 MB of memory.
+
+Live model tests (skipped unless the server is running; never run in CI):
+
+```powershell
+$env:EASA_TEST_LLM_URL = "http://127.0.0.1:8082"
+uv run pytest tests/llm
+$env:EASA_TEST_LLM_URL = $null
+```
+
+Stop it with `docker compose --profile llm stop llm`. The server listens only on `127.0.0.1:8082` (change with `EASA_LLM_PORT` in the root `.env`) and reads the model directory read-only.
+
+If `download-chat-model` stays at 0 bytes, the Hugging Face "Xet" transfer backend may be blocked on your network; set `$env:HF_HUB_DISABLE_XET = "1"` for that command to use plain HTTPS (the file and its SHA-256 check are the same). Pulling the image from `ghcr.io` can be slow on some networks; let `docker pull` finish rather than restarting it.
 
 ## 7. Adding dependencies
 

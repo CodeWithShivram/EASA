@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -136,7 +136,8 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 | Timeouts on every call (connect 5 s, total configurable, readiness 2 s); output length bounded by `num_predict` and a 20,000-character cap | [ollama.py](../apps/api/app/llm/ollama.py) — tested |
 | Model errors carry no prompt or reply text and do not chain driver exceptions; the availability warning logs only the error type | [ollama.py](../apps/api/app/llm/ollama.py) — tested |
 
-Not yet: a real model (P4-M3).
+| The local model is a single GGUF file pinned to an upstream revision and verified by size and SHA-256 after download; it is downloaded only by an explicit command and mounted read-only into the server container | [registry.py](../apps/api/app/llm/registry.py) — tested |
+| The llama.cpp server image is pinned to a version tag (`server-b12407`), runs only with the `llm` Compose profile, and is published on `127.0.0.1:8082` only | [compose.yaml](../compose.yaml) |
 
 ### Grounded answers (Phase 4, P4-M2)
 
@@ -151,6 +152,7 @@ Not yet: a real model (P4-M3).
 | The question and the answer are never logged; the `answer completed` line carries only status, counts, model ID, token counts and duration | [answers.py](../apps/api/app/services/answers.py) — tested and verified on a live server |
 
 **Residual risks (documented, not solved):**
+- With the real 1.5B model (P4-M3), one probe answer cited the wrong source and one listed facts from every source with valid citations: the citation check accepts both. A per-sentence support check is a candidate for P4-M5.
 - Prompt injection cannot be fully prevented by prompt design. A document can still try to persuade the model in plain language; the delimiters and rules make this harder, and the citation check only verifies that a provided source is cited, not that the cited source supports the sentence. Phase 4 evaluation (P4-M5) tests injected documents with a real model.
 - A cited answer can still misstate its source. The response returns the cited text so a reader can verify it.
 - Retrieved text from any document the tenant has uploaded goes into the prompt. Document-level permissions (Phase 6) must filter evidence before this step.
@@ -173,7 +175,7 @@ Not yet: a real model (P4-M3).
 
 ### Supply chain
 
-- Container image pinned by tag: `pgvector/pgvector:0.8.7-pg18` (digest `sha256:38681dc6…` when pulled on 2026-11-14), in both Compose and CI. Python packages added in P3-M4: `psycopg[binary]` 3.3.9 (LGPL-3.0, used as an unmodified library) and `pgvector` 0.5.1 (MIT).
+- Container images pinned by tag: `ghcr.io/ggml-org/llama.cpp:server-b12407` (amd64 digest `sha256:4bac836a…`; P4-M3) and `pgvector/pgvector:0.8.7-pg18` (digest `sha256:38681dc6…` when pulled on 2026-11-14), in both Compose and CI. Model file added in P4-M3: `Qwen/Qwen2.5-1.5B-Instruct-GGUF` `qwen2.5-1.5b-instruct-q4_k_m.gguf` (Apache-2.0) at revision `91cad511…`, SHA-256 `6a1a2eb6…`. Python packages added in P3-M4: `psycopg[binary]` 3.3.9 (LGPL-3.0, used as an unmodified library) and `pgvector` 0.5.1 (MIT).
 - Lockfiles committed: `apps/api/uv.lock`, `apps/web/package-lock.json` (resolved only from `registry.npmjs.org`).
 - Dependencies are added only with a stated purpose, after checking compatibility with Python 3.14 and Node 24.13.
 - CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags (setup-uv to an exact release tag), not commit SHAs.
@@ -219,11 +221,12 @@ Not yet: a real model (P4-M3).
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 473 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 506 backend tests; 3 real-model tests skip without the model and 46 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
 - Answers: no evidence means no model call; refusals, uncited and wrongly cited replies are withheld; another tenant's documents never reach the prompt; a document containing `</source>` and fake system instructions stays inside its source element; filenames and sections are escaped; questions and answers are not logged; answers are not mounted in production and return `503` without a model.
+- Local model: the downloaded file is rejected unless its size and SHA-256 match the pinned values; llama.cpp errors never include the prompt; a server still loading its model is reported unavailable.
 - Chat models: model errors never include the prompt; the fake provider is rejected in production; invalid Ollama URLs (credentials, paths, queries, non-http schemes) and model names are rejected; an unreachable model server makes readiness `503`.
 - Keyword index: FTS5 syntax in queries (`NEAR(...)`, unbalanced quotes, column filters, `*`, `AND NOT`, `^`) is harmless; queries without words return nothing; the index follows chunk replacement, text updates and cascade deletes (FTS5 `integrity-check` passes); the migrated index matches the application module.
 

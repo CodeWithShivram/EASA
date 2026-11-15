@@ -29,6 +29,7 @@
 | [ADR-022](#adr-022) | Keep exact vector search; criteria for adopting HNSW | P3-M5 |
 | [ADR-023](#adr-023) | Provider-independent chat model interface; Ollama as the local provider | P4-M1 |
 | [ADR-024](#adr-024) | Grounded answers: delimited sources, citation checks, explicit insufficient evidence | P4-M2 |
+| [ADR-025](#adr-025) | llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF as the local model | P4-M3 |
 
 ---
 
@@ -335,6 +336,26 @@
 - **Consequences:** answer quality now depends on retrieval quality and on the model following the format; P4-M3 adds a real model and P4-M5 evaluates citation validity, refusals and injection resistance.
 
 ---
+
+<a id="adr-025"></a>
+## ADR-025: llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF as the local model
+
+- **Status:** Accepted (P4-M3, 2026-11-15). Replaces the plan's "Ollama in Docker" runtime, approved after comparing both; ADR-023's interface is unchanged and the Ollama adapter stays available.
+- **Context:** The laptop has 4 CPU cores, 16 GB RAM and no usable GPU; Docker has 8 GB. The model must be free, permissively licensed and small. The official `ollama/ollama` image is 3.2 GB compressed because it bundles NVIDIA libraries that cannot be used here, and there is no CPU-only tag.
+- **Options considered:**
+  - Runtime: Ollama in Docker (3.2 GB image, adapter ready); llama.cpp server in Docker (`ghcr.io/ggml-org/llama.cpp:server-b12407`, 282 MB, CPU-only, OpenAI-compatible API); native installs (system-level software, not approved).
+  - Model (registry sizes and licence files checked): qwen2.5 1.5B Instruct (Apache-2.0, about 1 GB); granite3.3 2B (Apache-2.0, 1.55 GB); qwen3 1.7B (Apache-2.0, but emits reasoning text by default); phi3.5 / phi4-mini (MIT, 2.2–2.5 GB, slower). Rejected: qwen2.5 3B (research-only licence), llama3.2 and gemma3 (custom licences).
+- **Decision:**
+  - llama.cpp server, pinned by version tag, under the Compose profile `llm`, on `127.0.0.1:8082`, 4 threads, 4,096-token context, one request at a time.
+  - Qwen2.5 1.5B Instruct, Q4_K_M GGUF from the official Qwen repository, pinned to a revision and verified by SHA-256; downloaded by `download-chat-model`, mounted read-only.
+  - A `LlamaCppChatModel` adapter for the OpenAI-compatible API, sharing HTTP rules with the Ollama adapter.
+- **Trade-offs:**
+  - About 1.4 GB in total instead of about 4.2 GB, and the model file is pinned and hash-checked like the embedding model; but llama.cpp has no model library, so changing models means adding a registry entry.
+  - A 1.5B model is fast enough on a CPU but follows instructions less reliably than larger models; P4-M5 measures how well it cites and refuses.
+  - The image is pinned by tag, not digest.
+- **Consequences:** `EASA_MODEL_PROVIDER=llamacpp` with `EASA_MODEL_NAME=qwen2.5-1.5b-instruct-q4_k_m` gives real answers locally. Larger or different models can be added as further registry entries without code changes elsewhere.
+
+---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
@@ -342,5 +363,4 @@
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
 | Chunk size, judged with answer quality | 4 (P4-M5) |
-| Which Ollama model to use (small, MIT or Apache-2.0 licensed), and running Ollama in Docker | 4 (P4-M3) |
 | Whether LangGraph is justified for agent workflows | 5 |

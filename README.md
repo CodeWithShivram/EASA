@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) in progress: chat model interface (P4-M1) and grounded answers with citations (P4-M2).**
+> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) in progress: chat model interface (P4-M1), grounded answers with citations (P4-M2) and a local CPU model, Qwen2.5 1.5B on llama.cpp in Docker (P4-M3).**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -39,7 +39,7 @@ Verified on the development machine (Windows 11):
 | Python  | 3.14.7 (`py -3.14`) |
 | uv      | 0.12.9           |
 
-Optional: Docker Desktop (verified 29.9.3 with Compose v5.7.0) to run PostgreSQL 18 + pgvector locally (`docker compose up -d postgres`; see the [Development guide](docs/DEVELOPMENT_GUIDE.md#6c-postgresql--pgvector-optional)). SQLite stays the default and needs nothing extra. Ollama is not used yet.
+Optional: Docker Desktop (verified 29.9.3 with Compose v5.7.0) to run PostgreSQL 18 + pgvector (`docker compose up -d postgres`; see the [Development guide](docs/DEVELOPMENT_GUIDE.md#6c-postgresql--pgvector-optional)) and the local chat model (`docker compose --profile llm up -d llm`; see [section 6e](docs/DEVELOPMENT_GUIDE.md#6e-local-chat-model-llamacpp)). SQLite stays the default and needs nothing extra.
 
 ## Backend (apps/api)
 

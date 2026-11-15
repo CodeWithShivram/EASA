@@ -2,6 +2,7 @@
 
 Run from apps/api:
     uv run python -m app.cli download-embedding-model
+    uv run python -m app.cli download-chat-model
     uv run python -m app.cli embed-missing [--limit N]
     uv run python -m app.cli rebuild-keyword-index
     uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
@@ -36,6 +37,7 @@ from app.evaluation.runner import (
     run_evaluation,
     sqlite_database,
 )
+from app.llm.registry import DEFAULT_CHAT_MODEL, ModelFileError, download_chat_model
 from app.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger("app.cli")
@@ -65,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "download-embedding-model",
         help=f"download {DEFAULT_MODEL.model_id} ({DEFAULT_MODEL.repo_id}, network access)",
+    )
+    commands.add_parser(
+        "download-chat-model",
+        help=f"download {DEFAULT_CHAT_MODEL.name} ({DEFAULT_CHAT_MODEL.repo_id}, "
+        f"{DEFAULT_CHAT_MODEL.size_bytes / 1e9:.2f} GB, network access) and verify its SHA-256",
     )
     backfill = commands.add_parser(
         "embed-missing", help="embed chunks of processed documents that have no vector yet"
@@ -105,6 +112,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.info(
             "embedding model downloaded",
             extra={"model_id": DEFAULT_MODEL.model_id, "path": str(path)},
+        )
+        return 0
+
+    if args.command == "download-chat-model":
+        try:
+            path = download_chat_model(DEFAULT_CHAT_MODEL, settings.chat_model_dir)
+        except ModelFileError as error:
+            logger.error("chat model verification failed", extra={"error": str(error)})
+            return 1
+        logger.info(
+            "chat model downloaded and verified",
+            extra={"model": DEFAULT_CHAT_MODEL.name, "path": str(path)},
         )
         return 0
 

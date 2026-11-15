@@ -20,7 +20,7 @@ API_ROOT = Path(__file__).resolve().parents[2]
 
 # Database drivers the application is designed and tested for.
 ALLOWED_DATABASE_DRIVERS = frozenset({"sqlite", "sqlite+pysqlite", "postgresql+psycopg"})
-# Ollama model names such as "family:1.5b-instruct" or "namespace/model:tag".
+# Model names such as "family:1.5b-instruct", "namespace/model:tag" or a GGUF alias.
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")
 
 
@@ -61,9 +61,13 @@ class Settings(BaseSettings):
     embedding_model_dir: Path = Field(default_factory=lambda: API_ROOT / "var" / "models")
     embedding_batch_size: int = Field(default=32, ge=1, le=256)
     # Answer generation (Phase 4). "none" disables it; "fake" is a deterministic
-    # test double (rejected in production); "ollama" calls a local Ollama server.
-    model_provider: Literal["none", "fake", "ollama"] = "none"
+    # test double (rejected in production); "llamacpp" calls the local llama.cpp
+    # server (compose.yaml, profile "llm"); "ollama" calls a local Ollama server.
+    model_provider: Literal["none", "fake", "llamacpp", "ollama"] = "none"
+    llamacpp_base_url: str = "http://127.0.0.1:8082"
     ollama_base_url: str = "http://127.0.0.1:11434"
+    # Where download-chat-model stores GGUF files (mounted into the llm container).
+    chat_model_dir: Path = Field(default_factory=lambda: API_ROOT / "var" / "models" / "llm")
     model_name: str = Field(default="", max_length=200)
     model_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     model_max_output_tokens: int = Field(default=512, ge=16, le=4096)
@@ -104,9 +108,9 @@ class Settings(BaseSettings):
                 )
         return [origin.rstrip("/") for origin in origins]
 
-    @field_validator("ollama_base_url")
+    @field_validator("llamacpp_base_url", "ollama_base_url")
     @classmethod
-    def _validate_ollama_base_url(cls, value: str) -> str:
+    def _validate_model_base_url(cls, value: str) -> str:
         parts = urlsplit(value)
         if (
             parts.scheme not in {"http", "https"}
@@ -118,7 +122,7 @@ class Settings(BaseSettings):
             or parts.fragment
         ):
             raise ValueError(
-                "ollama_base_url must be http(s)://host[:port] without credentials, "
+                "model server URLs must be http(s)://host[:port] without credentials, "
                 "paths, queries or fragments"
             )
         return value.rstrip("/")
@@ -127,10 +131,12 @@ class Settings(BaseSettings):
     def _validate_model_provider(self) -> Settings:
         if self.model_provider == "fake" and self.is_production:
             raise ValueError('model_provider "fake" is not allowed in production')
-        if self.model_provider == "ollama" and not _MODEL_NAME.fullmatch(self.model_name):
+        if self.model_provider in {"llamacpp", "ollama"} and not _MODEL_NAME.fullmatch(
+            self.model_name
+        ):
             raise ValueError(
-                "model_name is required for the ollama provider and may contain only "
-                "letters, digits and . _ : / -"
+                f"model_name is required for the {self.model_provider} provider and may "
+                "contain only letters, digits and . _ : / -"
             )
         return self
 
