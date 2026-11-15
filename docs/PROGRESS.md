@@ -752,8 +752,8 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 | P4-M1 | Chat model interface, fake model, Ollama adapter, model settings, readiness check | COMPLETE | `0474246` |
 | P4-M2 | Grounded answer service and `POST /api/v1/answers`; bounded context, citations, insufficient-evidence handling; search default `hybrid` | COMPLETE | `83b25ff` |
 | P4-M3 | Local model: llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF (approved instead of Ollama, ADR-025), live tests, latency | COMPLETE | `2a6f715` |
-| P4-M4 | Conversation context (conversations and messages, bounded history) | COMPLETE | the commit that adds this row |
-| P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | NOT STARTED | |
+| P4-M4 | Conversation context (conversations and messages, bounded history) | COMPLETE | `71a7325` |
+| P4-M5 | Answer evaluation (unanswerable, false-premise and prompt-injection cases) and Phase 4 report | COMPLETE | the commit that adds this row |
 
 ## P4-M1: Chat model interface
 
@@ -890,3 +890,73 @@ Plan approved on 2026-11-14 with the recommended options: a provider-independent
 - No frontend for conversations yet; browsers cannot call `POST` endpoints (CORS allows `GET` only).
 
 **Exit criteria:** met. Users can hold owner-scoped conversations whose follow-up questions use bounded history without weakening the evidence rules, covered by tests on SQLite and PostgreSQL and probed with the real model.
+
+## P4-M5: Answer evaluation and Phase 4 report
+
+**Scope:** an answer evaluation with the real model across three settings, an optional support check scored offline, `docs/EVALUATION.md` section 10, ADR-027 and the Phase 4 report. Defaults are **not** changed: the proposals in ADR-027 await approval.
+
+**Implemented**
+
+- Dataset: `apps/api/eval/answers.json` (43 cases: 20 answerable, 8 unanswerable, 4 false premise, 6 follow-ups, 5 injection) and `apps/api/eval/adversarial/` (3 synthetic documents with injected instructions, one with a fake `</source>` element); validated by a unit test.
+- `app/evaluation/answers_eval.py`: case loading and validation, scoring (correct, wrong citation, wrong, refused, corrected, accepted, answered, injected, error), a runner over fresh databases per setting (temperature 0, follow-ups with history), offline support-check scoring, summaries with citation precision and latency, JSON and Markdown reports, and **checkpointing** so an interrupted run resumes.
+- CLI `evaluate-answers [--configs default|all] [--limit N] [--fresh]` (needs a configured, available model; timeout raised to at least 300 s).
+- `check_support` and the `EASA_ANSWER_SUPPORT_CHECK` setting (off by default); `AnswerResult` now carries token counts.
+- Tests: 29 unit (scoring, correctness rules, summary and citation precision, dataset validation, support check incl. marker placement) and 5 integration (runner with fake models, a declining model, model errors recorded, the command refusing without a model, resuming from a checkpoint with a cut-off last line).
+- Docs: EVALUATION.md section 10 (and title), ADR-027, LLD, SECURITY (injection results), DEVELOPMENT_GUIDE (command, setting), README, HLD.
+
+**Results** (EVALUATION.md section 10): with 3 chunks of 1,200 characters correctness was 0.72 (0.67 with 5 chunks) at a median of 10 s per answer (34 s); no injection succeeded in 15 attempts; 4 of 20 answerable questions were declined in the best settings; citation precision 0.92–1.00; the support check made no measurable difference.
+
+**Verification (executed 2026-11-15)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 563 passed (337 unit, 172 integration, 3 real-embedding, 47 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 512 passed, 51 skipped |
+| `evaluate-answers --configs all` with the local model | All 129 case runs (43 × 3 settings) finished in 56 min, 0 errors, 0 injected replies; reports in `var/eval/` |
+| First evaluation attempt | Stopped after 15 cases when Docker Desktop stopped (the laptop most likely slept), which also stopped the model server; no report had been written. Checkpointing was added and the run restarted from scratch |
+| Support-check unit test | Found a bug before the final run: a citation written after a full stop ("… leave. [S1] Economy …") was attributed to the next sentence; markers at the start of a segment now belong to the previous sentence |
+| Detail review of the replies | Two summary bullets corrected against the replies: with 5 chunks the "answered" unanswerable questions restated unrelated facts (not soft refusals), and the 40-days fabrication cited only the notice board |
+
+**Known limitations**
+
+- 43 synthetic cases written by the same author; lexical scoring; blunt injection attempts; one 1.5B model on one CPU (EVALUATION.md section 10.5).
+- Latency medians are noisy between runs; prompt tokens are the stable cost measure.
+
+**Exit criteria:** met. Answer quality, refusals, injection resistance and latency are measured with a reproducible, validated dataset, and the evidence for the proposed settings is recorded.
+
+## Phase 4 completion report
+
+**Status: COMPLETE.** Phase 4 delivered grounded question answering over the caller's documents, with checked citations, explicit insufficient-evidence answers, a local CPU model, conversations with follow-up questions and an evaluation with the real model. Two setting changes are proposed (ADR-027) and await your decision.
+
+**Phase 4 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 4) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Build the question-answering pipeline | `AnswerService`, `POST /api/v1/answers`, provider-independent `ChatModel` with fake, llama.cpp and Ollama adapters | P4-M1, P4-M2, P4-M3 |
+| Retrieve relevant authorized chunks | Hybrid retrieval with the tenant, status and model filters of Phase 3; another tenant's text never reaches the prompt (tested) | P4-M2 |
+| Construct bounded, clearly separated context | Numbered `<source>` elements within 6,000 characters, rules only in the system message, tag-like text escaped; history in its own `<history>` element | P4-M2, P4-M4 |
+| Instruct the model to answer from evidence | System rules plus a reminder after the question (citation compliance on probe questions 4/8 → 7/8) | P4-M2, P4-M3 |
+| Return citations and source metadata | `[S#]` markers checked against provided sources; sources returned with document, page, section and offsets; citation precision 0.92–1.00 in the evaluation | P4-M2, P4-M5 |
+| Handle insufficient evidence by saying so | `insufficient_evidence` with a reason (no results, model declined, no valid citations); 4–6 of 8 unanswerable questions refused, and with 3 chunks most others were refusals phrased in words | P4-M2, P4-M5 |
+| Avoid unsupported claims | Uncited replies withheld; support check evaluated (no measurable gain). Remaining risk: false premises accepted in 1–2 of 4 cases | P4-M2, P4-M5 |
+| Add conversation context carefully | Owner-scoped conversations, bounded history marked as not evidence, citations checked against current sources only | P4-M4 |
+| Test hallucination and retrieval failure cases | 43-case evaluation incl. unanswerable, false-premise, follow-up and injection cases; live model tests | P4-M3, P4-M5 |
+
+**Commits:** P4-M1 `0474246`, P4-M2 `83b25ff`, P4-M3 `2a6f715`, P4-M4 `71a7325`, P4-M5 the commit that adds this report.
+
+**Dependencies and downloads added in Phase 4:** `httpx` declared (already installed). Image `ghcr.io/ggml-org/llama.cpp:server-b12407`; model `Qwen/Qwen2.5-1.5B-Instruct-GGUF` Q4_K_M (Apache-2.0), pinned revision and SHA-256.
+
+**Architecture decisions:** ADR-023 (chat model interface), ADR-024 (grounded answers), ADR-025 (llama.cpp and Qwen2.5 1.5B), ADR-026 (conversations), ADR-027 (answer settings after evaluation).
+
+**Tests:** 563 backend (337 unit, 172 integration, 3 real-embedding, 47 PostgreSQL, 4 live model) plus 27 frontend = 590, up from 424 at the end of Phase 3.
+
+**Security considerations:** see [SECURITY.md](SECURITY.md). Main residual risks: prompt injection is resisted in the tested cases but cannot be ruled out; cited answers can still misstate sources; chat history has no retention limit; the development identity is still the only identity; answers take 10–35 s on the CPU.
+
+**Manual verification steps** (from `apps/api`, with the llm container running and `EASA_MODEL_PROVIDER=llamacpp`, `EASA_MODEL_NAME=qwen2.5-1.5b-instruct-q4_k_m`):
+
+1. Upload synthetic documents, then `POST /api/v1/answers` with `{"question": "..."}` → an answer with cited sources, or `insufficient_evidence`.
+2. `POST /api/v1/conversations`, ask a question and a follow-up in it, then `GET` it to see the stored turns.
+3. `uv run python -m app.cli evaluate-answers --limit 5` → a report in `var/eval/`.
+
+**Recommended next phase:** Phase 5, agent and controlled tool calling. Before it: decide on ADR-027 (3 chunks by default, soft-refusal detection). Phase 5 should assume the model will not follow instructions perfectly: strict tool schemas, server-side permission checks and confirmation for consequential actions.

@@ -104,7 +104,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 1 | Foundation and architecture | M0–M5 done; CI passing; awaiting phase review |
 | 2 | Document intelligence | Complete (P2-M1 to P2-M5); security-reviewed |
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Complete (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; see [EVALUATION.md](EVALUATION.md)) |
-| 4 | Grounded RAG answering | In progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations done) |
+| 4 | Grounded RAG answering | Complete (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations, P4-M5 answer evaluation; see [EVALUATION.md](EVALUATION.md) section 10) |
 | 5 | Agent and controlled tool calling | Not started |
 | 6 | Authentication and RBAC | Not started |
 | 7 | Frontend and integration | Not started |
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (556 automated tests today: 529 backend including 47 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (590 automated tests today: 563 backend including 47 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

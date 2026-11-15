@@ -31,6 +31,7 @@
 | [ADR-024](#adr-024) | Grounded answers: delimited sources, citation checks, explicit insufficient evidence | P4-M2 |
 | [ADR-025](#adr-025) | llama.cpp server in Docker with a pinned Qwen2.5 1.5B GGUF as the local model | P4-M3 |
 | [ADR-026](#adr-026) | Conversations: owner-scoped tables, history as context not evidence, no extra model call | P4-M4 |
+| [ADR-027](#adr-027) | Answer settings after evaluation: support check off; 3 chunks and soft-refusal detection proposed | P4-M5 |
 
 ---
 
@@ -378,11 +379,25 @@
 - **Consequences:** `POST /api/v1/answers` stays stateless; conversations reuse the same answer pipeline. P4-M5 can evaluate follow-up questions alongside single questions.
 
 ---
+
+<a id="adr-027"></a>
+## ADR-027: Answer settings after evaluation: support check off; 3 chunks and soft-refusal detection proposed
+
+- **Status:** Support check off: accepted (P4-M5, 2026-11-15). Default of 3 chunks and soft-refusal detection: **proposed**, awaiting approval (defaults change only after the owner has seen the numbers).
+- **Context:** The answer evaluation ([EVALUATION.md section 10](EVALUATION.md#10-answer-evaluation-phase-4-p4-m5)) compared 5 and 3 chunks of 1,200 characters and 3 chunks of 800 characters with the local Qwen2.5 1.5B model, and scored an optional per-sentence support check offline.
+- **Findings:** 3 chunks of 1,200 characters gave higher correctness (0.72 versus 0.67) at a third of the latency (median 10 s versus 34 s; the slowest 5-chunk answer, 129 s, exceeded the 120 s timeout). 800-character chunks scored higher on single questions but much lower on follow-ups. Citation precision was already 0.92–1.00, and the support check changed one or two outcomes per setting. Several "answered" unanswerable questions were refusals phrased in words.
+- **Decision:**
+  - Keep the support check off: no measurable benefit with this model and data, and an extra heuristic that can withhold answers.
+  - Propose: answers retrieve 3 chunks by default (keep 1,200-character chunks), and replies stating that the sources do not provide the information become `insufficient_evidence`.
+- **Trade-offs:** 3 chunks give the model less context, which could miss answers spread over several chunks (not observed in this evaluation). Phrase-based refusal detection is language- and model-specific and could, rarely, withhold an answer that mentions missing information in passing.
+- **Consequences:** If approved, `DEFAULT_TOP_K` for answers becomes 3 and the reply check gains a soft-refusal rule; the evaluation should be rerun to confirm.
+
+---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
 | Authentication approach (identity provider, session vs token) | 6 |
 | Multi-tenancy model | 6 |
-| Chunk size, judged with answer quality | 4 (P4-M5) |
+| Answer `top_k` (5 → 3) and soft-refusal detection ([ADR-027](#adr-027), proposed) | 4 / 5 |
 | Whether LangGraph is justified for agent workflows | 5 |

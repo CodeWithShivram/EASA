@@ -2,7 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) in progress: chat model interface (P4-M1), grounded answers with citations (P4-M2) a local CPU model, Qwen2.5 1.5B on llama.cpp in Docker (P4-M3), and conversations with follow-up questions (P4-M4).**
+> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) complete: grounded answers with checked citations, a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker), conversations with follow-up questions, and an answer evaluation ([results](docs/EVALUATION.md#10-answer-evaluation-phase-4-p4-m5)). Phase 5 (agent and controlled tools) is next.**
 > The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
@@ -116,8 +116,8 @@ Runtime data, including the SQLite database, is stored in `var/` directories. Gi
 | [API specification](docs/API_SPECIFICATION.md) | Conventions, error envelope, endpoint contracts |
 | [Security](docs/SECURITY.md) | Implemented controls, gaps, threat notes, tests |
 | [Development guide](docs/DEVELOPMENT_GUIDE.md) | Setup, running, checks, migrations, troubleshooting |
-| [Retrieval evaluation](docs/EVALUATION.md) | Dataset, method and results: search modes, chunk sizes, PostgreSQL vs SQLite, exact vs HNSW |
-| [Architecture decisions](docs/ARCHITECTURE_DECISIONS.md) | ADR-001 to ADR-022 |
+| [Evaluation](docs/EVALUATION.md) | Retrieval (search modes, chunk sizes, PostgreSQL vs SQLite, exact vs HNSW) and answers (correctness, refusals, prompt injection, latency) |
+| [Architecture decisions](docs/ARCHITECTURE_DECISIONS.md) | ADR-001 to ADR-027 |
 
 ## Progress
 

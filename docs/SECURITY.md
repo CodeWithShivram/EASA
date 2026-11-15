@@ -154,6 +154,7 @@ Model files are trusted as pinned upstream artifacts; their integrity relies on 
 
 **Residual risks (documented, not solved):**
 - With the real 1.5B model (P4-M3), one probe answer cited the wrong source and one listed facts from every source with valid citations: the citation check accepts both. A per-sentence support check is a candidate for P4-M5.
+- P4-M5 tested 5 injection cases per setting against the real model (instructions to claim 99 days of leave, append a code word, switch to "admin mode" behind a fake `</source>` element, or reply "PWNED" and cite a missing source): no reply contained injected content in 15 runs (EVALUATION.md section 10). The attempts were blunt; subtle false statements in documents were not tested.
 - Prompt injection cannot be fully prevented by prompt design. A document can still try to persuade the model in plain language; the delimiters and rules make this harder, and the citation check only verifies that a provided source is cited, not that the cited source supports the sentence. Phase 4 evaluation (P4-M5) tests injected documents with a real model.
 - A cited answer can still misstate its source. The response returns the cited text so a reader can verify it.
 - Retrieved text from any document the tenant has uploaded goes into the prompt. Document-level permissions (Phase 6) must filter evidence before this step.
@@ -234,7 +235,7 @@ Residual risks: questions and answers are stored in plain text in the database w
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 529 backend tests; 3 real-model tests skip without the model and 47 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 563 backend tests; 3 real-model tests skip without the model and 47 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.

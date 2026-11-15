@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     model_max_output_tokens: int = Field(default=512, ge=16, le=4096)
     model_temperature: float = Field(default=0.1, ge=0.0, le=1.0)
+    # Drop citations whose source shares no content words with the citing
+    # sentence (P4-M5; off until the evaluation shows it helps).
+    answer_support_check: bool = False
     # Development-only identity (ADR-014). Synthetic values; never taken from
     # requests. Document endpoints are not mounted in production.
     dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")

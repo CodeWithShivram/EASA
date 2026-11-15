@@ -71,6 +71,7 @@ def get_answer_service(
         request.app.state.chat_model,
         max_output_tokens=settings.model_max_output_tokens,
         temperature=settings.model_temperature,
+        support_check=settings.answer_support_check,
     )
 
 

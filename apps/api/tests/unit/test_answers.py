@@ -22,6 +22,7 @@ from app.services.answers import (
     build_messages,
     build_sources,
     check_citations,
+    check_support,
     retrieval_query,
 )
 from app.services.search import MAX_QUERY_CHARS, SearchHit, SearchMode, SearchResult
@@ -346,3 +347,53 @@ def test_an_empty_follow_up_is_rejected_even_with_history() -> None:
         service(FakeChatModel("x [S1]")).answer(IDENTITY, " \u200b ", history=[FIRST])
 
     assert error.value.code == "empty_query"
+
+
+# --- support check (P4-M5) ---------------------------------------------------
+
+
+def test_support_check_drops_citations_of_unrelated_sources() -> None:
+    sources = build_sources([LEAVE, TRAVEL])  # S1 leave, S2 travel
+
+    text, kept = check_support("Premium economy is allowed on long flights. [S1]", sources)
+
+    assert kept == []
+    assert "[S1]" not in text
+
+
+def test_support_check_keeps_related_citations() -> None:
+    sources = build_sources([LEAVE, TRAVEL])
+
+    text, kept = check_support(
+        "Employees receive 25 days of annual leave. [S1] Economy class is standard. [S2]",
+        sources,
+    )
+
+    assert [s.label for s in kept] == ["S1", "S2"]
+    assert text == "Employees receive 25 days of annual leave. [S1] Economy class is standard. [S2]"
+
+
+def test_support_check_works_per_sentence() -> None:
+    sources = build_sources([LEAVE, TRAVEL])
+
+    _, kept = check_support(
+        "Annual leave is 25 days [S2]. Flights are economy class [S2].", sources
+    )
+
+    assert [s.label for s in kept] == ["S2"]  # kept only for the travel sentence
+
+
+def test_support_check_is_off_by_default_and_applied_when_enabled() -> None:
+    reply = "Premium economy is allowed on long flights [S1]."
+    default = service(FakeChatModel(reply), hits=[LEAVE]).answer(IDENTITY, QUESTION)
+    checked = AnswerService(
+        StubRetriever([LEAVE]),
+        FakeChatModel(reply),
+        max_output_tokens=64,
+        temperature=0,
+        support_check=True,
+    ).answer(IDENTITY, QUESTION)
+
+    assert default.status is AnswerStatus.ANSWERED
+    assert checked.status is AnswerStatus.INSUFFICIENT_EVIDENCE
+    assert checked.reason is InsufficientReason.NO_VALID_CITATIONS

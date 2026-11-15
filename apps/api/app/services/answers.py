@@ -58,6 +58,88 @@ HISTORY_CHAR_BUDGET = 1_500
 
 _CITATION = re.compile(r"\[S(\d{1,3})\]")
 _ELEMENT_TAG = re.compile(r"<(/?)(source|history)", re.IGNORECASE)
+_WORD = re.compile(r"\w+")
+# Sentence boundaries: end punctuation followed by whitespace.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# Citation markers at the start of a segment belong to the sentence before it.
+_LEADING_MARKERS = re.compile(r"^((?:\s*\[S\d{1,3}\])+)\s*(.*)$", re.DOTALL)
+# Function words ignored by the support check.
+_STOPWORDS = frozenset(
+    [
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "from",
+        "by",
+        "with",
+        "without",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "can",
+        "may",
+        "must",
+        "will",
+        "would",
+        "should",
+        "not",
+        "no",
+        "yes",
+        "you",
+        "your",
+        "they",
+        "their",
+        "there",
+        "than",
+        "then",
+        "also",
+        "only",
+        "up",
+        "per",
+        "any",
+        "all",
+        "each",
+        "every",
+        "after",
+        "before",
+        "into",
+        "over",
+        "under",
+        "about",
+        "which",
+        "who",
+        "what",
+        "when",
+        "where",
+        "how",
+        "why",
+        "do",
+        "does",
+        "did",
+        "has",
+        "have",
+        "had",
+    ]
+)
 
 SYSTEM_PROMPT = f"""You answer employee questions using only the numbered sources provided.
 
@@ -108,6 +190,8 @@ class AnswerResult:
     retrieved: int
     model_id: str | None
     reason: InsufficientReason | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +299,51 @@ def check_citations(reply: str, sources: Sequence[Source]) -> tuple[str, list[So
     return cleaned, cited
 
 
+def _content_words(text: str) -> set[str]:
+    words = _WORD.findall(_CITATION.sub(" ", text).lower())
+    return {w for w in words if w not in _STOPWORDS and (len(w) > 2 or w.isdigit())}
+
+
+def check_support(answer: str, cited: Sequence[Source]) -> tuple[str, list[Source]]:
+    """Keep a citation only if its source shares content words with the sentence citing it.
+
+    A cheap lexical check (P4-M5) against wrong-source citations: a sentence's
+    citation of [Sk] is kept when the sentence and source k share at least one
+    content word (two when the sentence has more than four). It cannot tell
+    whether the source really supports the claim.
+    """
+    by_label = {s.label: s for s in cited}
+    segments: list[str] = []
+    for part in _SENTENCE_END.split(answer):
+        leading = _LEADING_MARKERS.match(part)
+        if segments and leading:
+            # "... leave. [S1] Economy ..." splits after the full stop.
+            segments[-1] = f"{segments[-1]} {leading.group(1).strip()}"
+            part = leading.group(2)
+        if not part.strip():
+            continue
+        if segments and not _content_words(part):
+            segments[-1] = f"{segments[-1]} {part}"
+        else:
+            segments.append(part)
+    kept: list[Source] = []
+    cleaned: list[str] = []
+    for sentence in segments:
+        words = _content_words(sentence)
+        needed = 1 if len(words) <= 4 else 2
+
+        def keep(match: re.Match[str], words: set[str] = words, needed: int = needed) -> str:
+            source = by_label.get(f"S{match.group(1)}")
+            if source is None or len(words & _content_words(source.text)) < needed:
+                return ""
+            if source not in kept:
+                kept.append(source)
+            return match.group(0)
+
+        cleaned.append(_CITATION.sub(keep, sentence))
+    return re.sub(r"[ \t]{2,}", " ", " ".join(cleaned)).strip(), kept
+
+
 class AnswerService:
     def __init__(
         self,
@@ -224,8 +353,10 @@ class AnswerService:
         max_output_tokens: int,
         temperature: float,
         context_chars: int = CONTEXT_CHAR_BUDGET,
+        support_check: bool = False,
     ) -> None:
         self._retriever = retriever
+        self._support_check = support_check
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
@@ -310,6 +441,8 @@ class AnswerService:
                 completion_tokens=reply.completion_tokens,
             )
         cleaned, cited = check_citations(text, sources)
+        if self._support_check and cited:
+            cleaned, cited = check_support(cleaned, cited)
         if not cited:
             return self._finish(
                 started,
@@ -361,4 +494,6 @@ class AnswerService:
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             },
         )
-        return AnswerResult(status, answer, sources, retrieved, model_id, reason)
+        return AnswerResult(
+            status, answer, sources, retrieved, model_id, reason, prompt_tokens, completion_tokens
+        )
