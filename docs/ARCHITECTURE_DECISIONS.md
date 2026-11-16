@@ -34,6 +34,7 @@
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 | [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
+| [ADR-033](#adr-033) | Document visibility: a minimum role per document, filtered inside every query | P6-M3 |
 | [ADR-032](#adr-032) | Role permissions, route checks with audited refusals, user administration | P6-M2 |
 | [ADR-031](#adr-031) | Authentication: built-in sign-in with server-side sessions; one role per user; tenants table | P6-M1 |
 | [ADR-030](#adr-030) | Agent safeguards after evaluation: claimed-action check and user-only fields; no prompt change | P5-M5 follow-up |
@@ -472,6 +473,20 @@
   - Audit actions: `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied`, in the existing `audit_logs` table (no schema change).
 - **Trade-offs:** One role per user and a fixed table; finer grants (per department, per document) need P6-M3 or later. Two administrators can still demote each other. Failed sign-ins for unknown usernames are not attributable to a tenant, so tenant administrators will not see them.
 - **Consequences:** Tests sign in with the least role that fits (employee by default, manager where documents are uploaded). P6-M3 adds a minimum role per document; P6-M4 an audit query endpoint.
+
+<a id="adr-033"></a>
+## ADR-033: Document visibility: a minimum role per document, filtered inside every query
+
+- **Status:** Accepted (P6-M3, 2026-11-16; option approved in the Phase 6 plan)
+- **Context:** Until P6-M3 every user could read every document of their tenant. The guide asks for document-level permissions, checked before retrieval and before returning content, and for retrieval to respect the same policy.
+- **Options considered:** a minimum role per document; access lists per user or group (`document_permissions`); filtering results after ranking.
+- **Decision:**
+  - `documents.min_role` (`employee` default, `manager`, `administrator`; existing documents became `employee`). A user sees documents whose minimum role is at or below their own (`visible_levels`); a caller without a role (internal jobs, evaluations) sees employee documents only.
+  - The filter is part of the database query in all four search paths (brute-force vectors, pgvector, SQLite FTS5, PostgreSQL full-text) and in the document repository (list, get, chunks, chunk lookup after ranking), so hidden chunks are never scored, ranked, sent to the model or cited. Index `levels` arguments default to employee only: a forgotten argument shows less, never more.
+  - Uploaders choose the level, at most their own role, and can change it later on documents they can see (`PATCH /documents/{id}`); both are audited.
+  - Re-uploading content that already exists above the uploader's role returns `409 document_exists` without any details of that document.
+- **Trade-offs:** Three levels only; sharing with named people or groups is not possible. The duplicate-content answer reveals that a hidden copy of content the uploader already holds exists. Conversations keep earlier citation metadata (file name, page) even if a document is later restricted. Filtering before ranking with an extra predicate was not re-measured with the HNSW benchmark (exact search is used, ADR-022).
+- **Consequences:** P6-M4 attacks this filter in the security suite; P6-M5 measures leakage with role-restricted documents.
 
 ---
 ## Open decisions (not yet made)

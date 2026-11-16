@@ -2,10 +2,11 @@ import uuid
 
 import numpy as np
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.roles import Role
 from app.db.documents import DocumentChunk, DocumentStatus
 from app.db.fts import POSTGRES_FTS_INDEX
 from app.embeddings.hashing import HashingEmbedder
@@ -253,11 +254,14 @@ def test_keyword_query_uses_the_gin_index(pg_session: Session) -> None:
     pg_session.execute(text("ANALYZE documents"))
 
     plan = pg_session.execute(
-        text("EXPLAIN " + POSTGRES_KEYWORD_SQL.text),
+        text("EXPLAIN " + POSTGRES_KEYWORD_SQL.text).bindparams(
+            bindparam("levels", expanding=True)
+        ),
         {
             "match": build_tsquery("zeppelin"),
             "tenant": TENANT_A,
             "status": "processed",
+            "levels": ["employee"],
             "limit": 5,
         },
     ).scalars()
@@ -275,3 +279,29 @@ def test_sqlite_keyword_index_refuses_postgres(pg_session: Session) -> None:
         SqliteKeywordIndex(pg_session).search(TENANT_A, "leave", 5)
 
     assert error.value.code == "keyword_search_unavailable"
+
+
+def test_hidden_documents_are_filtered_before_ranking(pg_session: Session) -> None:
+    # P6-M3: the best match is above the default level; with top_k=1 a visible
+    # chunk must take its place, so the filter runs inside the query.
+    add_document(
+        pg_session, TENANT_A, ["falcon budget"], embedder=EMBEDDER, min_role=Role.ADMINISTRATOR
+    )
+    add_document(pg_session, TENANT_A, ["falcon"], embedder=EMBEDDER)
+    pg_session.commit()
+    texts = texts_by_id(pg_session)
+    vector = EMBEDDER.embed_query("falcon budget")
+    everyone = ("employee", "manager", "administrator")
+
+    semantic = PgvectorIndex(pg_session).search(TENANT_A, MODEL, vector, 1)
+    keyword = PostgresKeywordIndex(pg_session).search(TENANT_A, "falcon budget", 1)
+    admin_semantic = PgvectorIndex(pg_session).search(TENANT_A, MODEL, vector, 1, levels=everyone)
+    admin_keyword = PostgresKeywordIndex(pg_session).search(
+        TENANT_A, "falcon budget", 1, levels=everyone
+    )
+
+    assert [texts[h.chunk_id] for h in semantic + keyword] == ["falcon", "falcon"]
+    assert [texts[h.chunk_id] for h in admin_semantic + admin_keyword] == [
+        "falcon budget",
+        "falcon budget",
+    ]

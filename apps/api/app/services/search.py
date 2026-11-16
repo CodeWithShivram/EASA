@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.core.identity import Identity
+from app.core.roles import visible_levels
 from app.embeddings.base import Embedder
 from app.repositories.documents import DocumentRepository
 from app.retrieval.base import KeywordIndex, ScoredChunk, VectorIndex
@@ -97,21 +98,23 @@ class SearchService:
             )
 
         tenant = identity.tenant_id
+        # Documents above the caller's role are filtered inside every query (ADR-033).
+        levels = visible_levels(identity.role)
         if mode is SearchMode.KEYWORD:
-            scored = self._keyword_index.search(tenant, normalized, top_k)
+            scored = self._keyword_index.search(tenant, normalized, top_k, levels=levels)
         elif mode is SearchMode.SEMANTIC:
-            scored = self._semantic(tenant, normalized, top_k)
+            scored = self._semantic(tenant, normalized, top_k, levels)
         else:
             pool = max(top_k * 4, MIN_HYBRID_CANDIDATES)
             scored = reciprocal_rank_fusion(
                 [
-                    self._semantic(tenant, normalized, pool),
-                    self._keyword_index.search(tenant, normalized, pool),
+                    self._semantic(tenant, normalized, pool, levels),
+                    self._keyword_index.search(tenant, normalized, pool, levels=levels),
                 ],
                 top_k=top_k,
             )
         details = self._documents.chunks_with_documents(
-            identity.tenant_id, [item.chunk_id for item in scored]
+            identity.tenant_id, [item.chunk_id for item in scored], levels=levels
         )
         hits = []
         for item in scored:
@@ -147,6 +150,8 @@ class SearchService:
         )
         return SearchResult(mode=mode, model_id=model_id, hits=hits)
 
-    def _semantic(self, tenant: uuid.UUID, query: str, top_k: int) -> list[ScoredChunk]:
+    def _semantic(
+        self, tenant: uuid.UUID, query: str, top_k: int, levels: tuple[str, ...]
+    ) -> list[ScoredChunk]:
         vector = self._embedder.embed_query(query)
-        return self._index.search(tenant, self._embedder.model_id, vector, top_k)
+        return self._index.search(tenant, self._embedder.model_id, vector, top_k, levels=levels)

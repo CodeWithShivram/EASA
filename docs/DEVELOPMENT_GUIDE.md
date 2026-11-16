@@ -104,6 +104,7 @@ Uploading a document from PowerShell (`curl.exe`, not the PowerShell `curl` alia
 
 ```powershell
 curl.exe -H $auth -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
+curl.exe -H $auth -F "file=@C:\path\to\handbook.txt" -F "min_role=manager" http://127.0.0.1:8000/api/v1/documents   # managers and administrators only
 curl.exe -H $auth "http://127.0.0.1:8000/api/v1/documents?limit=10"
 curl.exe -H $auth "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
 # Search: write the JSON body to a file to avoid PowerShell quoting issues
@@ -201,7 +202,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 770 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 802 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

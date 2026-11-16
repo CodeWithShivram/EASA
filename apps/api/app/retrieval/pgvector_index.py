@@ -8,12 +8,14 @@ Approximate indexes are evaluated in P3-M5.
 """
 
 import uuid
+from collections.abc import Sequence
 
 import numpy as np
 from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import Float, bindparam, cast, select
 from sqlalchemy.orm import Session
 
+from app.core.roles import EMPLOYEE_LEVELS
 from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.db.embeddings import ChunkEmbedding
 from app.db.types import VECTOR_DTYPE
@@ -26,7 +28,13 @@ class PgvectorIndex:
         self._session = session
 
     def search(
-        self, tenant_id: uuid.UUID, model_id: str, query: Vectors, top_k: int
+        self,
+        tenant_id: uuid.UUID,
+        model_id: str,
+        query: Vectors,
+        top_k: int,
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
     ) -> list[ScoredChunk]:
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
@@ -34,7 +42,8 @@ class PgvectorIndex:
         target = cast(bindparam("query_vector", vector, type_=VECTOR()), VECTOR())
         distance = ChunkEmbedding.vector.op("<=>", return_type=Float)(target)
         # Authorization and consistency filters are part of the query itself:
-        # only this tenant's vectors, for this model, of processed documents.
+        # only this tenant's vectors, for this model, of processed documents the
+        # caller's role may see.
         # The dimension filter keeps pgvector from comparing mismatched vectors.
         statement = (
             select(ChunkEmbedding.chunk_id, distance.label("distance"))
@@ -46,6 +55,7 @@ class PgvectorIndex:
                 ChunkEmbedding.dimensions == int(vector.shape[0]),
                 Document.tenant_id == tenant_id,
                 Document.status == DocumentStatus.PROCESSED,
+                Document.min_role.in_(levels),
             )
             # Ties are broken by chunk ID, as in BruteForceVectorIndex.
             .order_by(distance, ChunkEmbedding.chunk_id)

@@ -2,12 +2,14 @@
 
 import re
 import uuid
+from collections.abc import Sequence
 from http import HTTPStatus
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.roles import EMPLOYEE_LEVELS
 from app.db.documents import DocumentStatus
 from app.retrieval.base import ScoredChunk
 
@@ -24,10 +26,10 @@ POSTGRES_KEYWORD_SQL = text(
     "CROSS JOIN to_tsquery('english', :match) AS q(query) "
     "WHERE to_tsvector('english', dc.text) @@ q.query "
     "AND dc.tenant_id = :tenant AND d.tenant_id = :tenant "
-    "AND d.status = :status "
+    "AND d.status = :status AND d.min_role IN :levels "
     "ORDER BY rank DESC, dc.id "
     "LIMIT :limit"
-)
+).bindparams(bindparam("levels", expanding=True))
 
 
 def query_terms(query: str) -> list[str]:
@@ -76,14 +78,22 @@ class SqliteKeywordIndex:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def search(self, tenant_id: uuid.UUID, query: str, top_k: int) -> list[ScoredChunk]:
+    def search(
+        self,
+        tenant_id: uuid.UUID,
+        query: str,
+        top_k: int,
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
+    ) -> list[ScoredChunk]:
         _check_top_k(top_k)
         if self._session.get_bind().dialect.name != "sqlite":
             raise _unavailable()
         match = build_match_query(query)
         if match is None:
             return []
-        # Tenant and status filters are part of the query; bm25() is lower-is-better.
+        # Tenant, status and visibility filters are part of the query; bm25() is
+        # lower-is-better.
         rows = self._session.execute(
             text(
                 "SELECT dc.id AS chunk_id, bm25(chunk_fts) AS rank "
@@ -92,14 +102,15 @@ class SqliteKeywordIndex:
                 "JOIN documents d ON d.id = dc.document_id "
                 "WHERE chunk_fts MATCH :match "
                 "AND dc.tenant_id = :tenant AND d.tenant_id = :tenant "
-                "AND d.status = :status "
+                "AND d.status = :status AND d.min_role IN :levels "
                 "ORDER BY rank, dc.id "
                 "LIMIT :limit"
-            ),
+            ).bindparams(bindparam("levels", expanding=True)),
             {
                 "match": match,
                 "tenant": tenant_id.hex,
                 "status": DocumentStatus.PROCESSED.value,
+                "levels": list(levels),
                 "limit": top_k,
             },
         )
@@ -116,7 +127,14 @@ class PostgresKeywordIndex:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def search(self, tenant_id: uuid.UUID, query: str, top_k: int) -> list[ScoredChunk]:
+    def search(
+        self,
+        tenant_id: uuid.UUID,
+        query: str,
+        top_k: int,
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
+    ) -> list[ScoredChunk]:
         _check_top_k(top_k)
         if self._session.get_bind().dialect.name != "postgresql":
             raise _unavailable()
@@ -129,6 +147,7 @@ class PostgresKeywordIndex:
                 "match": tsquery,
                 "tenant": tenant_id,
                 "status": DocumentStatus.PROCESSED.value,
+                "levels": list(levels),
                 "limit": top_k,
             },
         )

@@ -6,11 +6,13 @@ On PostgreSQL, PgvectorIndex computes the same results inside the database.
 """
 
 import uuid
+from collections.abc import Sequence
 
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.roles import EMPLOYEE_LEVELS
 from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.db.embeddings import ChunkEmbedding
 from app.embeddings.base import Vectors
@@ -26,13 +28,20 @@ class BruteForceVectorIndex:
         self._batch_size = batch_size
 
     def search(
-        self, tenant_id: uuid.UUID, model_id: str, query: Vectors, top_k: int
+        self,
+        tenant_id: uuid.UUID,
+        model_id: str,
+        query: Vectors,
+        top_k: int,
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
     ) -> list[ScoredChunk]:
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
         query = np.asarray(query, dtype=np.float32)
         # Authorization and consistency filters are part of the query itself:
-        # only this tenant's vectors, for this model, of processed documents.
+        # only this tenant's vectors, for this model, of processed documents the
+        # caller's role may see.
         statement = (
             select(ChunkEmbedding.chunk_id, ChunkEmbedding.vector, ChunkEmbedding.dimensions)
             .join(DocumentChunk, DocumentChunk.id == ChunkEmbedding.chunk_id)
@@ -42,6 +51,7 @@ class BruteForceVectorIndex:
                 ChunkEmbedding.tenant_id == tenant_id,
                 Document.tenant_id == tenant_id,
                 Document.status == DocumentStatus.PROCESSED,
+                Document.min_role.in_(levels),
             )
         )
         result = self._session.execute(statement, execution_options={"yield_per": self._batch_size})

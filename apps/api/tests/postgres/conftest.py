@@ -25,6 +25,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.core.config import API_ROOT
+from app.core.roles import Role
 from app.db.documents import Document, DocumentChunk, DocumentMediaType, DocumentStatus
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
@@ -111,6 +112,7 @@ def add_document(
     embedder: Embedder | None = None,
     status: DocumentStatus = DocumentStatus.PROCESSED,
     model_id: str | None = None,
+    min_role: Role = Role.EMPLOYEE,
 ) -> list[DocumentChunk]:
     """Store a synthetic document with chunks and, given an embedder, their vectors."""
     repository = DocumentRepository(session)
@@ -123,6 +125,7 @@ def add_document(
             size_bytes=1,
             sha256=hashlib.sha256(repr((tenant_id, texts, status, model_id)).encode()).hexdigest(),
             status=status,
+            min_role=min_role,
         )
     )
     chunks = [

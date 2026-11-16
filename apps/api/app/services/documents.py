@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.core.identity import Identity
+from app.core.roles import Role, can_assign_level, visible_levels
 from app.db.documents import Document, DocumentChunk, DocumentStatus
 from app.db.types import utc_now
 from app.embeddings.base import Embedder
@@ -67,13 +68,23 @@ class DocumentService:
         self._embedding_batch_size = embedding_batch_size
         self._docx_limits = docx_limits
 
-    def upload(self, identity: Identity, raw_filename: str | None, data: bytes) -> UploadResult:
+    def upload(
+        self,
+        identity: Identity,
+        raw_filename: str | None,
+        data: bytes,
+        *,
+        min_role: Role = Role.EMPLOYEE,
+    ) -> UploadResult:
+        _check_level(identity, min_role)
         validated = validate_upload(
             raw_filename, data, max_bytes=self._max_upload_bytes, docx_limits=self._docx_limits
         )
         sha256 = hashlib.sha256(data).hexdigest()
 
         existing = self._repository.get_by_sha256(identity.tenant_id, sha256)
+        if existing is not None and existing.min_role not in visible_levels(identity.role):
+            raise _hidden_duplicate()
         if existing is not None:
             if self._is_interrupted(existing):
                 logger.warning(
@@ -93,6 +104,7 @@ class DocumentService:
             media_type=validated.media_type,
             size_bytes=len(data),
             sha256=sha256,
+            min_role=min_role,
         )
         try:
             self._repository.add(document)
@@ -103,6 +115,8 @@ class DocumentService:
             existing = self._repository.get_by_sha256(identity.tenant_id, sha256)
             if existing is None:
                 raise
+            if existing.min_role not in visible_levels(identity.role):
+                raise _hidden_duplicate() from None
             return UploadResult(document=existing, created=False)
 
         self._process(document, data)
@@ -219,13 +233,27 @@ class DocumentService:
         )
 
     def list(self, identity: Identity, *, limit: int, offset: int) -> list[Document]:
-        return self._repository.list_for_tenant(identity.tenant_id, limit=limit, offset=offset)
+        return self._repository.list_for_tenant(
+            identity.tenant_id, limit=limit, offset=offset, levels=visible_levels(identity.role)
+        )
 
     def get(self, identity: Identity, document_id: uuid.UUID) -> Document:
-        document = self._repository.get(identity.tenant_id, document_id)
+        """A document of the caller's tenant that their role may see; 404 otherwise."""
+        document = self._repository.get(
+            identity.tenant_id, document_id, levels=visible_levels(identity.role)
+        )
         if document is None:
             raise DocumentNotFoundError()
         return document
+
+    def set_min_role(self, identity: Identity, document_id: uuid.UUID, min_role: Role) -> Role:
+        """Change who may see a visible document; returns the previous minimum role."""
+        _check_level(identity, min_role)
+        document = self.get(identity, document_id)
+        previous = Role(document.min_role)
+        document.min_role = min_role
+        self._session.commit()
+        return previous
 
     def list_chunks(
         self, identity: Identity, document_id: uuid.UUID, *, limit: int, offset: int
@@ -236,3 +264,22 @@ class DocumentService:
             identity.tenant_id, document.id, limit=limit, offset=offset
         )
         return chunks, self._repository.count_chunks(identity.tenant_id, document.id)
+
+
+def _check_level(identity: Identity, level: Role) -> None:
+    if not can_assign_level(identity.role, level):
+        raise AppError(
+            "You cannot restrict a document to a role above your own.",
+            code="min_role_not_allowed",
+            status_code=HTTPStatus.FORBIDDEN,
+        )
+
+
+def _hidden_duplicate() -> AppError:
+    # The uploader holds the content already; only the existence of a copy they
+    # may not see is revealed, never its name, ID or visibility.
+    return AppError(
+        "A document with the same content already exists.",
+        code="document_exists",
+        status_code=HTTPStatus.CONFLICT,
+    )

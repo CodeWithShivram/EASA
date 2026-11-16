@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from app.core.roles import Role
 from app.db.documents import DocumentMediaType, DocumentStatus
 
 
@@ -14,6 +15,8 @@ class DocumentResponse(BaseModel):
 
     id: uuid.UUID
     filename: str
+    # Lowest role that may see the document (P6-M3).
+    min_role: Role
     media_type: DocumentMediaType
     size_bytes: int
     sha256: str
@@ -48,3 +51,9 @@ class ChunkListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class UpdateDocumentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_role: Role

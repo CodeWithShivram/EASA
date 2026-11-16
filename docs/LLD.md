@@ -283,6 +283,14 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - [services/auth.py](../apps/api/app/services/auth.py): `AuthService(..., audit)` records `auth.login` / `auth.logout`; shared helpers `check_new_account`, `check_new_password`, `add_user`; `NO_ID` (nil UUID) for unknown usernames.
 - [services/users.py](../apps/api/app/services/users.py) `UserAdminService`: `list_users`, `create`, `update(role, is_active)` (`409 cannot_modify_self`; disabling calls `AccountRepository.revoke_all_sessions`), `reset_password`; users of other tenants raise `404 user_not_found`; each change is audited with the administrator as the user. Routes in [routes/users.py](../apps/api/app/api/v1/routes/users.py).
 
+### 2.6p Document visibility (P6-M3)
+
+- [core/roles.py](../apps/api/app/core/roles.py): `visible_levels(role)` (roles at or below; employee only for unknown or missing roles), `can_assign_level(role, level)`, `EMPLOYEE_LEVELS`.
+- Indexes ([brute_force.py](../apps/api/app/retrieval/brute_force.py), [pgvector_index.py](../apps/api/app/retrieval/pgvector_index.py), [keyword.py](../apps/api/app/retrieval/keyword.py)): keyword-only `levels` (default `EMPLOYEE_LEVELS`) added to the query as `Document.min_role IN levels` (an expanding bind parameter in the raw keyword SQL).
+- [services/search.py](../apps/api/app/services/search.py): `levels = visible_levels(identity.role)` passed to both indexes and to `DocumentRepository.chunks_with_documents`; answers, conversations and the agent's knowledge tool all go through it.
+- [repositories/documents.py](../apps/api/app/repositories/documents.py): `get`, `list_for_tenant` and `chunks_with_documents` filter by `levels`; `get_by_sha256` deliberately does not (duplicate detection).
+- [services/documents.py](../apps/api/app/services/documents.py): `upload(..., min_role)` (`403 min_role_not_allowed`, `409 document_exists` for a hidden duplicate), `get`/`list`/`list_chunks` with the caller's levels, `set_min_role`. [routes/documents.py](../apps/api/app/api/v1/routes/documents.py): `min_role` form field, `PATCH /documents/{id}`, audit records `document.upload` and `document.update`.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.

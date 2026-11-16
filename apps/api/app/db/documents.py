@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.roles import Role
 from app.db.base import Base
 from app.db.types import UtcDateTime, utc_now
 
@@ -69,6 +70,7 @@ class Document(Base):
         CheckConstraint("page_count IS NULL OR page_count >= 0", name="page_count_non_negative"),
         _allowed_values_check("media_type", DocumentMediaType),
         _allowed_values_check("status", DocumentStatus),
+        _allowed_values_check("min_role", Role),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -76,6 +78,10 @@ class Document(Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     # Sanitized original name, for display only; never used as a storage path.
     filename: Mapped[str] = mapped_column(String(255))
+    # Lowest role that may see the document and its chunks (P6-M3, ADR-033).
+    min_role: Mapped[Role] = mapped_column(
+        _enum_column(Role, 20), default=Role.EMPLOYEE, server_default=Role.EMPLOYEE.value
+    )
     media_type: Mapped[DocumentMediaType] = mapped_column(_enum_column(DocumentMediaType, 100))
     size_bytes: Mapped[int]
     sha256: Mapped[str] = mapped_column(String(64))

@@ -26,6 +26,7 @@ Tables are added only when a phase defines their requirements ([ADR-004](ARCHITE
 | `tenant_id` | UUID | no | Isolation boundary. No foreign key until tenants exist (Phase 6) |
 | `owner_id` | UUID | no | Uploading user. No foreign key until users exist (Phase 6) |
 | `filename` | varchar(255) | no | Sanitized original name, display only; never a storage path |
+| `min_role` | varchar(20) | no | Lowest role that may see the document: `employee` (default, also for documents from before P6-M3), `manager`, `administrator`; CHECK `ck_documents_min_role_allowed`; migration `bd1565448556` |
 | `media_type` | varchar(100) | no | `application/pdf`, DOCX (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) or `text/plain` (`ck_documents_media_type_allowed`) |
 | `size_bytes` | integer | no | `> 0` (`ck_documents_size_positive`) |
 | `sha256` | varchar(64) | no | Hex digest of the content; key into the file store |

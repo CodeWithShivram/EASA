@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.core.roles import EMPLOYEE_LEVELS
 from app.db.documents import Document, DocumentChunk
 
 MAX_PAGE_SIZE = 200
@@ -26,20 +27,34 @@ class DocumentRepository:
         self._session.flush()
         return document
 
-    def get(self, tenant_id: uuid.UUID, document_id: uuid.UUID) -> Document | None:
+    def get(
+        self,
+        tenant_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
+    ) -> Document | None:
         statement = select(Document).where(
-            Document.id == document_id, Document.tenant_id == tenant_id
+            Document.id == document_id,
+            Document.tenant_id == tenant_id,
+            Document.min_role.in_(levels),
         )
         return self._session.scalars(statement).one_or_none()
 
     def get_by_sha256(self, tenant_id: uuid.UUID, sha256: str) -> Document | None:
+        """Any document with this content in the tenant, whatever its visibility (dedup)."""
         statement = select(Document).where(
             Document.tenant_id == tenant_id, Document.sha256 == sha256
         )
         return self._session.scalars(statement).one_or_none()
 
     def list_for_tenant(
-        self, tenant_id: uuid.UUID, *, limit: int = 50, offset: int = 0
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
     ) -> list[Document]:
         if not 1 <= limit <= MAX_PAGE_SIZE:
             raise ValueError(f"limit must be between 1 and {MAX_PAGE_SIZE}")
@@ -47,7 +62,7 @@ class DocumentRepository:
             raise ValueError("offset must not be negative")
         statement = (
             select(Document)
-            .where(Document.tenant_id == tenant_id)
+            .where(Document.tenant_id == tenant_id, Document.min_role.in_(levels))
             .order_by(Document.created_at.desc(), Document.id)
             .limit(limit)
             .offset(offset)
@@ -76,9 +91,13 @@ class DocumentRepository:
         return list(self._session.scalars(statement))
 
     def chunks_with_documents(
-        self, tenant_id: uuid.UUID, chunk_ids: Sequence[uuid.UUID]
+        self,
+        tenant_id: uuid.UUID,
+        chunk_ids: Sequence[uuid.UUID],
+        *,
+        levels: Sequence[str] = EMPLOYEE_LEVELS,
     ) -> dict[uuid.UUID, tuple[DocumentChunk, Document]]:
-        """Chunks and their documents by chunk ID, restricted to the tenant."""
+        """Chunks and their documents by chunk ID, restricted to the tenant and visibility."""
         if not chunk_ids:
             return {}
         statement = (
@@ -88,6 +107,7 @@ class DocumentRepository:
                 DocumentChunk.id.in_(chunk_ids),
                 DocumentChunk.tenant_id == tenant_id,
                 Document.tenant_id == tenant_id,
+                Document.min_role.in_(levels),
             )
         )
         return {chunk.id: (chunk, document) for chunk, document in self._session.execute(statement)}

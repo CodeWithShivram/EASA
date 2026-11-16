@@ -120,6 +120,7 @@ Document object (`DocumentResponse`):
 |---|---|---|
 | `id` | UUID | |
 | `filename` | string | Sanitized display name (section 3.4.1 rules); never a storage path |
+| `min_role` | string | Lowest role that may see the document: `employee`, `manager` or `administrator` (P6-M3) |
 | `media_type` | string | `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` or `text/plain`, decided by the server from the extension **and** content (the client's declared type is ignored) |
 | `size_bytes` | integer | |
 | `sha256` | string | Hex digest of the content |
@@ -136,9 +137,12 @@ Tenant and owner IDs are not returned.
 | Item | Specification |
 |---|---|
 | Purpose | Store a PDF, DOCX or TXT file for the current tenant |
-| Request | `multipart/form-data` with one file field named `file` |
+| Request | `multipart/form-data` with one file field named `file` and an optional field `min_role` (default `employee`; at most the uploader's own role) |
+| Authorization | `documents:upload` (managers and administrators) |
 | Response `201` | Document object; `Location: /api/v1/documents/{id}` |
-| Response `200` | Same content was already uploaded in this tenant: the **existing** document is returned unchanged (idempotent; the new filename is ignored) |
+| Response `200` | Same content was already uploaded in this tenant and the uploader may see it: the **existing** document is returned unchanged (idempotent; the new filename and `min_role` are ignored) |
+| Response `409 document_exists` | Same content exists in this tenant but above the uploader's role; nothing about that document is returned |
+| Response `403 min_role_not_allowed` | `min_role` above the uploader's own role |
 | Validation | 1. Filename: last path component only (both `/` and `\`), Unicode NFC, whitespace (including tabs, newlines, NEL) → spaces, C0/C1 control characters, zero-width characters, Unicode bidirectional controls and `< > : " / \ \| ? *` removed, trailing dots and spaces removed; must not be empty or start with a dot; truncated to 255 characters keeping the extension. 2. Extension allowlist: `.pdf`, `.docx`, `.txt` (case-insensitive). 3. Size: 1 byte to `EASA_MAX_UPLOAD_BYTES` (default 10 MiB). 4. Content must match the extension: PDF starts with `%PDF-`; DOCX is a readable zip with `[Content_Types].xml` and `word/document.xml`, at most 1000 entries, 100 MiB total uncompressed, compression ratio ≤ 200 per entry, no encrypted entries, no VBA macro part; TXT is valid UTF-8 (BOM allowed), contains no NUL bytes and is not a PDF or zip |
 
 Upload error codes (all use the error envelope):
@@ -177,6 +181,12 @@ Encrypted PDFs are detected during processing, because that requires parsing the
 | Path | `document_id`: UUID |
 | Response `200` | Document object |
 | Errors | `404 document_not_found` (missing or another tenant's); `422 validation_error` for a malformed UUID |
+
+#### 3.4.3a `PATCH /api/v1/documents/{document_id}` — change who may see a document (P6-M3)
+
+Body `{"min_role": "employee" | "manager" | "administrator"}` (unknown fields rejected). Requires `documents:upload`; the document must be visible to the caller (otherwise `404 document_not_found`) and the new level at most the caller's own role (otherwise `403 min_role_not_allowed`). Returns the updated document. Audited as `document.update` (`min_role=old->new`); uploads are audited as `document.upload`.
+
+Visibility everywhere (P6-M3, [ADR-033](ARCHITECTURE_DECISIONS.md#adr-033)): list, get and chunks return only documents whose `min_role` is at or below the caller's role; a hidden document gives the same `404` as a missing one. Search (all modes), answers, conversations and the agent's knowledge tool apply the same filter inside the database query, before ranking.
 
 #### 3.4.4 Processing outcome
 
@@ -357,7 +367,7 @@ Each route requires one permission of the signed-in user's role ([ADR-032](ARCHI
 |---|---|---|---|---|
 | `knowledge:search` | ✓ | ✓ | ✓ | search, answers, conversations, the agent's knowledge tool |
 | `documents:read` | ✓ | ✓ | ✓ | list documents, read a document and its chunks |
-| `documents:upload` | – | ✓ | ✓ | upload documents |
+| `documents:upload` | – | ✓ | ✓ | upload documents, change a visible document's `min_role` |
 | `tickets:read` | ✓ | ✓ | ✓ | agent ticket tools (own tickets) |
 | `tickets:read_all` | – | ✓ | ✓ | agent ticket tools read every ticket in the tenant |
 | `tickets:create` | ✓ | ✓ | ✓ | propose draft tickets (confirmed by the user) |
@@ -407,7 +417,7 @@ Each will be documented here with purpose, authentication, authorization, reques
 
 ## 6. Known gaps
 
-- No rate limiting yet (only the per-account sign-in lockout). Document-level permissions follow in P6-M3; an audit query endpoint in P6-M4.
+- No rate limiting yet (only the per-account sign-in lockout). An audit query endpoint follows in P6-M4.
 - Uploads are only accepted from non-browser clients for now (CORS allows `GET` only).
 - Health endpoints are public. They expose only coarse status.
 - Only `GET` is allowed by CORS; this will widen as endpoints are added.

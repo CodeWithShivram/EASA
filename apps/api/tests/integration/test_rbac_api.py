@@ -76,6 +76,7 @@ REQUIRED = {
     ("POST", "/api/v1/documents"): "documents:upload",
     ("GET", "/api/v1/documents"): "documents:read",
     ("GET", "/api/v1/documents/{document_id}"): "documents:read",
+    ("PATCH", "/api/v1/documents/{document_id}"): "documents:upload",
     ("GET", "/api/v1/documents/{document_id}/chunks"): "documents:read",
     ("POST", "/api/v1/search"): "knowledge:search",
     ("POST", "/api/v1/answers"): "knowledge:search",
