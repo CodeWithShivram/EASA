@@ -1170,7 +1170,7 @@ Demonstration tools from the guide: knowledge base search, get ticket, ticket st
 
 **Dependencies added in Phase 5:** none.
 
-**Architecture decisions:** ADR-028 (tool framework and audit log), ADR-029 (agent loop with schema-constrained steps and confirmation).
+**Architecture decisions:** ADR-028 (tool framework and audit log), ADR-029 (agent loop with schema-constrained steps and confirmation), ADR-030 (agent safeguards after evaluation, follow-up below).
 
 **Tests:** 684 backend (388 unit, 241 integration, 3 real-embedding, 48 PostgreSQL, 4 live model) plus 27 frontend = 711, up from 590 at the end of Phase 4.
 
@@ -1183,4 +1183,34 @@ Demonstration tools from the guide: knowledge base search, get ticket, ticket st
 3. `POST /api/v1/agent` asking for ticket 6 → not found.
 4. `uv run python -m app.cli evaluate-agent --limit 5` → a report in `var/eval/`.
 
-**Recommended next phase:** Phase 6, authentication and role-based access control. Before or alongside it, the four agent fixes proposed in EVALUATION.md section 11.5 could be done as a short follow-up, if approved.
+**Recommended next phase:** Phase 6, authentication and role-based access control. The agent fixes proposed in EVALUATION.md section 11.5 were approved and done as a follow-up (below).
+
+## P5-M5 follow-up: ADR-030 agent safeguards
+
+**Scope:** the four agent fixes proposed by the agent evaluation (EVALUATION.md section 11.5), approved on 2026-11-16, each measured with the 26 tasks.
+
+**Implemented**
+
+- Claimed-action check in `AgentService`: an answer that reports a change ("has been closed", "I have sent" …) not shown by any tool result of the run is replaced by "I can't do that, and nothing has been changed." (`reason` `unsupported_claim`); speculation after a modal ("may have been deleted") is not a claim.
+- `Tool.user_stated` (checked at startup against the input model): values of these fields are dropped from a proposal unless the user's message states them; `create_draft_ticket` marks `priority`, which also says "Only if the user states a priority" in its schema.
+- Tried and removed after measurement: prompt rule 5 (say "I cannot do that", no substitute tool) and a list of the tools the user may not use; recommendation 4 (fixed answers without ticket access) not done (EVALUATION.md section 11.6).
+- Tests: 19 unit (claims seen in the evaluation detected; reported states, ordinary sentences and speculation kept; user-only fields; contract check) and 4 integration (claimed change replaced, reported state kept, priority dropped or kept).
+- Docs: ADR-030, EVALUATION.md section 11.6, API spec section 3.9, LLD, SECURITY.
+
+**Verification (executed 2026-11-16)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 707 passed (407 unit, 245 integration, 3 real-embedding, 48 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 655 passed, 52 skipped |
+| `evaluate-agent`, four runs (EVALUATION.md section 11.6; **nothing confirmed** in any run) | Adopted version: automatic success 0.85, 20 of 26 acceptable after manual review (19 before), u1 answered "I can't do that, and nothing has been changed.", drafts `normal` unless the user names a priority; tickets 7 before and after and 0 succeeded `create_draft_ticket` calls in every run. The version with the prompt rule leaked the injected fake admin address in one answer and was rejected |
+| Reproduction of task x1 with a recording model wrapper (scratch script) | Showed the false positive ("it may have been deleted"); fixed with the modal exception and reproduced again: the answer is kept |
+| First test run of the follow-up | One wrong expectation in a new test ("The priority is now changed to high" is a claim); the test was corrected |
+
+**Known limitations**
+
+- The claim check is lexical; the scorer still cannot see invented facts (p1) or unrelated answers (p2).
+- Unsupported requests still become draft proposals (3 of 4).
+
+**Exit criteria:** met. Two measured safeguards are in place, the prompt change that made things worse was removed, and the remaining weaknesses are recorded.

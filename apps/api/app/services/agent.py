@@ -10,6 +10,9 @@ becomes a pending action that the user confirms or cancels separately.
 Limits: at most MAX_TOOL_STEPS tool calls; then the model must answer. A call
 that repeats an earlier one (same tool and arguments) is not run again: the
 model is told so and may only answer next.
+Safeguards from the P5-M5 evaluation (ADR-030): arguments only the user may
+choose are dropped unless the user's message states them, and an answer that
+claims a change no tool result reports is replaced by a fixed message.
 Messages, tool arguments and answers are never logged.
 """
 
@@ -33,6 +36,7 @@ from app.db.types import utc_now
 from app.llm.base import ChatMessage, ChatModel, ModelResponseError, ModelUnavailableError
 from app.repositories.pending_actions import PendingActionRepository
 from app.services.normalization import normalize_text
+from app.tools.base import Tool
 from app.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,26 @@ MAX_OPEN_ACTIONS = 20
 FINAL_ANSWER = "final_answer"
 
 _RESULT_TAG = re.compile(r"<(/?)tool_result", re.IGNORECASE)
+
+# Words that report a change. "Ticket 1 has been closed" is kept only when a
+# tool result of the same run contains the word (e.g. a ticket whose status is
+# closed); P5-M5: "Close my ticket 1" was answered that way with nothing done.
+_CHANGE = (
+    r"(closed|deleted|removed|cancel+ed|updated|changed|modified|created|opened|submitted"
+    r"|sent|escalated|reassigned|resolved|raised|filed|approved|forwarded)"
+)
+# Speculation is not a claim: "it may have been deleted" (seen for a missing ticket).
+_NOT_AFTER_MODAL = "".join(
+    rf"(?<!\b{modal}\s)" for modal in ("may", "might", "could", "would", "should", "must", "will")
+)
+_CLAIM = re.compile(
+    rf"{_NOT_AFTER_MODAL}\b(?:has|have|had)\s+(?:now\s+)?been\s+(?:successfully\s+)?{_CHANGE}\b"
+    rf"|\b(?:was|were)\s+(?:now\s+|successfully\s+)?{_CHANGE}\b"
+    rf"|\bis\s+now\s+{_CHANGE}\b"
+    rf"|\bI(?:'ve|\s+have)\s+(?:now\s+|successfully\s+)?{_CHANGE}\b",
+    re.IGNORECASE,
+)
+NO_CHANGE_ANSWER = "I can't do that, and nothing has been changed."
 
 SYSTEM_PROMPT = """You are a company support assistant that can use tools.
 Reply with exactly one JSON step: call a tool with {"action": "<tool name>", "arguments": {...}}, \
@@ -87,7 +111,8 @@ class AgentResult:
     answer: str | None
     steps: list[AgentStep] = field(default_factory=list)
     pending_action: PendingAction | None = None
-    reason: str | None = None  # why it failed
+    # Why it failed, or "unsupported_claim" when an answer was replaced.
+    reason: str | None = None
     model_id: str | None = None
 
 
@@ -150,6 +175,34 @@ def confirmation_message(tool: str, arguments: dict[str, Any]) -> str:
     return f"Nothing has been done yet. Confirm to run {tool} with {details}, or cancel."
 
 
+def unsupported_claim(answer: str, evidence: str) -> bool:
+    """True if the answer reports a change that no tool result mentions."""
+    lowered = evidence.lower()
+    for match in _CLAIM.finditer(answer):
+        word = next(group for group in match.groups() if group).lower()
+        if word not in lowered:
+            return True
+    return False
+
+
+def drop_unstated(tool: Tool | None, arguments: dict[str, Any], message: str) -> dict[str, Any]:
+    """Remove values of user-only fields that the user's message does not state."""
+    if tool is None or not tool.user_stated:
+        return arguments
+    lowered = message.lower()
+
+    def stated(value: Any) -> bool:
+        return isinstance(value, str) and bool(
+            re.search(rf"\b{re.escape(value.lower())}\b", lowered)
+        )
+
+    return {
+        key: value
+        for key, value in arguments.items()
+        if key not in tool.user_stated or stated(value)
+    }
+
+
 def parse_step(text: str) -> Step | None:
     """The model's step, or None if the reply is not a valid step."""
     try:
@@ -200,6 +253,7 @@ class AgentService:
             ChatMessage("user", text),
         ]
         steps: list[AgentStep] = []
+        evidence: list[str] = []  # tool results of this run
         seen: set[str] = set()
         must_answer = False
         for index in range(MAX_TOOL_STEPS + 1):
@@ -212,9 +266,15 @@ class AgentService:
                     AgentResult(AgentStatus.FAILED, None, steps, reason="invalid_model_output"),
                 )
             if step.action == FINAL_ANSWER:
+                if unsupported_claim(step.answer, "\n".join(evidence)):
+                    replaced = AgentResult(
+                        AgentStatus.ANSWERED, NO_CHANGE_ANSWER, steps, reason="unsupported_claim"
+                    )
+                    return self._finish(started, replaced)
                 return self._finish(started, AgentResult(AgentStatus.ANSWERED, step.answer, steps))
             action = step.action
-            signature = json.dumps([action, step.arguments], sort_keys=True, default=str)
+            arguments = drop_unstated(self._executor.registry.get(action), step.arguments, text)
+            signature = json.dumps([action, arguments], sort_keys=True, default=str)
             if signature in seen:
                 # Small models repeat calls; the result is already in the conversation.
                 steps.append(AgentStep(action, "repeated", None))
@@ -229,7 +289,7 @@ class AgentService:
                 must_answer = True
                 continue
             seen.add(signature)
-            result = self._executor.execute(identity, action, step.arguments)
+            result = self._executor.execute(identity, action, arguments)
             steps.append(AgentStep(action, result.outcome.value, result.detail))
             if result.outcome is AuditOutcome.CONFIRMATION_REQUIRED:
                 open_actions = self._actions.count_open(
@@ -264,6 +324,7 @@ class AgentService:
             else:
                 observation["message"] = result.message or ""
             data = _neutralize(json.dumps(observation, default=str))[:MAX_RESULT_CHARS]
+            evidence.append(data)
             messages.append(ChatMessage("assistant", reply_text))
             messages.append(
                 ChatMessage(

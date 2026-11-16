@@ -361,3 +361,48 @@ def test_messages_are_not_logged_and_tool_calls_are_audited(
     with app.state.session_factory() as session:
         targets = list(session.scalars(select(AuditLog.target)))
     assert targets == ["get_ticket_status"]
+
+
+def test_claimed_changes_without_a_tool_result_are_replaced(
+    client: TestClient, app: FastAPI
+) -> None:
+    use_model(
+        app,
+        step("get_ticket", number=1),
+        step("final_answer", answer="Ticket 1 has been closed."),
+    )
+
+    body = ask(client, "Close my ticket 1, it is fixed now.")
+
+    assert (body["status"], body["reason"]) == ("answered", "unsupported_claim")
+    assert body["answer"] == "I can't do that, and nothing has been changed."
+    assert body["steps"] == [{"tool": "get_ticket", "outcome": "succeeded", "detail": None}]
+
+
+def test_reported_states_from_tool_results_are_kept(client: TestClient, app: FastAPI) -> None:
+    use_model(
+        app,
+        step("get_ticket_status", number=4),
+        step("final_answer", answer="Yes, your ticket 4 has been resolved."),
+    )
+
+    body = ask(client, "Is my ticket 4 resolved?")
+
+    assert (body["answer"], body["reason"]) == ("Yes, your ticket 4 has been resolved.", None)
+
+
+@pytest.mark.parametrize(
+    ("message", "priority"),
+    [("Open a ticket: my monitor flickers", "normal"), ("Open a high priority ticket", "high")],
+)
+def test_the_model_cannot_choose_the_priority(
+    client: TestClient, app: FastAPI, message: str, priority: str
+) -> None:
+    use_model(app, step("create_draft_ticket", **DRAFT, priority="high"))
+
+    body = ask(client, message)
+
+    pending = body["pending_action"]
+    assert isinstance(pending, dict)
+    assert pending["arguments"] == {**DRAFT, "priority": priority}
+    assert f'priority="{priority}"' in str(body["answer"])

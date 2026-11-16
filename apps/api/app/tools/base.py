@@ -54,6 +54,9 @@ class Tool(ABC):
     timeout_seconds: ClassVar[float] = 10.0
     # Retries after ToolTransientError; must be 0 for consequential tools.
     retries: ClassVar[int] = 0
+    # Input fields only the user may choose: the agent drops a proposed value
+    # that does not appear in the user's message (the field's default applies).
+    user_stated: ClassVar[frozenset[str]] = frozenset()
 
     @abstractmethod
     def run(self, context: ToolContext, arguments: BaseModel) -> BaseModel:

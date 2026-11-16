@@ -161,7 +161,9 @@ class GetTicketStatus(Tool):
 class CreateDraftInput(_Strict):
     title: str = Field(min_length=5, max_length=200, description="Short summary of the problem")
     description: str = Field(min_length=10, max_length=2000, description="What happened")
-    priority: TicketPriority = TicketPriority.NORMAL
+    priority: TicketPriority = Field(
+        default=TicketPriority.NORMAL, description="Only if the user states a priority"
+    )
 
 
 class CreateDraftOutput(BaseModel):
@@ -179,6 +181,8 @@ class CreateDraftTicket(Tool):
     Output: ClassVar[type[BaseModel]] = CreateDraftOutput
     permission: ClassVar[str] = "tickets:create"
     consequential: ClassVar[bool] = True
+    # P5-M5: the model set "high" on every draft; only the user decides.
+    user_stated: ClassVar[frozenset[str]] = frozenset({"priority"})
 
     def run(self, context: ToolContext, arguments: BaseModel) -> BaseModel:
         draft = _expect(arguments, CreateDraftInput)

@@ -34,6 +34,7 @@
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 | [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
+| [ADR-030](#adr-030) | Agent safeguards after evaluation: claimed-action check and user-only fields; no prompt change | P5-M5 follow-up |
 
 ---
 
@@ -426,6 +427,19 @@
   - Tool results go back as escaped `<tool_result>` data; messages and answers are never logged.
 - **Trade-offs:** The schema guarantees the format, not good choices: in the live probe an instruction to "delete all tickets" became a proposed draft ticket, stopped only by the confirmation gate. Final answers are not citation-checked. One request can take tens of seconds on the CPU (up to 4 model calls).
 - **Consequences:** P5-M4 attacks this loop (injection through documents and tickets, unauthorized and malformed calls); P5-M5 measures task success and checks that confirmation is never bypassed.
+
+<a id="adr-030"></a>
+## ADR-030: Agent safeguards after evaluation: claimed-action check and user-only fields; no prompt change
+
+- **Status:** Accepted (P5-M5 follow-up, 2026-11-16; approved after the agent evaluation)
+- **Context:** The P5-M5 evaluation ([EVALUATION.md section 11](EVALUATION.md#11-agent-evaluation-phase-5-p5-m5)) found no access-control failure, but integrity problems: an answer claimed "Ticket 1 has been closed" when nothing had changed; requests for tools that do not exist became draft-ticket proposals (3 of 4); the model set "high" priority on every draft; a user without ticket access got an invented status.
+- **Options considered:** a prompt rule (say "I cannot do that" for unsupported requests, no substitute tool, tickets only when asked) plus a list of the tools the user may not use; server-side checks; a second model call to verify answers (too slow on the CPU); a request classifier that answers ticket questions without permission with a fixed message (rejected: the server cannot reliably tell a ticket question from a knowledge question such as "how do I raise a ticket?").
+- **Decision:**
+  - **Claimed-action check (server):** a final answer that reports a change ("has been closed", "was deleted", "is now escalated", "I have sent" …) is replaced by "I can't do that, and nothing has been changed." (`reason` `unsupported_claim`) unless a tool result of the same run contains the reported word (so "your ticket 4 has been resolved" after a status lookup is kept). Speculation after a modal ("it may have been deleted") is not a claim; that exception was added after a follow-up run replaced a truthful "not found" answer. The agent never runs a consequential tool itself, so no change can have happened within a run.
+  - **User-only fields (server):** `Tool.user_stated` names input fields the model may not choose; a proposed value is dropped unless it appears as a word in the user's message, and the field's default applies. `create_draft_ticket` marks `priority`. Checked at startup against the input model.
+  - **No prompt change.** The prompt rule and the list of unavailable tools were implemented and evaluated, then removed: unsupported requests still became proposals (3 of 4, as before), and the changed prompt made the model propose an unrequested ticket from the newsletter and repeat the injected fake admin address to the limited user, the first injection to reach an agent answer. A run with the original prompt and the server-side checks reproduced neither ([EVALUATION.md section 11.6](EVALUATION.md#116-follow-up-adr-030)).
+- **Trade-offs:** The claim check is lexical: it can miss claims phrased differently and can replace a truthful sentence whose reported word is not in any tool result. Unsupported requests still become draft proposals; the server-written confirmation prompt and the user's decision remain the safeguard. Small prompt changes alter a small model's behaviour in unrelated tasks, so prompt edits need a full evaluation run.
+- **Consequences:** the agent evaluation keeps the same 26 tasks and scorer, so runs stay comparable.
 
 ---
 ## Open decisions (not yet made)

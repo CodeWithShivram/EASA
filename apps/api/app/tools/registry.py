@@ -49,3 +49,5 @@ def _check_contract(tool: Tool) -> None:
         raise ValueError(f"tool {tool.name!r}: timeout must be positive")
     if tool.consequential and tool.retries:
         raise ValueError(f"tool {tool.name!r}: consequential tools must not retry")
+    if not tool.user_stated <= set(tool.Input.model_fields):
+        raise ValueError(f"tool {tool.name!r}: user_stated names unknown fields")

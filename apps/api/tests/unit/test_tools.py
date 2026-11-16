@@ -54,6 +54,7 @@ class LooseIn(BaseModel):
         ({"permission": ""}, "permission is required"),
         ({"timeout_seconds": 0}, "timeout must be positive"),
         ({"consequential": True, "retries": 1}, "must not retry"),
+        ({"user_stated": frozenset({"missing"})}, "user_stated names unknown fields"),
     ],
 )
 def test_badly_specified_tools_are_refused(overrides: dict[str, object], message: str) -> None:
