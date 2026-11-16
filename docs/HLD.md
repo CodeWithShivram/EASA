@@ -106,7 +106,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Complete (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; see [EVALUATION.md](EVALUATION.md)) |
 | 4 | Grounded RAG answering | Complete (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations, P4-M5 answer evaluation; see [EVALUATION.md](EVALUATION.md) section 10) |
 | 5 | Agent and controlled tool calling | Complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial tests, P5-M5 agent evaluation) |
-| 6 | Authentication and RBAC | In progress (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility done) |
+| 6 | Authentication and RBAC | In progress (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite done) |
 | 7 | Frontend and integration | Not started |
 | 8 | Evaluation, reliability and delivery | Not started |
 
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (829 automated tests today: 802 backend including 49 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (866 automated tests today: 839 backend including 49 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

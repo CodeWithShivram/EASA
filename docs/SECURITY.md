@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Phase 6 in progress (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Sign-in, sessions, role permissions and document visibility exist since P6-M1 to P6-M3; the remaining open items are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Phase 6 in progress (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Sign-in, sessions, role permissions and document visibility exist since P6-M1 to P6-M3; the remaining open items are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -22,6 +22,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | `GET /api/v1/health`, `GET /api/v1/health/ready` | Public, unauthenticated; coarse status only |
 | `POST /api/v1/auth/login`, `/logout`, `/me` | Login is public (uniform failures, lockout after 5); the others need a session |
 | `/api/v1/users` (list, create, update, reset password) | Administrators only (`users:manage`), their own tenant |
+| `GET /api/v1/audit` | Administrators only (`audit:read`), their own tenant's records; reads are audited |
 | `POST /api/v1/search` | Signed-in user; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
 | `/api/v1/conversations` (create, list, get, ask, delete) | Signed-in user; conversations visible only to their owner in their tenant; stores questions and answers |
 | `/api/v1/agent` (run, get/confirm/cancel actions) | Signed-in user; the model proposes, the server runs only permitted tools; consequential actions wait for the owner's confirmation |
@@ -267,7 +268,7 @@ Residual risks: the lockout lets someone who knows a username block that user's 
 | Sign-ins (success, failure, lockout, refusal), logouts and user changes are audited without passwords, tokens or unknown typed usernames | [auth.py](../apps/api/app/services/auth.py), [users.py](../apps/api/app/services/users.py) — tested |
 | Managers and administrators read every ticket of their tenant through the agent tools, never another tenant's | [support.py](../apps/api/app/tools/support.py) — tested |
 
-Residual risks: two administrators can demote each other; there is no audit query endpoint yet (P6-M4).
+Residual risks: two administrators can demote each other.
 
 ### Document visibility (Phase 6, P6-M3)
 
@@ -280,6 +281,22 @@ Residual risks: two administrators can demote each other; there is no audit quer
 | Search, answers, conversations and the agent's knowledge tool never return or cite hidden text (tested per role and mode) | [search.py](../apps/api/app/services/search.py) — tested |
 
 Residual risks: re-uploading identical content reveals that a hidden copy exists (409, no details); earlier conversation turns keep citation metadata of documents restricted later; three levels only, no per-person sharing.
+
+### Security suite (Phase 6, P6-M4)
+
+`tests/integration/test_security_suite.py` (26 tests) and `tests/integration/test_audit_api.py` (11 tests), run in CI:
+
+| Attack | Result |
+|---|---|
+| Horizontal: each of six users (two tenants × three roles) reads, asks in, deletes another user's conversation, and reads, confirms, cancels another user's pending action (180 attempts) | All `404`; the owners' resources unchanged |
+| Horizontal: an administrator of tenant B lists, reads, searches and re-labels tenant A's documents | Nothing of tenant A listed or found; `404` |
+| Horizontal: tickets across reporters and tenants | Employees read only their own; managers and administrators every ticket of their own tenant, never another tenant's |
+| Horizontal: an administrator of tenant B disables or resets a user of tenant A, lists users, reads the audit log | `404`; only tenant B's users; tenant A's log shows only tenant A's records |
+| Vertical: employees create users, read the audit log, upload or re-label documents; managers create administrators, promote themselves, read the audit log | `403 forbidden`, each refusal audited |
+| Vertical: a manager restricts a document to administrators or reads an administrator document | `403 min_role_not_allowed`; `404` |
+| Mass assignment: `tenant_id`, `is_active`, `username`, `password_hash` in user requests, `tenant_id` in a document update, `role` in sign-in; `owner_id` and `tenant_id` form fields in an upload | `422`; upload fields ignored (owner and tenant come from the session) |
+| Session tampering: a changed or extended token, an upper-cased token, two credentials in one header, an 8,000-character header, a token in a cookie or another header | `401`; the scheme name `bearer` is case-insensitive as RFC 7235 requires |
+| Audit endpoint: SQL-like or upper-case `action`, out-of-range paging, invalid UUIDs and outcomes | `422` |
 
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
@@ -341,7 +358,7 @@ Residual risks: re-uploading identical content reveals that a hidden copy exists
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 802 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 839 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.

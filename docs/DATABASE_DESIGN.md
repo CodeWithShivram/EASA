@@ -83,7 +83,7 @@ Rules: a question and its reply are written together in one transaction, only af
 |---|---|---|---|
 | `id` | UUID | no | Primary key |
 | `tenant_id`, `user_id` | UUID | no | Who attempted it (no foreign keys; a sign-in for an unknown username uses the nil UUID for both) |
-| `action` | varchar(64) | no | `tool.execute`, `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied` |
+| `action` | varchar(64) | no | `tool.execute`, `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied`, `document.upload`, `document.update`, `audit.read` |
 | `target` | varchar(128) | no | The tool name, `user:<id>`, `unknown`, or `METHOD /path` for refusals (truncated) |
 | `outcome` | varchar(32) | no | `succeeded`, `confirmation_required`, `denied`, `unknown_tool`, `invalid_arguments`, `failed`, `timeout` (`ck_audit_logs_outcome_allowed`) |
 | `detail` | varchar(128) | yes | Short code: the missing permission, an error code or type |
@@ -92,7 +92,7 @@ Rules: a question and its reply are written together in one transaction, only af
 | `duration_ms` | integer | yes | |
 | `created_at` | timestamp with time zone | no | UTC |
 
-Index `ix_audit_logs_tenant_id_created_at`. Records are written by `AuditRepository` in their own session and transaction, so they survive a rollback of the operation. There is no API to change or delete them, and no retention policy yet.
+Index `ix_audit_logs_tenant_id_created_at`. Records are written by `AuditRepository` in their own session and transaction, so they survive a rollback of the operation. Administrators read them through `GET /api/v1/audit` (P6-M4, own tenant only); there is no API to change or delete them, and no retention policy yet.
 
 ### 1.2c `support_tickets` (Phase 5, P5-M2)
 

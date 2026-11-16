@@ -86,6 +86,7 @@ REQUIRED = {
     ("DELETE", "/api/v1/conversations/{conversation_id}"): "knowledge:search",
     ("POST", "/api/v1/conversations/{conversation_id}/messages"): "knowledge:search",
     ("GET", "/api/v1/users"): "users:manage",
+    ("GET", "/api/v1/audit"): "audit:read",
     ("POST", "/api/v1/users"): "users:manage",
     ("PATCH", "/api/v1/users/{user_id}"): "users:manage",
     ("POST", "/api/v1/users/{user_id}/password"): "users:manage",

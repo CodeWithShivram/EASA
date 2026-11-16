@@ -13,6 +13,7 @@ applies immediately. Anything not listed is denied.
 | tickets:read_all | reading every ticket in the tenant (support view) |
 | tickets:create | proposing draft tickets (confirmed by the user) |
 | users:manage | creating users, changing roles, disabling, resetting passwords |
+| audit:read | reading the tenant's audit log |
 """
 
 from enum import StrEnum
@@ -26,7 +27,7 @@ class Role(StrEnum):
 
 _EMPLOYEE = frozenset({"knowledge:search", "documents:read", "tickets:read", "tickets:create"})
 _MANAGER = _EMPLOYEE | {"documents:upload", "tickets:read_all"}
-_ADMINISTRATOR = _MANAGER | {"users:manage"}
+_ADMINISTRATOR = _MANAGER | {"users:manage", "audit:read"}
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
     Role.EMPLOYEE: _EMPLOYEE,

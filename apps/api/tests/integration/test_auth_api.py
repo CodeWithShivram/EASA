@@ -253,7 +253,7 @@ def test_every_route_except_health_and_login_requires_a_session(
         results = {(m, p): client.request(m, p).status_code for m, p in routes}
     app.state.engine.dispose()
 
-    assert len(routes) == {"development": 24, "production": 22}[environment]
+    assert len(routes) == {"development": 25, "production": 23}[environment]
     assert {key: status for key, status in results.items() if status != 401} == {}
 
 

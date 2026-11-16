@@ -291,6 +291,12 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - [repositories/documents.py](../apps/api/app/repositories/documents.py): `get`, `list_for_tenant` and `chunks_with_documents` filter by `levels`; `get_by_sha256` deliberately does not (duplicate detection).
 - [services/documents.py](../apps/api/app/services/documents.py): `upload(..., min_role)` (`403 min_role_not_allowed`, `409 document_exists` for a hidden duplicate), `get`/`list`/`list_chunks` with the caller's levels, `set_min_role`. [routes/documents.py](../apps/api/app/api/v1/routes/documents.py): `min_role` form field, `PATCH /documents/{id}`, audit records `document.upload` and `document.update`.
 
+### 2.6q Audit endpoint and security suite (P6-M4)
+
+- [repositories/audit.py](../apps/api/app/repositories/audit.py) `list_for_tenant(tenant_id, limit, offset, action, outcome, user_id)`: exact-match filters, newest first.
+- [routes/audit.py](../apps/api/app/api/v1/routes/audit.py) `GET /api/v1/audit` (`require("audit:read")`): validated query parameters; records an `audit.read` entry with the filters after reading.
+- [tests/integration/test_security_suite.py](../apps/api/tests/integration/test_security_suite.py): two tenants with an employee, a manager and an administrator each, a conversation and a pending action per user, a document per level and seeded tickets per tenant; every user tries every other user's conversations and actions, other tenants' documents, tickets and users, actions above their role, unknown fields (mass assignment) and tampered tokens.
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.

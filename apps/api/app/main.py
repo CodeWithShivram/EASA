@@ -14,6 +14,7 @@ from app.api.v1.router import api_router
 from app.api.v1.routes import (
     agent,
     answers,
+    audit,
     auth,
     conversations,
     documents,
@@ -92,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(api_router)
     # Every route below requires a signed-in user (ADR-031).
-    for module in (auth, users, documents, search, answers, conversations, agent):
+    for module in (auth, users, audit, documents, search, answers, conversations, agent):
         app.include_router(module.router, prefix="/api/v1")
     if not settings.is_production:
         # Tool listing and direct invocation are development aids only.

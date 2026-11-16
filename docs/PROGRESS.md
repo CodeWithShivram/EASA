@@ -1223,8 +1223,8 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 |---|---|---|---|
 | P6-M1 | Tenants, users, sessions; sign-in, sign-out, current user; `create-user`; the development identity replaced by sessions | COMPLETE | `953601d` |
 | P6-M2 | Role permissions differentiated and checked on every route; user administration; audit records for sign-ins and user changes | COMPLETE | `61ad1f7` |
-| P6-M3 | Minimum role per document, enforced in all four search paths, document access, answers, conversations and the agent | COMPLETE | the commit that adds this row |
-| P6-M4 | Audit endpoint for administrators; route-by-role security suite (horizontal and vertical escalation, session attacks) | NOT STARTED | |
+| P6-M3 | Minimum role per document, enforced in all four search paths, document access, answers, conversations and the agent | COMPLETE | `d082a20` |
+| P6-M4 | Audit endpoint for administrators; route-by-role security suite (horizontal and vertical escalation, session attacks) | COMPLETE | the commit that adds this row |
 | P6-M5 | Leakage evaluation with role-restricted documents and Phase 6 report | NOT STARTED | |
 
 ## P6-M1: Sign-in and sessions
@@ -1324,4 +1324,32 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 - The HNSW benchmark was not rerun with the extra filter (exact search is used, ADR-022).
 
 **Exit criteria:** met. A document above a user's role cannot be listed, read, found, cited or used by the agent, on SQLite or PostgreSQL.
+
+## P6-M4: Audit endpoint and security suite
+
+**Scope:** let administrators read their tenant's audit log, and attack the whole access model systematically: every user against every other user's resources, every role against actions above it, mass assignment and session tampering.
+
+**Implemented**
+
+- `audit:read` (administrators) and `GET /api/v1/audit`: the caller's tenant only, newest first, filters `action` (exact, `[a-z_.]+`), `outcome`, `user_id`, paging `limit` 1–200 and `offset`; each read recorded as `audit.read` with its filters. `AuditRepository.list_for_tenant` gained the filters and an offset.
+- `tests/integration/test_security_suite.py` (26 tests): two tenants with three roles each; 180 cross-user attempts on conversations and pending actions; cross-tenant documents, search and re-labelling; tickets across reporters and tenants; cross-tenant user administration and audit; seven actions above the role; managers raising document levels; seven mass-assignment requests and upload form fields; five token tamperings; tokens outside the `Authorization` header.
+- `tests/integration/test_audit_api.py` (11 tests): tenant scoping and order, fields (digest, never arguments), filters and paging, reads audited, seven invalid parameter sets, other roles refused. Route table and counts (25 and 23) updated.
+- Docs: API spec section 3.12 and the role table, DATABASE_DESIGN (audit actions, read access), LLD section 2.6q, SECURITY (security suite results), ADR-032 consequence, DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-16)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 839 passed (434 unit, 349 integration, 3 real-embedding, 49 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 786 passed, 53 skipped |
+| Live server (scratch database, an administrator from `create-user`, generated synthetic passwords) | After creating an employee, one failed and one successful employee sign-in and an employee request to the audit log (`403`), the administrator's log listed six records newest first (the refusal, the sign-ins, both user creations); `action=auth.login` returned the three sign-ins; an SQL-like filter gave `422`; server stopped |
+| First runs | Two test mistakes, no code change: the cross-tenant audit test found an empty log because tenant A had no activity yet (it now creates a refused request first and expects exactly that record), and the audit-read test expected the current read in its own result, but a read is recorded after the list is fetched |
+
+**Known limitations**
+
+- No audit retention or export; records of unknown-username sign-ins are not visible to any tenant.
+- The suite covers the API; the web frontend comes in Phase 7.
+
+**Exit criteria:** met. No tested crossing between users, tenants or roles succeeded, and administrators can review what happened in their tenant.
 

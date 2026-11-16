@@ -53,13 +53,29 @@ class AuditRepository:
             session.expunge(entry)
         return entry
 
-    def list_for_tenant(self, tenant_id: uuid.UUID, *, limit: int = 100) -> list[AuditLog]:
+    def list_for_tenant(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        action: str | None = None,
+        outcome: AuditOutcome | None = None,
+        user_id: uuid.UUID | None = None,
+    ) -> list[AuditLog]:
+        """The tenant's records, newest first, optionally filtered (exact matches)."""
+        statement = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
+        if action is not None:
+            statement = statement.where(AuditLog.action == action)
+        if outcome is not None:
+            statement = statement.where(AuditLog.outcome == outcome)
+        if user_id is not None:
+            statement = statement.where(AuditLog.user_id == user_id)
         with self._session_factory() as session:
             return list(
                 session.scalars(
-                    select(AuditLog)
-                    .where(AuditLog.tenant_id == tenant_id)
-                    .order_by(AuditLog.created_at.desc(), AuditLog.id)
+                    statement.order_by(AuditLog.created_at.desc(), AuditLog.id)
                     .limit(limit)
+                    .offset(offset)
                 )
             )

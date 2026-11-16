@@ -472,7 +472,7 @@
   - User administration lives in the administrator's own tenant (`/api/v1/users`): list, create, change role, disable or enable, reset password. Administrators cannot change their own role or disable themselves (a tenant cannot lock itself out by one mistake). Disabling and password resets end the user's sessions.
   - Audit actions: `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied`, in the existing `audit_logs` table (no schema change).
 - **Trade-offs:** One role per user and a fixed table; finer grants (per department, per document) need P6-M3 or later. Two administrators can still demote each other. Failed sign-ins for unknown usernames are not attributable to a tenant, so tenant administrators will not see them.
-- **Consequences:** Tests sign in with the least role that fits (employee by default, manager where documents are uploaded). P6-M3 adds a minimum role per document; P6-M4 an audit query endpoint.
+- **Consequences:** Tests sign in with the least role that fits (employee by default, manager where documents are uploaded). P6-M3 adds a minimum role per document; P6-M4 the audit query endpoint (`audit:read`, administrators only; reads are audited).
 
 <a id="adr-033"></a>
 ## ADR-033: Document visibility: a minimum role per document, filtered inside every query

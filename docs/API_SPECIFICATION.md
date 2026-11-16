@@ -372,6 +372,7 @@ Each route requires one permission of the signed-in user's role ([ADR-032](ARCHI
 | `tickets:read_all` | – | ✓ | ✓ | agent ticket tools read every ticket in the tenant |
 | `tickets:create` | ✓ | ✓ | ✓ | propose draft tickets (confirmed by the user) |
 | `users:manage` | – | – | ✓ | `/api/v1/users` |
+| `audit:read` | – | – | ✓ | `/api/v1/audit` |
 
 User administration (`users:manage`, the administrator's own tenant only):
 
@@ -385,6 +386,20 @@ User administration (`users:manage`, the administrator's own tenant only):
 - Users of another tenant, and unknown IDs, give `404 user_not_found`.
 - Administrators cannot change their own role or disable themselves: `409 cannot_modify_self`.
 - Audit: `user.create` (`role=…`), `user.update` (`role=old->new`, `disabled`, `enabled`), `user.password_reset`, each with the administrator as the user; passwords are never recorded.
+
+### 3.12 `GET /api/v1/audit` — the tenant's audit log (Phase 6, P6-M4)
+
+Requires `audit:read` (administrators). Returns `{"items": [AuditRecord], "limit", "offset"}`, newest first, only records of the caller's tenant. AuditRecord: `{"id", "created_at", "user_id", "action", "target", "outcome", "detail", "arguments_digest", "correlation_id", "duration_ms"}` (arguments only as their SHA-256 digest).
+
+| Query parameter | Rule |
+|---|---|
+| `limit` | 1–200, default 50 |
+| `offset` | 0–100,000, default 0 |
+| `action` | exact match; lowercase letters, `.` and `_` only (e.g. `auth.login`) |
+| `outcome` | one of the audit outcomes (`succeeded`, `denied`, `failed`, …) |
+| `user_id` | UUID |
+
+Invalid parameters give `422`. Every read is itself recorded (`audit.read`, the filters used as `detail`). Sign-in failures for unknown usernames belong to no tenant and are not listed.
 
 ## 4. Headers
 
@@ -411,13 +426,13 @@ User administration (`users:manage`, the administrator's own tenant only):
 | `/api/v1/admin` | Administrative views | 6 / 7 |
 | `/api/v1/tools` | List and invoke allowlisted tools **implemented** (section 3.8) | 5 |
 | `/api/v1/agent` | Agent requests and pending actions **implemented** (section 3.9) | 5 |
-| `/api/v1/audit` | Audit log queries (records are written since P5-M1) | 6 |
+| `/api/v1/audit` | Audit log for administrators **implemented** (section 3.12) | 6 |
 
 Each will be documented here with purpose, authentication, authorization, request and response schemas, errors, validation rules and audit behaviour before or with its implementation. Protected endpoints will deny access by default and resolve identity from a verified authentication context.
 
 ## 6. Known gaps
 
-- No rate limiting yet (only the per-account sign-in lockout). An audit query endpoint follows in P6-M4.
+- No rate limiting yet (only the per-account sign-in lockout).
 - Uploads are only accepted from non-browser clients for now (CORS allows `GET` only).
 - Health endpoints are public. They expose only coarse status.
 - Only `GET` is allowed by CORS; this will widen as endpoints are added.
