@@ -29,6 +29,7 @@ from app.core.errors import AppError
 from app.core.identity import Identity
 from app.db.audit import AuditOutcome
 from app.db.pending_actions import PendingAction
+from app.db.types import utc_now
 from app.llm.base import ChatMessage, ChatModel, ModelResponseError, ModelUnavailableError
 from app.repositories.pending_actions import PendingActionRepository
 from app.services.normalization import normalize_text
@@ -43,6 +44,9 @@ MAX_ANSWER_CHARS = 1_000
 # Tool results longer than this are cut before they reach the model.
 MAX_RESULT_CHARS = 2_500
 ACTION_TTL = timedelta(minutes=10)
+# Open (pending, unexpired) actions one user may have; bounds what a looping
+# model or a script can pile up.
+MAX_OPEN_ACTIONS = 20
 FINAL_ANSWER = "final_answer"
 
 _RESULT_TAG = re.compile(r"<(/?)tool_result", re.IGNORECASE)
@@ -134,6 +138,18 @@ class Step:
     answer: str = ""
 
 
+def confirmation_message(tool: str, arguments: dict[str, Any]) -> str:
+    """Say exactly what would run, so a user never approves something else.
+
+    Written by the server, not the model: a model may misdescribe the action
+    (P5-M4: asked to close a ticket, it proposed a new draft ticket).
+    """
+    details = ", ".join(
+        f"{key}={json.dumps(value, default=str)}" for key, value in arguments.items()
+    )
+    return f"Nothing has been done yet. Confirm to run {tool} with {details}, or cancel."
+
+
 def parse_step(text: str) -> Step | None:
     """The model's step, or None if the reply is not a valid step."""
     try:
@@ -216,6 +232,16 @@ class AgentService:
             result = self._executor.execute(identity, action, step.arguments)
             steps.append(AgentStep(action, result.outcome.value, result.detail))
             if result.outcome is AuditOutcome.CONFIRMATION_REQUIRED:
+                open_actions = self._actions.count_open(
+                    identity.tenant_id, identity.user_id, utc_now()
+                )
+                if open_actions >= MAX_OPEN_ACTIONS:
+                    return self._finish(
+                        started,
+                        AgentResult(
+                            AgentStatus.FAILED, None, steps, reason="too_many_pending_actions"
+                        ),
+                    )
                 pending = self._actions.create(
                     identity.tenant_id,
                     identity.user_id,
@@ -227,7 +253,7 @@ class AgentService:
                     started,
                     AgentResult(
                         AgentStatus.CONFIRMATION_REQUIRED,
-                        "This action needs your confirmation before it runs.",
+                        confirmation_message(action, pending.arguments),
                         steps,
                         pending_action=pending,
                     ),

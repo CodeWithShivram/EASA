@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.pending_actions import ActionStatus, PendingAction
@@ -45,6 +45,22 @@ class PendingActionRepository:
                 PendingAction.user_id == user_id,
             )
         ).one_or_none()
+
+    def count_open(self, tenant_id: uuid.UUID, user_id: uuid.UUID, now: datetime) -> int:
+        """Pending, unexpired actions of one user."""
+        return int(
+            self._session.scalar(
+                select(func.count())
+                .select_from(PendingAction)
+                .where(
+                    PendingAction.tenant_id == tenant_id,
+                    PendingAction.user_id == user_id,
+                    PendingAction.status == ActionStatus.PENDING,
+                    PendingAction.expires_at > now,
+                )
+            )
+            or 0
+        )
 
     def claim(self, action: PendingAction, status: ActionStatus, now: datetime) -> bool:
         """Move a pending, unexpired action to ``status`` exactly once (atomic)."""

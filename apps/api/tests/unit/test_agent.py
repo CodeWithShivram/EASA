@@ -1,6 +1,13 @@
 import pytest
 
-from app.services.agent import FINAL_ANSWER, MAX_ANSWER_CHARS, Step, parse_step, step_schema
+from app.services.agent import (
+    FINAL_ANSWER,
+    MAX_ANSWER_CHARS,
+    Step,
+    confirmation_message,
+    parse_step,
+    step_schema,
+)
 
 TOOLS = [
     {
@@ -72,3 +79,14 @@ def test_long_answers_are_cut() -> None:
 
     assert step is not None
     assert len(step.answer) == MAX_ANSWER_CHARS
+
+
+def test_confirmation_message_states_exactly_what_would_run() -> None:
+    message = confirmation_message(
+        "create_draft_ticket", {"title": "HACKED", "description": "x", "priority": "high"}
+    )
+
+    assert message == (
+        'Nothing has been done yet. Confirm to run create_draft_ticket with title="HACKED", '
+        'description="x", priority="high", or cancel.'
+    )
