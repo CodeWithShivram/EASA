@@ -15,7 +15,7 @@ from app.db.models import Base
 from app.db.types import utc_now
 from app.main import create_app
 from app.repositories.documents import DocumentRepository
-from tests.conftest import make_settings
+from tests.conftest import DEV_TENANT_ID, DEV_USER_ID, make_settings, sign_in
 from tests.fixtures import (
     DOCX_BYTES,
     PDF_BYTES,
@@ -43,7 +43,7 @@ def app(settings: Settings) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         yield test_client
 
 
@@ -199,15 +199,6 @@ def test_another_tenants_document_is_invisible(client: TestClient, app: FastAPI)
     assert client.get("/api/v1/documents").json()["items"] == []
 
 
-def test_document_routes_are_not_mounted_in_production(tmp_path: Path) -> None:
-    app = create_app(make_settings(tmp_path, environment="production"))
-
-    with TestClient(app) as client:
-        assert client.get("/api/v1/documents").status_code == 404
-        assert upload(client, "a.txt", TXT_BYTES).status_code == 404
-        assert client.get("/api/v1/health").status_code == 200
-
-
 def test_pdf_upload_is_processed_with_page_count(client: TestClient) -> None:
     response = upload(client, "travel.pdf", PDF_BYTES, "application/pdf")
 
@@ -336,7 +327,7 @@ def test_chunking_settings_are_applied(tmp_path: Path) -> None:
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=sign_in(app)) as client:
         document = upload(client, "travel.pdf", PDF_BYTES, "application/pdf").json()
         chunks = client.get(f"/api/v1/documents/{document['id']}/chunks").json()
 
@@ -352,7 +343,7 @@ def test_pdf_decompression_bomb_fails_the_document_safely(tmp_path: Path) -> Non
     app = create_app(make_settings(tmp_path))  # default 10 MiB upload limit
     Base.metadata.create_all(app.state.engine)
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=sign_in(app)) as client:
         response = upload(client, "bomb.pdf", make_pdf_decompression_bomb(), "application/pdf")
         chunks = client.get(f"/api/v1/documents/{response.json()['id']}/chunks").json()
 
@@ -366,8 +357,8 @@ def _insert_document(app: FastAPI, settings: Settings, *, status: str, age: time
     with app.state.session_factory() as session:
         DocumentRepository(session).add(
             Document(
-                tenant_id=settings.dev_tenant_id,
-                owner_id=settings.dev_user_id,
+                tenant_id=DEV_TENANT_ID,
+                owner_id=DEV_USER_ID,
                 filename="stuck.txt",
                 media_type=DocumentMediaType.TXT,
                 size_bytes=len(TXT_BYTES),

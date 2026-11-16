@@ -16,7 +16,7 @@ from app.embeddings.base import EmbeddingUnavailableError
 from app.main import create_app
 from app.repositories.embeddings import EmbeddingRepository
 from app.services.embedding_service import EmbeddingService
-from tests.conftest import make_settings, sqlite_url
+from tests.conftest import DEV_TENANT_ID, make_settings, sign_in, sqlite_url
 from tests.fixtures import DOCX_BYTES, PDF_BYTES, make_encrypted_pdf
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -39,7 +39,7 @@ def app(settings: Settings) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         yield test_client
 
 
@@ -60,7 +60,7 @@ def test_processed_upload_stores_one_vector_per_chunk(
 
     with app.state.session_factory() as session:
         vectors = EmbeddingRepository(session).vectors_for_document(
-            settings.dev_tenant_id, uuid.UUID(document["id"]), HASHING_MODEL
+            DEV_TENANT_ID, uuid.UUID(document["id"]), HASHING_MODEL
         )
 
     assert document["status"] == "processed"
@@ -115,7 +115,7 @@ def test_vectors_are_deleted_with_their_chunks(client: TestClient, app: FastAPI)
         from app.repositories.documents import DocumentRepository
 
         repository = DocumentRepository(session)
-        stored = repository.list_for_tenant(app.state.settings.dev_tenant_id)[0]
+        stored = repository.list_for_tenant(DEV_TENANT_ID)[0]
         assert str(stored.id) == document["id"]
         repository.replace_chunks(stored, [])
         session.commit()
@@ -143,7 +143,7 @@ def test_cli_embed_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
     monkeypatch.setattr(app.state.embedder, "embed", _raise_unavailable)
-    with TestClient(app) as client:
+    with TestClient(app, headers=sign_in(app)) as client:
         upload(client, "travel.pdf", PDF_BYTES, "application/pdf")
     assert embedding_count(app) == 0
 

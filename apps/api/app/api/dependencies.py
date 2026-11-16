@@ -1,14 +1,18 @@
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
 from app.core.identity import Identity
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
 from app.retrieval.factory import build_indexes
 from app.services.answers import AnswerService
+from app.services.auth import AuthService, SessionPolicy, not_authenticated
 from app.services.chunking import ChunkingConfig, ChunkingStrategy
 from app.services.conversations import ConversationService
 from app.services.documents import DocumentService
@@ -28,15 +32,42 @@ def get_health_service(request: Request) -> HealthService:
     )
 
 
-def get_identity(request: Request) -> Identity:
-    # Development-only identity from server configuration (ADR-014). Nothing in
-    # the request influences it. Replaced by real authentication in Phase 6.
-    settings = request.app.state.settings
-    return Identity(
-        tenant_id=settings.dev_tenant_id,
-        user_id=settings.dev_user_id,
-        permissions=frozenset(settings.dev_permissions),
+# Only the Authorization header is read; tokens in URLs or bodies are ignored.
+_bearer = HTTPBearer(auto_error=False, description="Session token from POST /api/v1/auth/login")
+
+
+def session_policy(settings: Settings) -> SessionPolicy:
+    return SessionPolicy(
+        idle=timedelta(minutes=settings.session_idle_minutes),
+        lifetime=timedelta(hours=settings.session_lifetime_hours),
+        password_hash_n=settings.password_hash_n,
     )
+
+
+def get_auth_service(
+    request: Request, session: Annotated[Session, Depends(get_db_session)]
+) -> AuthService:
+    return AuthService(
+        session, session_policy(request.app.state.settings), request.app.state.role_permissions
+    )
+
+
+def get_bearer_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise not_authenticated()
+    return credentials.credentials
+
+
+def get_identity(request: Request, token: Annotated[str, Depends(get_bearer_token)]) -> Identity:
+    """The signed-in user (ADR-031); 401 without a valid session token."""
+    # Its own short session: the sign-in check may update last_seen_at.
+    with request.app.state.session_factory() as session:
+        service = AuthService(
+            session, session_policy(request.app.state.settings), request.app.state.role_permissions
+        )
+        return service.authenticate(token)
 
 
 def get_document_service(

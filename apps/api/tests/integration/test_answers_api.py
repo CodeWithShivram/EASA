@@ -12,7 +12,7 @@ from app.llm.fake import FakeChatModel
 from app.main import create_app
 from app.services.answers import INSUFFICIENT_MARKER
 from app.services.documents import DocumentService
-from tests.conftest import create_schema, make_settings
+from tests.conftest import create_schema, make_settings, sign_in
 from tests.fixtures import DOCX_BYTES, PDF_BYTES
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -45,7 +45,7 @@ def upload_fixtures(client: TestClient) -> None:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         upload_fixtures(test_client)
         yield test_client
 
@@ -73,7 +73,7 @@ def test_answer_with_citations(client: TestClient) -> None:
 
 
 def test_a_tenant_without_documents_gets_insufficient_evidence(app: FastAPI) -> None:
-    with TestClient(app) as client:
+    with TestClient(app, headers=sign_in(app)) as client:
         body = ask(client, "annual leave days").json()
 
     assert body == {
@@ -159,18 +159,13 @@ def test_answers_are_unavailable_without_a_model(tmp_path: Path) -> None:
     app = create_app(make_settings(tmp_path))  # model_provider defaults to "none"
     create_schema(app.state.engine)
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=sign_in(app)) as client:
             response = ask(client, "annual leave days")
     finally:
         app.state.engine.dispose()
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "answers_unavailable"
-
-
-def test_answers_are_not_mounted_in_production(tmp_path: Path) -> None:
-    with TestClient(create_app(make_settings(tmp_path, environment="production"))) as client:
-        assert ask(client, "annual leave days").status_code == 404
 
 
 def test_question_is_not_logged(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:

@@ -5,7 +5,8 @@ Run from apps/api:
     uv run python -m app.cli download-chat-model
     uv run python -m app.cli embed-missing [--limit N]
     uv run python -m app.cli rebuild-keyword-index
-    uv run python -m app.cli seed-tickets
+    uv run python -m app.cli create-user --tenant T --username U --role R [--password-stdin]
+    uv run python -m app.cli seed-tickets --username NAME
     uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
     uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
@@ -16,14 +17,18 @@ user that may create databases); they create and drop throwaway databases.
 """
 
 import argparse
+import getpass
 import logging
 import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.api.dependencies import session_policy
 from app.core.config import API_ROOT, load_settings
+from app.core.errors import AppError
 from app.core.logging import configure_logging
+from app.core.roles import ROLE_PERMISSIONS, Role
 from app.db.engine import create_db_engine
 from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
@@ -59,6 +64,8 @@ from app.evaluation.runner import (
 )
 from app.llm.factory import build_chat_model
 from app.llm.registry import DEFAULT_CHAT_MODEL, ModelFileError, download_chat_model
+from app.repositories.accounts import AccountRepository
+from app.services.auth import AuthService
 from app.services.embedding_service import EmbeddingService
 from app.tools.seed import seed_tickets
 
@@ -103,10 +110,21 @@ def main(argv: list[str] | None = None) -> int:
         "rebuild-keyword-index",
         help="rebuild the SQLite FTS5 keyword index from document_chunks (e.g. after VACUUM)",
     )
-    commands.add_parser(
-        "seed-tickets",
-        help="create synthetic support tickets for the development identity (once)",
+    create_user = commands.add_parser(
+        "create-user", help="create a user (and its tenant if new); asks for the password"
     )
+    create_user.add_argument("--tenant", required=True, help="tenant name, created if new")
+    create_user.add_argument("--username", required=True)
+    create_user.add_argument("--role", required=True, choices=[role.value for role in Role])
+    create_user.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the password from the first line of standard input instead of a prompt",
+    )
+    seed = commands.add_parser(
+        "seed-tickets", help="create synthetic support tickets for a user's tenant (once)"
+    )
+    seed.add_argument("--username", required=True, help="the user who reports the own tickets")
     evaluate = commands.add_parser(
         "evaluate", help="measure retrieval quality on the labelled synthetic dataset (eval/)"
     )
@@ -292,11 +310,40 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "create-user":
+        if args.password_stdin:
+            password = sys.stdin.readline().rstrip("\r\n")
+        else:
+            password = getpass.getpass("Password: ")
+            if getpass.getpass("Repeat password: ") != password:
+                logger.error("the passwords do not match")
+                return 1
+        engine = create_db_engine(settings.database_url.get_secret_value())
+        try:
+            with create_session_factory(engine)() as session:
+                service = AuthService(session, session_policy(settings), ROLE_PERMISSIONS)
+                user = service.create_user(args.tenant, args.username, password, Role(args.role))
+                tenant_id, user_id = user.tenant_id, user.id
+        except AppError as error:
+            logger.error("user not created", extra={"code": error.code, "reason": error.message})
+            return 1
+        finally:
+            engine.dispose()
+        logger.info(
+            "user created",
+            extra={"tenant_id": str(tenant_id), "user_id": str(user_id), "role": args.role},
+        )
+        return 0
+
     if args.command == "seed-tickets":
         engine = create_db_engine(settings.database_url.get_secret_value())
         try:
             with create_session_factory(engine)() as session:
-                created = seed_tickets(session, settings.dev_tenant_id, settings.dev_user_id)
+                user = AccountRepository(session).get_user_by_username(args.username.lower())
+                if user is None:
+                    logger.error("no such user", extra={"username": args.username})
+                    return 1
+                created = seed_tickets(session, user.tenant_id, user.id)
         finally:
             engine.dispose()
         logger.info("synthetic tickets seeded", extra={"tickets_created": created})

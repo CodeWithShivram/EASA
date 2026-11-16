@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 
 from app.core.identity import Identity
+from app.core.roles import ROLE_PERMISSIONS, Role
 from app.db.audit import AuditLog, AuditOutcome
 from app.db.pending_actions import PendingAction
 from app.db.tickets import SupportTicket
@@ -35,7 +36,14 @@ from app.tools.executor import ToolExecutor
 from app.tools.registry import ToolRegistry
 from app.tools.seed import seed_tickets
 from app.tools.support import build_tool_registry
-from tests.conftest import create_schema, make_settings
+from tests.conftest import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    create_schema,
+    limit_permissions,
+    make_settings,
+    sign_in,
+)
 
 LEAK_MARKER = "db-password-7d1e internal"
 
@@ -59,9 +67,8 @@ def script(*replies: str) -> Callable[[Sequence[ChatMessage]], str]:
 def make_app(tmp_path: Path, **settings: object) -> FastAPI:
     app = create_app(make_settings(tmp_path, model_provider="fake", **settings))
     create_schema(app.state.engine)
-    s = app.state.settings
     with app.state.session_factory() as session:
-        seed_tickets(session, s.dev_tenant_id, s.dev_user_id)
+        seed_tickets(session, DEV_TENANT_ID, DEV_USER_ID)
     return app
 
 
@@ -74,7 +81,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         yield test_client
 
 
@@ -104,8 +111,7 @@ def upload(app: FastAPI, identity: Identity, name: str, text: str) -> None:
 
 
 def me(app: FastAPI) -> Identity:
-    s = app.state.settings
-    return Identity(s.dev_tenant_id, s.dev_user_id, frozenset(s.dev_permissions))
+    return Identity(DEV_TENANT_ID, DEV_USER_ID, ROLE_PERMISSIONS[Role.EMPLOYEE])
 
 
 # --- prompt injection --------------------------------------------------------
@@ -174,8 +180,9 @@ def test_requests_cannot_ask_for_confirmation(client: TestClient) -> None:
 
 
 def test_without_permission_no_pending_action_is_created(tmp_path: Path) -> None:
-    app = make_app(tmp_path, dev_permissions=["tickets:read"])
-    with TestClient(app) as client:
+    app = make_app(tmp_path)
+    limit_permissions(app, "tickets:read")
+    with TestClient(app, headers=sign_in(app)) as client:
         attacker(
             app,
             step("create_draft_ticket", title="Valid title", description="Valid description."),
@@ -215,10 +222,9 @@ def test_other_tenants_data_never_reaches_the_model(client: TestClient, app: Fas
 
 
 def test_other_users_cannot_decide_actions(client: TestClient, app: FastAPI) -> None:
-    s = app.state.settings
     with app.state.session_factory() as session:
         foreign = PendingActionRepository(session).create(
-            s.dev_tenant_id,
+            DEV_TENANT_ID,
             uuid.uuid4(),
             "create_draft_ticket",
             {"title": "Valid title", "description": "Valid description.", "priority": "normal"},
@@ -365,4 +371,4 @@ def test_every_attempt_is_audited_with_the_request_id(client: TestClient, app: F
     ]
     assert {r.correlation_id for r in rows[:3]} == {correlation_id}
     assert all(r.arguments_digest and len(r.arguments_digest) == 64 for r in rows)
-    assert all(r.user_id == app.state.settings.dev_user_id for r in rows)
+    assert all(r.user_id == DEV_USER_ID for r in rows)

@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Authentication, authorization and AI safeguards are **not implemented yet** and are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Phase 6 in progress (P6-M1 sign-in and sessions). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Sign-in and sessions exist since P6-M1; role differences, document-level permissions and the other open items are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -20,12 +20,13 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | Surface | Exposure |
 |---|---|
 | `GET /api/v1/health`, `GET /api/v1/health/ready` | Public, unauthenticated; coarse status only |
-| `POST /api/v1/search` | Development only; development identity; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
-| `/api/v1/conversations` (create, list, get, ask, delete) | Development only; development identity; conversations visible only to their owner in their tenant; stores questions and answers |
-| `/api/v1/agent` (run, get/confirm/cancel actions) | Development only; development identity; the model proposes, the server runs only permitted tools; consequential actions wait for the owner's confirmation |
-| `/api/v1/tools` (list, invoke) | Development only; development identity and its configured permissions; every call goes through the tool executor and is audited; consequential tools cannot be confirmed here |
-| `POST /api/v1/answers` | Development only; development identity; retrieves evidence from the identity's tenant only and sends it with the question to the configured chat model; returns generated text and the cited chunk text |
-| `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Development only (not mounted in production); no authentication; act as a fixed development identity ([ADR-014](ARCHITECTURE_DECISIONS.md#adr-014)); accept untrusted files and parse them in the API process |
+| `POST /api/v1/auth/login`, `/logout`, `/me` | Login is public (uniform failures, lockout after 5); the others need a session |
+| `POST /api/v1/search` | Signed-in user; searches the identity's tenant only (semantic, keyword or hybrid mode); returns chunk text with citations |
+| `/api/v1/conversations` (create, list, get, ask, delete) | Signed-in user; conversations visible only to their owner in their tenant; stores questions and answers |
+| `/api/v1/agent` (run, get/confirm/cancel actions) | Signed-in user; the model proposes, the server runs only permitted tools; consequential actions wait for the owner's confirmation |
+| `/api/v1/tools` (list, invoke) | Development only (not mounted in production); signed-in user and their role's permissions; every call goes through the tool executor and is audited; consequential tools cannot be confirmed here |
+| `POST /api/v1/answers` | Signed-in user; retrieves evidence from the user's tenant only and sends it with the question to the configured chat model; returns generated text and the cited chunk text |
+| `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Signed-in user; documents of the user's tenant; accept untrusted files and parse them in the API process |
 | `/docs`, `/openapi.json` | Available outside `production` |
 | Web dashboard | Static page; calls readiness from the browser without credentials |
 | SQLite file (`apps/api/var/easa.db`) | Local disk; holds synthetic document metadata and chunk text |
@@ -189,7 +190,7 @@ Residual risks: questions and answers are stored in plain text in the database w
 | Ticket tools act as the caller: a user reads only tickets they reported in their tenant; other people's and missing tickets give the same "not found"; drafts are created with the caller as reporter and normalized text | [support.py](../apps/api/app/tools/support.py), [tickets.py](../apps/api/app/repositories/tickets.py) — tested on SQLite and PostgreSQL |
 | Knowledge search through a tool uses the same tenant-filtered hybrid search as the API | [support.py](../apps/api/app/tools/support.py) — tested |
 
-Residual risks: a timed-out tool keeps running in its thread until it finishes (Python threads cannot be stopped); no tool has side effects outside the database yet. The development identity's permissions come from configuration until authentication exists (Phase 6). Audit records have no retention policy and no tamper protection beyond the database itself.
+Residual risks: a timed-out tool keeps running in its thread until it finishes (Python threads cannot be stopped); no tool has side effects outside the database yet. Permissions come from the signed-in user's role (ADR-031). Audit records have no retention policy and no tamper protection beyond the database itself.
 
 ### Agent (Phase 5, P5-M3)
 
@@ -230,6 +231,20 @@ Not covered: subtle misinformation in documents (false but plausible policy text
 
 Agent evaluation with the real model (P5-M5, 26 synthetic tasks, **nothing confirmed**, [EVALUATION.md section 11](EVALUATION.md#11-agent-evaluation-phase-5-p5-m5)): no ticket was created, no consequential tool succeeded, and no other user's or injected content appeared in any answer. Risks observed: requests for tools that do not exist (delete, change priority, send email) became draft-ticket proposals in 3 of 4 cases, one described as "Ticket 2 has been deleted"; one answer claimed "Ticket 1 has been closed" when nothing had changed; a user without ticket access was given an invented status. These are integrity risks for a user who trusts the text or confirms carelessly, not access-control failures. Follow-up (ADR-030): the server now replaces answers that claim a change no tool result shows, and drops a draft priority the user did not state. A prompt rule against substitute tools was tried and removed: it did not help, and with it the model repeated the fake admin address from an injection document to a user without ticket access, the only injected content seen in any answer so far ([EVALUATION.md section 11.6](EVALUATION.md#116-follow-up-adr-030)). Unsupported requests still become draft proposals; the server-written confirmation prompt is the safeguard. Prompt changes are treated as security-relevant and need a full evaluation run.
 
+### Authentication (Phase 6, P6-M1)
+
+| Control | Where |
+|---|---|
+| Identity only from a server-side session found by the SHA-256 of a bearer token; headers or bodies naming a user, tenant or role are ignored, and so are tokens in URLs | [dependencies.py](../apps/api/app/api/dependencies.py), [auth.py](../apps/api/app/services/auth.py) — tested |
+| Every route except health and sign-in requires a session, in development and production; a test enumerates all routes from the OpenAPI schema and expects `401` without a token | [main.py](../apps/api/app/main.py) — tested |
+| Passwords hashed with scrypt (32 MiB, per-password salt, parameters stored), compared in constant time, 12–128 characters, never logged; at most 4 hashes at once bound memory | [passwords.py](../apps/api/app/core/passwords.py) — tested |
+| Uniform sign-in failures (wrong password, unknown, disabled or locked user); unknown users still cost one hash; lockout for 15 minutes after 5 failures | [auth.py](../apps/api/app/services/auth.py) — tested |
+| Sessions: 256-bit tokens shown once, idle limit 8 h, absolute 24 h, revoked at logout and refused once the user is disabled | [auth.py](../apps/api/app/services/auth.py) — tested |
+| Permissions derived from the role on every request, so changes apply to existing sessions | [auth.py](../apps/api/app/services/auth.py) — tested |
+| `create-user` reads passwords from a hidden prompt or stdin, never from arguments | [cli.py](../apps/api/app/cli.py) — tested |
+
+Residual risks: the lockout lets someone who knows a username block that user's sign-in; there is no IP rate limiting; tokens in a browser need a storage decision (Phase 7); old session rows are not cleaned up; roles do not differ yet (P6-M2).
+
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
 
@@ -258,7 +273,6 @@ Agent evaluation with the real model (P5-M5, 26 synthetic tasks, **nothing confi
 
 | Requirement | Planned |
 |---|---|
-| Authentication from a verified identity context; session/token handling | Phase 6 |
 | Role-based and resource-level authorization; deny by default | Phase 6 |
 | Document-level permissions applied before retrieval and before returning content | Phases 3, 6 |
 | Ownership filters and tenant management (tenant filters already exist for documents) | Phase 6 |
@@ -293,7 +307,7 @@ Agent evaluation with the real model (P5-M5, 26 synthetic tasks, **nothing confi
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 707 backend tests; 3 real-model tests skip without the model and 48 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 745 backend tests; 3 real-model tests skip without the model and 48 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.

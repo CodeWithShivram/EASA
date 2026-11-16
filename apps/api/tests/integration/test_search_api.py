@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.core.identity import Identity
 from app.main import create_app
 from app.services.documents import DocumentService
-from tests.conftest import create_schema, make_settings
+from tests.conftest import create_schema, make_settings, sign_in
 from tests.fixtures import DOCX_BYTES, PDF_BYTES, make_encrypted_pdf
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -29,7 +29,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         test_client.post(
             "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
         )
@@ -130,16 +130,14 @@ def test_search_without_the_embedding_model_is_unavailable(tmp_path: Path) -> No
         tmp_path, embedding_provider="onnx", embedding_model_dir=tmp_path / "no-models"
     )
 
-    with TestClient(create_app(settings)) as client:
+    app = create_app(settings)
+    create_schema(app.state.engine)
+    with TestClient(app, headers=sign_in(app)) as client:
         response = search(client, "annual leave")
+    app.state.engine.dispose()
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "embeddings_unavailable"
-
-
-def test_search_is_not_mounted_in_production(tmp_path: Path) -> None:
-    with TestClient(create_app(make_settings(tmp_path, environment="production"))) as client:
-        assert search(client, "annual leave").status_code == 404
 
 
 def test_keyword_mode_finds_exact_terms(client: TestClient) -> None:
@@ -181,7 +179,7 @@ def test_keyword_mode_works_without_the_embedding_model(tmp_path: Path) -> None:
     app = create_app(settings)
     create_schema(app.state.engine)
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=sign_in(app)) as client:
             client.post(
                 "/api/v1/documents",
                 files={"file": ("travel.pdf", PDF_BYTES, "application/pdf")},

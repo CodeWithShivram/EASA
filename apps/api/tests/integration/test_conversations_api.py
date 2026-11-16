@@ -12,7 +12,7 @@ from app.llm.fake import FakeChatModel
 from app.main import create_app
 from app.repositories.conversations import ConversationRepository
 from app.services import conversations as conversation_service
-from tests.conftest import create_schema, make_settings
+from tests.conftest import DEV_TENANT_ID, DEV_USER_ID, create_schema, make_settings, sign_in
 from tests.fixtures import DOCX_BYTES, PDF_BYTES
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -30,7 +30,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         for name, content, media_type in (
             ("handbook.docx", DOCX_BYTES, DOCX_TYPE),
             ("travel.pdf", PDF_BYTES, "application/pdf"),
@@ -104,8 +104,8 @@ def test_list_shows_only_the_users_own_conversations(client: TestClient, app: Fa
     mine = new_conversation(client)
     ask(client, mine, "annual leave")
     with app.state.session_factory() as session:
-        ConversationRepository(session).create(app.state.settings.dev_tenant_id, uuid.uuid4())
-        ConversationRepository(session).create(uuid.uuid4(), app.state.settings.dev_user_id)
+        ConversationRepository(session).create(DEV_TENANT_ID, uuid.uuid4())
+        ConversationRepository(session).create(uuid.uuid4(), DEV_USER_ID)
         session.commit()
 
     items = client.get(BASE).json()["items"]
@@ -117,9 +117,8 @@ def test_list_shows_only_the_users_own_conversations(client: TestClient, app: Fa
 def test_other_owners_conversations_look_missing(
     client: TestClient, app: FastAPI, owner: str
 ) -> None:
-    settings = app.state.settings
-    tenant = settings.dev_tenant_id if owner == "other_user" else uuid.uuid4()
-    user = uuid.uuid4() if owner == "other_user" else settings.dev_user_id
+    tenant = DEV_TENANT_ID if owner == "other_user" else uuid.uuid4()
+    user = uuid.uuid4() if owner == "other_user" else DEV_USER_ID
     with app.state.session_factory() as session:
         foreign = ConversationRepository(session).create(tenant, user)
         session.commit()
@@ -185,11 +184,6 @@ def test_invalid_ids_and_limits_are_rejected(client: TestClient) -> None:
     assert client.get(f"{BASE}/not-a-uuid").status_code == 422
     assert client.get(BASE, params={"limit": 0}).status_code == 422
     assert client.get(BASE, params={"limit": 101}).status_code == 422
-
-
-def test_conversations_are_not_mounted_in_production(tmp_path: Path) -> None:
-    with TestClient(create_app(make_settings(tmp_path, environment="production"))) as client:
-        assert client.post(BASE).status_code == 404
 
 
 def test_conversation_content_is_not_logged(

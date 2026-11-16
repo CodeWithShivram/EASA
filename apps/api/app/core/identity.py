@@ -1,7 +1,7 @@
 """The identity on whose behalf a request is served.
 
-Until authentication exists (Phase 6) this is a development-only identity read
-from server configuration (ADR-014). It is never taken from request data.
+Resolved from a verified session token (app.services.auth, ADR-031); never
+taken from request data such as headers naming a user, tenant or role.
 """
 
 import uuid
@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 class Identity:
     tenant_id: uuid.UUID
     user_id: uuid.UUID
-    # Granted permissions such as "tickets:read". Anything not listed is denied
-    # (Phase 5 tools). Replaced by role-based access control in Phase 6.
+    # Granted permissions such as "tickets:read", derived from the role on each
+    # request (app.core.roles). Anything not listed is denied.
     permissions: frozenset[str] = field(default_factory=frozenset)
+    # The user's role; None for identities built by internal jobs (evaluation).
+    role: str | None = None
 
     def can(self, permission: str) -> bool:
         return permission in self.permissions

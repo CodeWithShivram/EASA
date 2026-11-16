@@ -6,7 +6,6 @@ fail application startup instead of being silently ignored.
 """
 
 import re
-import uuid
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -16,12 +15,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from app.core.passwords import DEFAULT_N
+
 API_ROOT = Path(__file__).resolve().parents[2]
 
 # Database drivers the application is designed and tested for.
 ALLOWED_DATABASE_DRIVERS = frozenset({"sqlite", "sqlite+pysqlite", "postgresql+psycopg"})
 # Model names such as "family:1.5b-instruct", "namespace/model:tag" or a GGUF alias.
-_PERMISSION = re.compile(r"[a-z][a-z_]{0,39}:[a-z][a-z_]{0,39}")
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")
 
 
@@ -76,15 +76,13 @@ class Settings(BaseSettings):
     # Drop citations whose source shares no content words with the citing
     # sentence (P4-M5; off until the evaluation shows it helps).
     answer_support_check: bool = False
-    # Development-only identity (ADR-014). Synthetic values; never taken from
-    # requests. Document endpoints are not mounted in production.
-    dev_tenant_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")
-    dev_user_id: uuid.UUID = uuid.UUID("00000000-0000-4000-8000-000000000002")
-    # Permissions of the development identity (Phase 5 tools; deny by default:
-    # anything not listed is refused). Format "area:action".
-    dev_permissions: list[str] = Field(
-        default_factory=lambda: ["knowledge:search", "tickets:read", "tickets:create"]
-    )
+    # Sign-in sessions (ADR-031): ended after this long without use, and at the latest
+    # after the lifetime.
+    session_idle_minutes: int = Field(default=480, ge=5, le=24 * 60)
+    session_lifetime_hours: int = Field(default=24, ge=1, le=24 * 30)
+    # scrypt cost (a power of two). Production requires at least the default;
+    # tests lower it for speed.
+    password_hash_n: int = Field(default=DEFAULT_N, ge=2**10, le=2**20)
 
     @field_validator("database_url")
     @classmethod
@@ -136,13 +134,18 @@ class Settings(BaseSettings):
             )
         return value.rstrip("/")
 
-    @field_validator("dev_permissions")
+    @field_validator("password_hash_n")
     @classmethod
-    def _validate_dev_permissions(cls, values: list[str]) -> list[str]:
-        for value in values:
-            if not _PERMISSION.fullmatch(value):
-                raise ValueError("each permission must look like area:action (lowercase, _)")
-        return sorted(set(values))
+    def _validate_password_hash_n(cls, value: int) -> int:
+        if value & (value - 1):
+            raise ValueError("password_hash_n must be a power of two")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_password_cost(self) -> Settings:
+        if self.is_production and self.password_hash_n < DEFAULT_N:
+            raise ValueError(f"password_hash_n must be at least {DEFAULT_N} in production")
+        return self
 
     @model_validator(mode="after")
     def _validate_model_provider(self) -> Settings:

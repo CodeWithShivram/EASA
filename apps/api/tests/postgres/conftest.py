@@ -92,7 +92,7 @@ def clean_tables(pg_engine: Engine) -> Iterator[None]:
         connection.execute(
             text(
                 "TRUNCATE documents, conversations, support_tickets, audit_logs, "
-                "pending_actions CASCADE"
+                "pending_actions, user_sessions, users, tenants CASCADE"
             )
         )
 

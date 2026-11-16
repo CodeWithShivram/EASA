@@ -1,3 +1,4 @@
+import re
 import uuid
 from typing import ClassVar
 
@@ -6,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.config import Settings
 from app.core.identity import Identity
+from app.core.roles import ROLE_PERMISSIONS, Role
 from app.repositories.audit import arguments_digest
 from app.tools.base import Tool, ToolContext
 from app.tools.registry import ToolRegistry
@@ -91,10 +93,13 @@ def test_argument_digests_are_canonical() -> None:
     assert len(arguments_digest({})) == 64
 
 
-def test_dev_permissions_are_validated_and_deduplicated() -> None:
-    settings = Settings(_env_file=None, dev_permissions=["tickets:read", "tickets:read"])  # type: ignore[call-arg]
+def test_every_role_grants_well_formed_permissions() -> None:
+    for role in Role:
+        assert ROLE_PERMISSIONS[role]  # deny by default, but no role is empty
+        assert all(re.fullmatch(r"[a-z][a-z_]*:[a-z][a-z_]*", p) for p in ROLE_PERMISSIONS[role])
 
-    assert settings.dev_permissions == ["tickets:read"]
-    for bad in (["tickets"], ["Tickets:Read"], ["tickets:read; drop"]):
-        with pytest.raises(ValidationError):
-            Settings(_env_file=None, dev_permissions=bad)  # type: ignore[call-arg]
+
+def test_the_development_identity_settings_are_gone() -> None:
+    # Phase 6: identity comes only from a session (ADR-031); old settings are refused.
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, dev_permissions=["tickets:read"])  # type: ignore[call-arg]

@@ -85,51 +85,66 @@ npm run start      # serves the build on http://localhost:3000
 
 Useful URLs: http://127.0.0.1:8000/api/v1/health, http://127.0.0.1:8000/api/v1/health/ready, http://127.0.0.1:8000/docs.
 
-Uploading a document from PowerShell (uses the development identity; `curl.exe`, not the PowerShell `curl` alias):
+Every endpoint except health and sign-in needs a session token (Phase 6, [ADR-031](ARCHITECTURE_DECISIONS.md#adr-031)). Create a synthetic user once, then sign in:
 
 ```powershell
-curl.exe -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
-curl.exe "http://127.0.0.1:8000/api/v1/documents?limit=10"
-curl.exe "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
+# once, from apps/api: asks for a password (12-128 characters, not containing the username)
+uv run python -m app.cli create-user --tenant Larkspur --username alice --role employee
+# sign in (prompts for the password; nothing is written to disk or history)
+$cred = Get-Credential alice
+$body = @{ username = $cred.UserName; password = $cred.GetNetworkCredential().Password } | ConvertTo-Json
+$token = (Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/auth/login -ContentType application/json -Body $body).token
+$auth = "Authorization: Bearer $token"
+curl.exe -H $auth http://127.0.0.1:8000/api/v1/auth/me
+```
+
+Sessions end after 8 hours without use or 24 hours at most; `curl.exe -X POST -H $auth http://127.0.0.1:8000/api/v1/auth/logout` ends one now. Five wrong passwords in a row lock the account for 15 minutes.
+
+Uploading a document from PowerShell (`curl.exe`, not the PowerShell `curl` alias):
+
+```powershell
+curl.exe -H $auth -F "file=@C:\path\to\policy.txt" http://127.0.0.1:8000/api/v1/documents   # 201, or 200 if already uploaded
+curl.exe -H $auth "http://127.0.0.1:8000/api/v1/documents?limit=10"
+curl.exe -H $auth "http://127.0.0.1:8000/api/v1/documents/<id>/chunks"
 # Search: write the JSON body to a file to avoid PowerShell quoting issues
 [IO.File]::WriteAllText("$PWD\q.json", '{"query": "How much vacation time do staff get?", "top_k": 3}')
-curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
 # Modes: "hybrid" (default), "semantic", or "keyword" (BM25, works without the embedding model)
 [IO.File]::WriteAllText("$PWD\q.json", '{"query": "receipts deadline", "top_k": 3, "mode": "hybrid"}')
-curl.exe -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@q.json" http://127.0.0.1:8000/api/v1/search
 ```
 
 Conversations keep earlier turns for follow-up questions (same model requirement):
 
 ```powershell
-$c = (curl.exe -s -X POST http://127.0.0.1:8000/api/v1/conversations | ConvertFrom-Json).id
+$c = (curl.exe -H $auth -s -X POST http://127.0.0.1:8000/api/v1/conversations | ConvertFrom-Json).id
 [IO.File]::WriteAllText("$PWD\a.json", '{"question": "How many days of annual leave do employees get?"}')
-curl.exe -H "Content-Type: application/json" --data-binary "@a.json" "http://127.0.0.1:8000/api/v1/conversations/$c/messages"
-curl.exe "http://127.0.0.1:8000/api/v1/conversations/$c"
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@a.json" "http://127.0.0.1:8000/api/v1/conversations/$c/messages"
+curl.exe -H $auth "http://127.0.0.1:8000/api/v1/conversations/$c"
 ```
 
 Asking a single question (needs `EASA_MODEL_PROVIDER` set; with `fake` the "answer" is the first sentence of the top source, which is enough to try the pipeline without a model):
 
 ```powershell
 [IO.File]::WriteAllText("$PWD\a.json", '{"question": "How many days of annual leave do employees get?"}')
-curl.exe -H "Content-Type: application/json" --data-binary "@a.json" http://127.0.0.1:8000/api/v1/answers
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@a.json" http://127.0.0.1:8000/api/v1/answers
 ```
 
-Tools (Phase 5), after `uv run python -m app.cli seed-tickets` (synthetic tickets, once):
+Tools (Phase 5, development only), after `uv run python -m app.cli seed-tickets --username alice` (synthetic tickets in alice's tenant, once):
 
 ```powershell
-curl.exe http://127.0.0.1:8000/api/v1/tools
+curl.exe -H $auth http://127.0.0.1:8000/api/v1/tools
 [IO.File]::WriteAllText("$PWD\t.json", '{"arguments": {"number": 1}}')
-curl.exe -H "Content-Type: application/json" --data-binary "@t.json" http://127.0.0.1:8000/api/v1/tools/get_ticket/invoke
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@t.json" http://127.0.0.1:8000/api/v1/tools/get_ticket/invoke
 ```
 
 The agent (needs a configured model, e.g. the local one in section 6e):
 
 ```powershell
 [IO.File]::WriteAllText("$PWD\g.json", '{"message": "What is the status of my ticket 3?"}')
-curl.exe -H "Content-Type: application/json" --data-binary "@g.json" http://127.0.0.1:8000/api/v1/agent
+curl.exe -H $auth -H "Content-Type: application/json" --data-binary "@g.json" http://127.0.0.1:8000/api/v1/agent
 # a proposed draft ticket returns "pending_action"; review it, then:
-curl.exe -X POST http://127.0.0.1:8000/api/v1/agent/actions/<id>/confirm    # or /cancel
+curl.exe -H $auth -X POST http://127.0.0.1:8000/api/v1/agent/actions/<id>/confirm    # or /cancel
 ```
 
 Use synthetic documents only.
@@ -159,8 +174,8 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_CHAT_MODEL_DIR` | API | `apps/api/var/models/llm` | Where `download-chat-model` stores the GGUF file (git-ignored; mounted read-only into the `llm` container) |
 | `EASA_MODEL_TIMEOUT_SECONDS`, `EASA_MODEL_MAX_OUTPUT_TOKENS`, `EASA_MODEL_TEMPERATURE` | API | `120`, `512`, `0.1` | Per-call limits (0–600 s, 16–4096 tokens, 0–1) |
 | `EASA_ANSWER_SUPPORT_CHECK` | API | `false` | Drop citations whose source shares no content words with the citing sentence (P4-M5; see EVALUATION.md section 10) |
-| `EASA_DEV_PERMISSIONS` | API | `["knowledge:search","tickets:read","tickets:create"]` | Permissions of the development identity for tools (Phase 5); anything not listed is denied. Format `area:action` |
-| `EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID` | API | synthetic UUIDs (`…0001`, `…0002`) | Development-only identity used by document endpoints (ADR-014); ignored in production, where those endpoints are not mounted |
+| `EASA_SESSION_IDLE_MINUTES`, `EASA_SESSION_LIFETIME_HOURS` | API | `480`, `24` | Sign-in sessions end after this long without use, and at the latest after the lifetime (ADR-031) |
+| `EASA_PASSWORD_HASH_N` | API | `32768` | scrypt cost (power of two); production refuses lower values. Tests use 1024 |
 | `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
 
 Invalid API settings stop the server at startup with a validation error that never shows the submitted value.
@@ -186,7 +201,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 707 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 745 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

@@ -1,15 +1,31 @@
 import os
+import secrets
+import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.core.config import Settings
+from app.core.passwords import hash_password
+from app.core.roles import Role
+from app.db.accounts import Tenant, User
 from app.db.fts import create_keyword_index
 from app.db.models import Base
+from app.db.types import utc_now
 from app.main import create_app
+from app.repositories.accounts import AccountRepository
+from app.services.auth import token_digest
+
+# The default signed-in test user (synthetic).
+DEV_TENANT_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+DEV_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000002")
+TEST_PASSWORD = "synthetic-test-password"  # noqa: S105 - test data only
+TEST_HASH_N = 2**10  # fast scrypt for tests
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +48,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "storage_dir": tmp_path / "var" / "uploads",
         # Deterministic, offline embedder; the real model has its own tests.
         "embedding_provider": "hashing",
+        "password_hash_n": TEST_HASH_N,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
@@ -63,3 +80,49 @@ def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         create_keyword_index(connection)
+
+
+def add_user(
+    app: FastAPI,
+    *,
+    user_id: uuid.UUID = DEV_USER_ID,
+    tenant_id: uuid.UUID = DEV_TENANT_ID,
+    username: str | None = None,
+    role: Role = Role.EMPLOYEE,
+    password: str = TEST_PASSWORD,
+    active: bool = True,
+) -> None:
+    """Create the user (and its tenant) unless it exists. Tables must exist."""
+    with app.state.session_factory() as session:
+        if session.get(Tenant, tenant_id) is None:
+            session.add(Tenant(id=tenant_id, name=f"tenant-{tenant_id}"))
+        if session.get(User, user_id) is None:
+            session.add(
+                User(
+                    id=user_id,
+                    tenant_id=tenant_id,
+                    username=username or f"user-{user_id.hex[:12]}",
+                    password_hash=hash_password(password, n=TEST_HASH_N),
+                    role=role,
+                    is_active=active,
+                )
+            )
+        session.commit()
+
+
+def sign_in(app: FastAPI, **user: object) -> dict[str, str]:
+    """Headers of a fresh session for the user (created if needed), without the login route."""
+    add_user(app, **user)  # type: ignore[arg-type]
+    token = secrets.token_urlsafe(32)
+    with app.state.session_factory() as session:
+        AccountRepository(session).create_session(
+            user.get("user_id", DEV_USER_ID),  # type: ignore[arg-type]
+            token_digest(token),
+            utc_now() + timedelta(hours=1),
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def limit_permissions(app: FastAPI, *permissions: str) -> None:
+    """Make every role grant exactly these permissions (for permission tests)."""
+    app.state.role_permissions = dict.fromkeys(Role, frozenset(permissions))

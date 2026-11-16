@@ -1,4 +1,4 @@
-"""The agent and its pending actions (Phase 5, P5-M3; development only)."""
+"""The agent and its pending actions (Phase 5, P5-M3); requires a signed-in user."""
 
 import uuid
 from datetime import datetime

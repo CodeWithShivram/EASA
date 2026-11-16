@@ -34,6 +34,7 @@
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 | [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
+| [ADR-031](#adr-031) | Authentication: built-in sign-in with server-side sessions; one role per user; tenants table | P6-M1 |
 | [ADR-030](#adr-030) | Agent safeguards after evaluation: claimed-action check and user-only fields; no prompt change | P5-M5 follow-up |
 
 ---
@@ -171,7 +172,7 @@
 <a id="adr-014"></a>
 ## ADR-014: Development-only identity until authentication exists
 
-- **Status:** Accepted (Phase 2 planning, 2026-11-14). Implemented in P2-M2 (`get_identity` dependency; document routes mounted only outside production).
+- **Status:** Superseded by [ADR-031](#adr-031) (P6-M1, 2026-11-16). Was accepted in Phase 2 planning and implemented in P2-M2.
 - **Context:** The roadmap puts authentication and RBAC in Phase 6, but Phase 2 stores documents that must carry an owner and a tenant. The guide forbids trusting identity supplied by the browser.
 - **Options considered:** (a) a fixed development identity from server configuration; (b) bring minimal authentication forward; (c) no HTTP upload in Phase 2, only a command-line ingestion tool.
 - **Decision:** (a). The server reads a development tenant and user ID from its own configuration (`EASA_DEV_TENANT_ID`, `EASA_DEV_USER_ID`). It never takes identity from requests. Document endpoints are disabled when `EASA_ENVIRONMENT=production`. Tables carry real `tenant_id` and `owner_id` columns now; foreign keys are added in Phase 6.
@@ -407,7 +408,7 @@
   - No LangGraph: the agent loop (P5-M3) stays plain code; revisit if workflows grow branches, long-running state or human-in-the-loop steps beyond one confirmation.
   - Tools are classes with Pydantic `Input` (unknown fields forbidden) and `Output` models, a required permission, a timeout, a `consequential` flag and a retry count (zero for consequential tools); a registry is the allowlist and refuses badly specified tools at startup.
   - `ToolExecutor` checks allowlist, permission (before arguments), argument size and schema, then confirmation, then runs the tool in a thread pool with a timeout; tool problems become structured results, never exceptions or stack traces.
-  - Identities carry explicit permissions, deny by default; the development identity's set is configured (`EASA_DEV_PERMISSIONS`) until RBAC (Phase 6).
+  - Identities carry explicit permissions, deny by default; the development identity's set was configured (`EASA_DEV_PERMISSIONS`) until roles replaced it (ADR-031).
   - An `audit_logs` table records every attempt in its own transaction, with a SHA-256 digest of the arguments instead of their values.
 - **Trade-offs:** Threads cannot be killed, so a timed-out tool runs on in the background (tools use their own sessions to stay isolated). Digests prove what was requested only to someone who already has the arguments. Checking permission before arguments means an authorized caller can still probe argument errors; that is intended.
 - **Consequences:** P5-M2 adds the ticket tools on this framework; P5-M3 adds the model loop, which can only call `ToolExecutor.execute`, so every model decision passes the same checks as any other caller.
@@ -441,10 +442,24 @@
 - **Trade-offs:** The claim check is lexical: it can miss claims phrased differently and can replace a truthful sentence whose reported word is not in any tool result. Unsupported requests still become draft proposals; the server-written confirmation prompt and the user's decision remain the safeguard. Small prompt changes alter a small model's behaviour in unrelated tasks, so prompt edits need a full evaluation run.
 - **Consequences:** the agent evaluation keeps the same 26 tasks and scorer, so runs stay comparable.
 
+<a id="adr-031"></a>
+## ADR-031: Authentication: built-in sign-in with server-side sessions; one role per user; tenants table
+
+- **Status:** Accepted (P6-M1, 2026-11-16; options approved in the Phase 6 plan)
+- **Context:** Until Phase 6 every request acted as one configured development identity (ADR-014), and the protected routes were switched off in production. The guide requires identity from a verified authentication context, deny by default, and never trusting identity supplied by the client.
+- **Options considered:** built-in username and password with server-side session tokens; self-signed JWTs (stateless, hard to revoke before expiry); an external OpenID Connect provider such as Keycloak in Docker (most realistic, much more setup and a new container). For roles: one role per user with permissions in code, or roles and permissions tables.
+- **Decision:**
+  - Users and tenants are stored in the database; a user belongs to one tenant and has one role (`employee`, `manager`, `administrator`). Usernames are unique across the installation. Users are created by an administrator (`create-user` command; an admin API follows in P6-M2); there is no self-registration.
+  - Passwords: scrypt from the standard library (n=2^15, r=8, p=3, about 32 MiB per hash, at most four at once), parameters stored with each hash; 12–128 characters, not containing the username. No new dependency.
+  - Sessions: 256-bit random tokens sent as `Authorization: Bearer`; only their SHA-256 is stored. Idle limit 8 hours, absolute 24 hours, revoked at logout or when the user is disabled. Whether the browser keeps the token in an HttpOnly cookie is decided with the frontend (Phase 7).
+  - Sign-in failures all look the same, unknown users still cost a password check, and five consecutive failures lock an account for 15 minutes.
+  - Permissions are derived from the role on every request, never stored in the session, so role changes and revocations apply immediately (including when a pending agent action is confirmed).
+  - The development identity is removed. Every route except health and sign-in requires a session, in every environment; the protected routes are therefore no longer switched off in production (the tool endpoints stay development-only).
+- **Trade-offs:** An account lockout lets anyone who knows a username block that user's sign-in for 15 minutes; IP-based rate limiting is still missing (needed before any shared deployment). One database lookup per request (and at most one write per minute per session). No single sign-on; an OIDC provider can be added later behind the same `Identity`.
+- **Consequences:** Existing tables keep `tenant_id` without a foreign key to `tenants` (rows from before Phase 6 have no tenant row). Tests sign in through a helper that creates users and sessions directly. P6-M2 differentiates the roles and adds user management and audit records for sign-ins.
+
 ---
 ## Open decisions (not yet made)
 
 | Topic | Phase |
 |---|---|
-| Authentication approach (identity provider, session vs token) | 6 |
-| Multi-tenancy model | 6 |

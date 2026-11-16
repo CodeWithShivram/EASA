@@ -22,7 +22,8 @@ CONVERSATIONS_REVISION = "c0002f4a144e"
 AUDIT_REVISION = "2883c37b9b4f"
 TICKETS_REVISION = "74e98c05b626"
 PENDING_ACTIONS_REVISION = "758b76fd91fc"
-HEAD_REVISION = PENDING_ACTIONS_REVISION
+ACCOUNTS_REVISION = "815538a0d71f"
+HEAD_REVISION = ACCOUNTS_REVISION
 
 
 @pytest.fixture
@@ -88,6 +89,9 @@ def test_upgrade_to_head_creates_document_tables(alembic_config: Config, databas
         "audit_logs",
         "support_tickets",
         "pending_actions",
+        "tenants",
+        "users",
+        "user_sessions",
     }
     assert revision == HEAD_REVISION
 

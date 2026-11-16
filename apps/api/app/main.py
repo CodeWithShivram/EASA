@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
-from app.api.v1.routes import agent, answers, conversations, documents, search, tools
+from app.api.v1.routes import agent, answers, auth, conversations, documents, search, tools
 from app.core.config import Settings, load_settings
 from app.core.correlation import CORRELATION_ID_HEADER
 from app.core.errors import register_exception_handlers
@@ -21,6 +21,7 @@ from app.core.middleware import (
     CorrelationIdMiddleware,
     UnhandledErrorMiddleware,
 )
+from app.core.roles import ROLE_PERMISSIONS
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder
@@ -70,6 +71,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The ONNX model loads lazily on first use, so startup stays fast.
     app.state.embedder = build_embedder(settings)
     app.state.chat_model = chat_model
+    # Role -> permissions (app.core.roles); replaceable in tests.
+    app.state.role_permissions = ROLE_PERMISSIONS
     app.state.tool_executor = ToolExecutor(
         build_tool_registry(app.state.embedder),
         AuditRepository(app.state.session_factory),
@@ -79,14 +82,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router)
+    # Every route below requires a signed-in user (ADR-031).
+    for module in (auth, documents, search, answers, conversations, agent):
+        app.include_router(module.router, prefix="/api/v1")
     if not settings.is_production:
-        # Uses the development-only identity (ADR-014), so never in production.
-        app.include_router(documents.router, prefix="/api/v1")
-        app.include_router(search.router, prefix="/api/v1")
-        app.include_router(answers.router, prefix="/api/v1")
-        app.include_router(conversations.router, prefix="/api/v1")
+        # Tool listing and direct invocation are development aids only.
         app.include_router(tools.router, prefix="/api/v1")
-        app.include_router(agent.router, prefix="/api/v1")
 
     # Starlette wraps middleware in reverse order: the last one added is outermost.
     app.add_middleware(

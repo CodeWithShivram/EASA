@@ -9,13 +9,24 @@ from sqlalchemy import func, select
 
 from app import cli
 from app.core.identity import Identity
+from app.core.passwords import DEFAULT_N
+from app.core.roles import ROLE_PERMISSIONS, Role
 from app.db.audit import AuditLog, AuditOutcome
 from app.db.tickets import SupportTicket, TicketPriority, TicketStatus
 from app.main import create_app
 from app.services.documents import DocumentService
 from app.tools.executor import ToolExecutor
 from app.tools.seed import OTHER_REPORTER, seed_tickets
-from tests.conftest import create_schema, make_settings, sqlite_url
+from tests.conftest import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    add_user,
+    create_schema,
+    limit_permissions,
+    make_settings,
+    sign_in,
+    sqlite_url,
+)
 from tests.fixtures import DOCX_BYTES
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -25,16 +36,15 @@ DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 def app(tmp_path: Path) -> Iterator[FastAPI]:
     app = create_app(make_settings(tmp_path))
     create_schema(app.state.engine)
-    settings = app.state.settings
     with app.state.session_factory() as session:
-        assert seed_tickets(session, settings.dev_tenant_id, settings.dev_user_id) == 7
+        assert seed_tickets(session, DEV_TENANT_ID, DEV_USER_ID) == 7
     yield app
     app.state.engine.dispose()
 
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=sign_in(app)) as test_client:
         response = test_client.post(
             "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
         )
@@ -43,9 +53,8 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 def me(app: FastAPI, *permissions: str) -> Identity:
-    settings = app.state.settings
-    granted = frozenset(permissions) if permissions else frozenset(settings.dev_permissions)
-    return Identity(settings.dev_tenant_id, settings.dev_user_id, granted)
+    granted = frozenset(permissions) if permissions else ROLE_PERMISSIONS[Role.EMPLOYEE]
+    return Identity(DEV_TENANT_ID, DEV_USER_ID, granted)
 
 
 def executor(app: FastAPI) -> ToolExecutor:
@@ -100,7 +109,7 @@ def test_other_peoples_and_missing_tickets_look_the_same(
 
 
 def test_another_tenant_cannot_read_tickets(client: TestClient, app: FastAPI) -> None:
-    stranger = Identity(uuid.uuid4(), app.state.settings.dev_user_id, frozenset({"tickets:read"}))
+    stranger = Identity(uuid.uuid4(), DEV_USER_ID, frozenset({"tickets:read"}))
 
     result = executor(app).execute(stranger, "get_ticket", {"number": 1})
 
@@ -122,7 +131,7 @@ def test_draft_tickets_need_confirmation(client: TestClient, app: FastAPI) -> No
     assert done.output == {"number": 8, "status": "draft", "title": "Printer jammed"}
     with app.state.session_factory() as session:
         created = session.scalars(select(SupportTicket).where(SupportTicket.number == 8)).one()
-    assert created.reporter_id == app.state.settings.dev_user_id
+    assert created.reporter_id == DEV_USER_ID
     assert (created.status, created.priority) == (TicketStatus.DRAFT, TicketPriority.NORMAL)
 
 
@@ -174,8 +183,10 @@ def test_list_tools_shows_permitted_tools(client: TestClient) -> None:
 
 
 def test_list_tools_follows_configured_permissions(tmp_path: Path) -> None:
-    app = create_app(make_settings(tmp_path, dev_permissions=["tickets:read"]))
-    with TestClient(app) as client:
+    app = create_app(make_settings(tmp_path))
+    create_schema(app.state.engine)
+    limit_permissions(app, "tickets:read")
+    with TestClient(app, headers=sign_in(app)) as client:
         names = [i["name"] for i in client.get("/api/v1/tools").json()["items"]]
     app.state.engine.dispose()
 
@@ -211,7 +222,8 @@ def test_malformed_invocations_are_rejected(client: TestClient) -> None:
 
 
 def test_tools_are_not_mounted_in_production(tmp_path: Path) -> None:
-    with TestClient(create_app(make_settings(tmp_path, environment="production"))) as client:
+    settings = make_settings(tmp_path, environment="production", password_hash_n=DEFAULT_N)
+    with TestClient(create_app(settings)) as client:
         assert client.get("/api/v1/tools").status_code == 404
 
 
@@ -219,11 +231,10 @@ def test_tools_are_not_mounted_in_production(tmp_path: Path) -> None:
 
 
 def test_seeding_runs_once_and_separates_reporters(app: FastAPI) -> None:
-    settings = app.state.settings
     with app.state.session_factory() as session:
-        assert seed_tickets(session, settings.dev_tenant_id, settings.dev_user_id) == 0
+        assert seed_tickets(session, DEV_TENANT_ID, DEV_USER_ID) == 0
         reporters = list(session.scalars(select(SupportTicket.reporter_id)))
-    assert reporters.count(settings.dev_user_id) == 5
+    assert reporters.count(DEV_USER_ID) == 5
     assert reporters.count(OTHER_REPORTER) == 2
 
 
@@ -231,8 +242,9 @@ def test_seed_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     url = sqlite_url(tmp_path / "var" / "seed.db")
     app = create_app(make_settings(tmp_path, database_url=url))
     create_schema(app.state.engine)
+    add_user(app, username="dev-user")
     app.state.engine.dispose()
     monkeypatch.setenv("EASA_DATABASE_URL", url)
 
-    assert cli.main(["seed-tickets"]) == 0
-    assert cli.main(["seed-tickets"]) == 0  # idempotent
+    assert cli.main(["seed-tickets", "--username", "dev-user"]) == 0
+    assert cli.main(["seed-tickets", "--username", "DEV-USER"]) == 0  # idempotent

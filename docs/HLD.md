@@ -47,7 +47,7 @@ flowchart LR
 | Document API | FastAPI routes (development only) | Upload with validation and idempotency, list, get (P2-M2); in-request text extraction and normalization for PDF, DOCX and TXT (P2-M3); configurable chunking with page/section metadata and a chunks endpoint (P2-M4); local embeddings (P3-M1), tenant-scoped semantic search with citations (P3-M2), and keyword (SQLite FTS5, BM25) and hybrid (reciprocal rank fusion) search modes (P3-M3); grounded answers with citations and insufficient-evidence handling through a provider-independent chat model (P4-M1, P4-M2) |
 | Migrations | Alembic | Settings-driven environment; the same migration chain on SQLite and PostgreSQL (backend-specific steps are no-ops elsewhere) |
 
-There is **no** authentication or tool execution yet. Answers use a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker, optional) or a deterministic fake; document endpoints use a development-only identity. Those arrive in later phases (section 6).
+Users sign in with a username and password and get a session token (Phase 6, P6-M1); every endpoint except health and sign-in requires it. Answers and the agent use a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker, optional) or a deterministic fake. Role differences and document-level permissions arrive later in Phase 6 (section 6).
 
 ## 4. Target architecture (planned)
 
@@ -106,7 +106,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 3 | Embeddings and retrieval (PostgreSQL + pgvector) | Complete (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; see [EVALUATION.md](EVALUATION.md)) |
 | 4 | Grounded RAG answering | Complete (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations, P4-M5 answer evaluation; see [EVALUATION.md](EVALUATION.md) section 10) |
 | 5 | Agent and controlled tool calling | Complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial tests, P5-M5 agent evaluation) |
-| 6 | Authentication and RBAC | Not started |
+| 6 | Authentication and RBAC | In progress (P6-M1 sign-in and sessions done) |
 | 7 | Frontend and integration | Not started |
 | 8 | Evaluation, reliability and delivery | Not started |
 
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (734 automated tests today: 707 backend including 48 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (772 automated tests today: 745 backend including 48 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks
