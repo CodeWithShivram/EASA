@@ -9,6 +9,7 @@ Run from apps/api:
     uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
     uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
+    uv run python -m app.cli evaluate-agent [--limit N]
 
 The evaluation commands use the PostgreSQL URL in EASA_EVAL_POSTGRES_URL (a
 user that may create databases); they create and drop throwaway databases.
@@ -28,6 +29,13 @@ from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder, download_model
 from app.embeddings.registry import DEFAULT_MODEL
+from app.evaluation.agent_eval import (
+    agent_report_to_json,
+    agent_report_to_markdown,
+    load_agent_cases,
+    run_agent_evaluation,
+    validate_agent_cases,
+)
 from app.evaluation.answers_eval import (
     ALL_ANSWER_CONFIGS,
     DEFAULT_ANSWER_CONFIG,
@@ -132,6 +140,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="ignore finished cases saved by an interrupted earlier run",
     )
+    agent = commands.add_parser(
+        "evaluate-agent",
+        help="evaluate the agent with the configured chat model (eval/agent.json); "
+        "nothing is confirmed",
+    )
+    agent.add_argument("--limit", type=int, default=0, help="only the first N tasks (0 = all)")
+    agent.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -216,6 +231,39 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "json": answer_report_to_json(answer_report),
                 "md": answer_report_to_markdown(answer_report),
+            },
+        )
+        return 0
+
+    if args.command == "evaluate-agent":
+        agent_cases, agent_documents = load_agent_cases()
+        problems = validate_agent_cases(agent_cases, agent_documents)
+        if problems:
+            logger.error("agent evaluation tasks are invalid", extra={"problems": problems})
+            return 1
+        embedder = build_embedder(settings)
+        model = build_chat_model(
+            settings.model_copy(
+                update={"model_timeout_seconds": max(settings.model_timeout_seconds, 300.0)}
+            )
+        )
+        if model is None or not model.is_available() or not embedder.is_available():
+            logger.error("a configured, available chat model and embedding model are required")
+            return 1
+        agent_report = run_agent_evaluation(
+            agent_cases[: args.limit] if args.limit > 0 else agent_cases,
+            agent_documents,
+            embedder,
+            model,
+            database=sqlite_database,
+            progress=lambda line: logger.info("agent task done", extra={"task": line}),
+        )
+        _write(
+            args.output_dir,
+            f"{stamp}-agent",
+            {
+                "json": agent_report_to_json(agent_report),
+                "md": agent_report_to_markdown(agent_report),
             },
         )
         return 0

@@ -994,8 +994,8 @@ Plan approved on 2026-11-15 with the recommended options: no LangGraph (plain co
 | P5-M1 | Tool framework (typed contracts, allowlist, permissions, confirmation, timeouts) and audit log | COMPLETE | `69bc49c` |
 | P5-M2 | Synthetic support tickets and tools (knowledge search, get ticket, ticket status, create draft ticket) | COMPLETE | `a867cbc` |
 | P5-M3 | Agent loop with schema-constrained tool choice and a confirmation flow | COMPLETE | `795bd2a` |
-| P5-M4 | Adversarial tests (injection, unauthorized tools, timeouts, audit completeness) | COMPLETE | the commit that adds this row |
-| P5-M5 | Agent evaluation and Phase 5 report | NOT STARTED | |
+| P5-M4 | Adversarial tests (injection, unauthorized tools, timeouts, audit completeness) | COMPLETE | `d840276` |
+| P5-M5 | Agent evaluation and Phase 5 report | COMPLETE | the commit that adds this row |
 
 ## P5-M1: Tool framework and audit log
 
@@ -1116,3 +1116,71 @@ Plan approved on 2026-11-15 with the recommended options: no LangGraph (plain co
 - The model's proposals can still be wrong or misleading; the server-written confirmation prompt and the user's decision are the safeguard.
 
 **Exit criteria:** met. The agent withstood the automated and live attacks without running anything unauthorized, and the two weaknesses found were fixed.
+
+## P5-M5: Agent evaluation and Phase 5 report
+
+**Scope:** measure the agent with the real model on labelled synthetic tasks, without confirming anything, and close Phase 5.
+
+**Implemented**
+
+- `apps/api/eval/agent.json`: 26 tasks (6 lookups, 4 creation requests, 5 knowledge questions, 4 unsupported requests, 2 other users' tickets, 3 injection questions, 2 tasks for a user with only `knowledge:search`).
+- `app/evaluation/agent_eval.py`: loading and validation, per-kind scoring (success, right tool, leaks, unnecessary proposals), a runner on one fresh database with seeded tickets and documents that never confirms, safety invariants (ticket count, succeeded consequential calls in the audit log), JSON and Markdown reports.
+- CLI `evaluate-agent [--limit N]`.
+- Tests: 16 unit (task file valid, validation, scoring per kind, summary and report) and 3 integration (runner with a scripted model including invariants, model failures, CLI without a model).
+- Docs: EVALUATION.md section 11, LLD, DEVELOPMENT_GUIDE, SECURITY (observed agent behaviour), README, HLD.
+
+**Verification (executed 2026-11-16)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 684 passed (388 unit, 241 integration, 3 real-embedding, 48 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 632 passed, 52 skipped |
+| `evaluate-agent --limit 3` (smoke) | 3 of 3 lookups correct, about 17 s each |
+| `evaluate-agent` (26 tasks, local model, **nothing confirmed**) | About 10 minutes. Automatic success 0.85 (22/26), right tool 13 of 14, 0 leaks, 3 unnecessary proposals (all for unsupported requests); tickets 7 before and after, 0 succeeded `create_draft_ticket` calls. Manual review: 19 of 26 acceptable; two answers falsely claimed or invented ticket state (EVALUATION.md section 11.3) |
+| First runs | The narrow forbidden marker "open" in a limited-user task would have matched harmless words; it was removed before the real run. The first CLI patch did not apply because `python` is not on the PATH in this shell; reapplied with the project's interpreter |
+
+**Known limitations**
+
+- The scorer is lexical and missed two false claims; the numbers are reported with a manual review.
+- The four recommendations in EVALUATION.md section 11.5 (claimed-action check, a "cannot do that" rule, no model-chosen priority, fixed answers without ticket access) are proposals, not implemented.
+
+**Exit criteria:** met. The agent is measured with the real model, the safety invariants held on every task, and the weaknesses are recorded with proposed fixes.
+
+## Phase 5 completion report
+
+**Status: COMPLETE.** Phase 5 delivered an agent that uses four typed tools only through one checked, audited path, with consequential actions waiting for the owner's confirmation, an adversarial test suite and an evaluation with the real model.
+
+**Phase 5 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 5) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Introduce LangGraph only when justified | Not introduced: a plain loop of at most 3 tool calls needs no graph framework (approved plan, ADR-029) | P5-M3 |
+| Define typed tool contracts | `Tool` with Pydantic input and output models (unknown fields rejected), permission, consequential flag, timeout and retries; contracts checked at startup | P5-M1, P5-M2 |
+| Add an allowlist of tools | `ToolRegistry`; the model's step schema lists only allowlisted tools the caller may use | P5-M1, P5-M3 |
+| Validate arguments and user permissions | Executor order allowlist → permission → arguments (4 KB) → confirmation; deny by default; tools act strictly as the caller (own tickets, own tenant) | P5-M1, P5-M2 |
+| Add approval steps for consequential actions | Pending actions with a 10-minute expiry, confirmed once by the owner with the permission re-checked; server-written confirmation prompt; at most 20 open per user | P5-M3, P5-M4 |
+| Handle timeouts, retries and tool failures | Per-tool timeout in a thread pool, retries for marked errors, generic failures without internal details | P5-M1, P5-M4 |
+| Record tool execution audit events | `audit_logs`: one record per attempt with outcome, correlation ID and an argument digest (no plaintext) | P5-M1, P5-M4 |
+| Test prompt injection and unauthorized tool attempts | 13 automated adversarial tests, two live probes and the 26-task evaluation: no injected action ran, no other user's data reached an answer | P5-M4, P5-M5 |
+
+Demonstration tools from the guide: knowledge base search, get ticket, ticket status and create draft ticket, all over synthetic data.
+
+**Commits:** P5-M1 `69bc49c`, P5-M2 `a867cbc`, P5-M3 `795bd2a`, P5-M4 `d840276`, P5-M5 the commit that adds this report.
+
+**Dependencies added in Phase 5:** none.
+
+**Architecture decisions:** ADR-028 (tool framework and audit log), ADR-029 (agent loop with schema-constrained steps and confirmation).
+
+**Tests:** 684 backend (388 unit, 241 integration, 3 real-embedding, 48 PostgreSQL, 4 live model) plus 27 frontend = 711, up from 590 at the end of Phase 4.
+
+**Security considerations:** see [SECURITY.md](SECURITY.md). The safeguards do not depend on the model: the server limits which tools exist, what they can reach and what runs without confirmation. Residual risks: the model proposes wrong actions for requests it cannot fulfil (3 of 4 in the evaluation) and can claim actions that did not happen, so a careless confirmation or a trusting reader is the remaining weak point; the development identity is still the only identity (Phase 6); audit records have no retention policy.
+
+**Manual verification steps** (from `apps/api`, with the llm container running, `EASA_MODEL_PROVIDER=llamacpp`, `EASA_MODEL_NAME=qwen2.5-1.5b-instruct-q4_k_m`, and `uv run python -m app.cli seed-tickets` on a scratch database):
+
+1. `POST /api/v1/agent` with `{"message": "What is the status of my ticket 2?"}` → `answered` with one `get_ticket_status` step.
+2. `POST /api/v1/agent` with `{"message": "Please open a ticket: my headset does not work."}` → `confirmation_required` with the action ID; `POST /api/v1/agent/actions/{id}/cancel` → cancelled, no ticket.
+3. `POST /api/v1/agent` asking for ticket 6 → not found.
+4. `uv run python -m app.cli evaluate-agent --limit 5` → a report in `var/eval/`.
+
+**Recommended next phase:** Phase 6, authentication and role-based access control. Before or alongside it, the four agent fixes proposed in EVALUATION.md section 11.5 could be done as a short follow-up, if approved.

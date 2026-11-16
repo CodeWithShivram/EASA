@@ -186,7 +186,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 665 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 684 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -282,9 +282,10 @@ Answer evaluation (P4-M5) needs the local chat model (section 6e) and takes hour
 $env:EASA_MODEL_PROVIDER = "llamacpp"; $env:EASA_MODEL_NAME = "qwen2.5-1.5b-instruct-q4_k_m"
 uv run python -m app.cli evaluate-answers --limit 5          # a quick look
 uv run python -m app.cli evaluate-answers --configs all      # 43 cases x 3 settings
+uv run python -m app.cli evaluate-agent                      # 26 agent tasks (P5-M5); nothing is confirmed
 ```
 
-The dataset is in `apps/api/eval/` (`answers.json`, and `adversarial/` with prompt-injection documents used only by the answer evaluation); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
+The dataset is in `apps/api/eval/` (`answers.json`, `agent.json`, and `adversarial/` with prompt-injection documents used only by the answer and agent evaluations); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
 
 ## 6e. Local chat model (llama.cpp)
 
