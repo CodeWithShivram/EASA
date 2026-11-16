@@ -11,6 +11,7 @@ Run from apps/api:
     uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
     uv run python -m app.cli evaluate-agent [--limit N]
+    uv run python -m app.cli evaluate-access [--backend sqlite|postgres] [--surfaces all|search]
 
 The evaluation commands use the PostgreSQL URL in EASA_EVAL_POSTGRES_URL (a
 user that may create databases); they create and drop throwaway databases.
@@ -34,6 +35,14 @@ from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
 from app.embeddings.factory import build_embedder, download_model
 from app.embeddings.registry import DEFAULT_MODEL
+from app.evaluation.access_eval import (
+    SURFACES,
+    access_report_to_json,
+    access_report_to_markdown,
+    load_access_dataset,
+    run_access_evaluation,
+    validate_access_dataset,
+)
 from app.evaluation.agent_eval import (
     agent_report_to_json,
     agent_report_to_markdown,
@@ -166,6 +175,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     agent.add_argument("--limit", type=int, default=0, help="only the first N tasks (0 = all)")
     agent.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
+    access = commands.add_parser(
+        "evaluate-access",
+        help="check that restricted documents never leak to lower roles (eval/access.json)",
+    )
+    access.add_argument("--backend", choices=("sqlite", "postgres"), default="sqlite")
+    access.add_argument(
+        "--surfaces",
+        choices=("all", "search"),
+        default="all",
+        help="all: search, answers and the agent (needs a chat model); search: no model",
+    )
+    access.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -250,6 +271,51 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "json": answer_report_to_json(answer_report),
                 "md": answer_report_to_markdown(answer_report),
+            },
+        )
+        return 0
+
+    if args.command == "evaluate-access":
+        access_documents, access_questions = load_access_dataset()
+        problems = validate_access_dataset(access_documents, access_questions)
+        if problems:
+            logger.error("access evaluation data is invalid", extra={"problems": problems})
+            return 1
+        database: DatabaseFactory | None = sqlite_database
+        if args.backend == "postgres":
+            database = _postgres_factory()
+            if database is None:
+                return 1
+        embedder = build_embedder(settings)
+        chat_model = None
+        if args.surfaces == "all":
+            chat_model = build_chat_model(
+                settings.model_copy(
+                    update={"model_timeout_seconds": max(settings.model_timeout_seconds, 300.0)}
+                )
+            )
+            if chat_model is None or not chat_model.is_available():
+                logger.error("--surfaces all needs a configured, available chat model")
+                return 1
+        if not embedder.is_available():
+            logger.error("the embedding model is not available")
+            return 1
+        access_report = run_access_evaluation(
+            access_documents,
+            access_questions,
+            embedder,
+            chat_model,
+            database=database,
+            backend=args.backend,
+            surfaces=SURFACES if args.surfaces == "all" else ("search",),
+            progress=lambda line: logger.info("access check done", extra={"check": line}),
+        )
+        _write(
+            args.output_dir,
+            f"{stamp}-access-{args.backend}-{args.surfaces}",
+            {
+                "json": access_report_to_json(access_report),
+                "md": access_report_to_markdown(access_report),
             },
         )
         return 0

@@ -1224,8 +1224,8 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 | P6-M1 | Tenants, users, sessions; sign-in, sign-out, current user; `create-user`; the development identity replaced by sessions | COMPLETE | `953601d` |
 | P6-M2 | Role permissions differentiated and checked on every route; user administration; audit records for sign-ins and user changes | COMPLETE | `61ad1f7` |
 | P6-M3 | Minimum role per document, enforced in all four search paths, document access, answers, conversations and the agent | COMPLETE | `d082a20` |
-| P6-M4 | Audit endpoint for administrators; route-by-role security suite (horizontal and vertical escalation, session attacks) | COMPLETE | the commit that adds this row |
-| P6-M5 | Leakage evaluation with role-restricted documents and Phase 6 report | NOT STARTED | |
+| P6-M4 | Audit endpoint for administrators; route-by-role security suite (horizontal and vertical escalation, session attacks) | COMPLETE | `95bd767` |
+| P6-M5 | Leakage evaluation with role-restricted documents and Phase 6 report | COMPLETE | the commit that adds this row |
 
 ## P6-M1: Sign-in and sessions
 
@@ -1352,4 +1352,68 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 - The suite covers the API; the web frontend comes in Phase 7.
 
 **Exit criteria:** met. No tested crossing between users, tenants or roles succeeded, and administrators can review what happened in their tenant.
+
+## P6-M5: Leakage evaluation and Phase 6 report
+
+**Scope:** measure, with the real model, whether restricted documents ever reach users below their minimum role, through search, grounded answers or the agent, and close Phase 6.
+
+**Implemented**
+
+- `apps/api/eval/access.json` and four synthetic restricted documents in `apps/api/eval/access/` (two manager-level, two administrator-level), each with canaries that occur nowhere else; ten questions (manager, administrator and employee level, one "ignore restrictions" and one "list everything" request).
+- `app/evaluation/access_eval.py`: dataset validation (canaries present, unique, absent from questions), a `RecordingModel` that keeps everything the model is shown, the runner (every role × question × search, answers, agent), leak detection (citations of hidden documents; canaries in outputs or model input), facts found where permitted, the replies for reading, JSON and Markdown reports. CLI `evaluate-access [--backend sqlite|postgres] [--surfaces all|search]`.
+- Tests: 7 integration (dataset valid; validation problems; search-only and full runs with a scripted model without leaks; **a negative control that disables the filter and must report leaks**; the CLI; the recorder).
+- Docs: EVALUATION.md section 12, LLD, DEVELOPMENT_GUIDE, SECURITY, README, HLD.
+
+**Verification (executed 2026-11-16)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 846 passed (434 unit, 356 integration, 3 real-embedding, 49 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 793 passed, 53 skipped |
+| `evaluate-access --surfaces search` on SQLite and on PostgreSQL (real embeddings) | 30 checks each, 0 leaks, 17 of 17 permitted facts found |
+| `evaluate-access` with the local model, twice (the first run did not record replies; the runner then kept them for reading) | 90 checks each, 0 leaks, 48 of 51 permitted facts found; without access, grounded answers declined 12 of 13 questions, the agent 9 of 13 and otherwise gave wrong but non-restricted answers (EVALUATION.md section 12.3) |
+
+**Known limitations**
+
+- One tenant and three levels in the evaluation (tenant crossings are covered by the P6-M4 suite); literal canary matching.
+- The agent's uncited answers can invent facts when evidence is hidden (recommendation in EVALUATION.md section 12.5).
+
+**Exit criteria:** met. No restricted text reached a lower role in any surface or backend, and the evaluation is shown to detect leaks when the filter is broken.
+
+## Phase 6 completion report
+
+**Status: COMPLETE.** Phase 6 replaced the development identity with real sign-in, gave the three roles distinct permissions on every route, added a minimum role per document enforced inside every retrieval query, an audit trail with an administrator view, a security suite, and a leakage evaluation with the real model.
+
+**Phase 6 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 6) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Define employee, manager and administrator roles | One role per user; permissions in code, each role a superset of the one below (ADR-031, ADR-032) | P6-M1, P6-M2 |
+| Implement secure identity handling | Password sign-in with scrypt (standard library), server-side sessions found by the SHA-256 of a bearer token, idle and absolute expiry, logout, lockout after five failures, uniform failures; the development identity removed | P6-M1 |
+| Enforce server-side role and resource authorization | A permission on every route (a test fails for unclassified routes); every route called as every role; owner and tenant scoping of conversations, actions, tickets and users | P6-M2, P6-M4 |
+| Add document-level permissions | `documents.min_role`, set and changed up to the caller's role; hidden documents look missing (ADR-033) | P6-M3 |
+| Add tenant isolation if multi-tenancy is implemented | Tenants table; tenant always from the session; cross-tenant attempts on every resource refused in the suite | P6-M1, P6-M4 |
+| Add audit logs for protected operations | Sign-ins, logouts, user changes, document uploads and changes, refusals and audit reads; `GET /api/v1/audit` for administrators | P6-M2 to P6-M4 |
+| Test horizontal and vertical privilege escalation | Security suite: 180 cross-user attempts, cross-tenant documents, tickets, users and audit, actions above the role, mass assignment, token tampering | P6-M4 |
+| Verify that retrieval respects the same access policy | Filter inside all four search paths, proven before ranking on SQLite and PostgreSQL; leakage evaluation with the real model: 0 leaks in 240 checks, with a negative control | P6-M3, P6-M5 |
+
+**Commits:** P6-M1 `953601d`, P6-M2 `61ad1f7`, P6-M3 `d082a20`, P6-M4 `95bd767`, P6-M5 the commit that adds this report.
+
+**Dependencies added in Phase 6:** none.
+
+**Architecture decisions:** ADR-031 (authentication; supersedes ADR-014), ADR-032 (role permissions and user administration), ADR-033 (document visibility).
+
+**Tests:** 846 backend (434 unit, 356 integration, 3 real-embedding, 49 PostgreSQL, 4 live model) plus 27 frontend = 873, up from 711 at the end of Phase 5.
+
+**Security considerations:** see [SECURITY.md](SECURITY.md). Residual risks: no IP rate limiting (the per-account lockout can block a known user for 15 minutes); browser token storage is decided in Phase 7; two administrators can demote each other; a hidden duplicate's existence is revealed on upload; the agent can invent facts when evidence is hidden; audit records have no retention policy.
+
+**Manual verification steps** (from `apps/api`, scratch database):
+
+1. `uv run python -m app.cli create-user --tenant Demo --username admin1 --role administrator`, then sign in (DEVELOPMENT_GUIDE section 3) and create an employee with `POST /api/v1/users`.
+2. As the administrator, upload a document with `-F min_role=administrator`; as the employee, `GET /api/v1/documents` and `POST /api/v1/search` do not show it, and `GET /api/v1/documents/{id}` returns `404`.
+3. As the employee, `GET /api/v1/users` and `GET /api/v1/audit` return `403`; as the administrator, `GET /api/v1/audit` lists those refusals.
+4. `uv run python -m app.cli evaluate-access --surfaces search` → `Leaks: 0` in `var/eval/`.
+
+**Recommended next phase:** Phase 7, frontend and integration (chat interface with citations, document management for authorized users, conversation history, admin views), including the decision on how the browser keeps the session token.
 

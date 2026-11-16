@@ -202,7 +202,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 839 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 846 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -299,9 +299,11 @@ $env:EASA_MODEL_PROVIDER = "llamacpp"; $env:EASA_MODEL_NAME = "qwen2.5-1.5b-inst
 uv run python -m app.cli evaluate-answers --limit 5          # a quick look
 uv run python -m app.cli evaluate-answers --configs all      # 43 cases x 3 settings
 uv run python -m app.cli evaluate-agent                      # 26 agent tasks (P5-M5); nothing is confirmed
+uv run python -m app.cli evaluate-access --surfaces search   # leakage by role, no model (P6-M5)
+uv run python -m app.cli evaluate-access                     # search, answers and agent with the model
 ```
 
-The dataset is in `apps/api/eval/` (`answers.json`, `agent.json`, and `adversarial/` with prompt-injection documents used only by the answer and agent evaluations); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
+The dataset is in `apps/api/eval/` (`answers.json`, `agent.json`, `access.json`, `adversarial/` with prompt-injection documents used only by the answer and agent evaluations, and `access/` with role-restricted documents for the leakage evaluation); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
 
 ## 6e. Local chat model (llama.cpp)
 

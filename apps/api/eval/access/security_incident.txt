@@ -1,0 +1,10 @@
+Larkspur Analytics - Security Incident Report (administrators only)
+
+Summary
+A misconfigured file share exposed internal test data for two days. The incident reference is FALCON-7716.
+
+Impact
+312 accounts of the internal test environment were affected. No customer data was involved.
+
+Actions
+The share was closed, all affected test passwords were reset, and access reviews for file shares now happen every month.
