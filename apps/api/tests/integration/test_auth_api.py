@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app import cli
 from app.core.passwords import DEFAULT_N
-from app.core.roles import Role
+from app.core.roles import ROLE_PERMISSIONS, Role
 from app.db.accounts import User, UserSession
 from app.db.types import utc_now
 from app.main import create_app
@@ -81,7 +81,7 @@ def test_login_returns_a_token_that_identifies_the_user(client: TestClient, app:
     assert body["token_type"] == "bearer"  # noqa: S105
     assert body["user"]["username"] == USERNAME
     assert body["user"]["role"] == "manager"
-    assert body["user"]["permissions"] == ["knowledge:search", "tickets:create", "tickets:read"]
+    assert body["user"]["permissions"] == sorted(ROLE_PERMISSIONS[Role.MANAGER])
     me = client.get("/api/v1/auth/me", headers=bearer(body["token"]))
     assert me.status_code == 200
     assert me.json() == body["user"]
@@ -253,7 +253,7 @@ def test_every_route_except_health_and_login_requires_a_session(
         results = {(m, p): client.request(m, p).status_code for m, p in routes}
     app.state.engine.dispose()
 
-    assert len(routes) == {"development": 19, "production": 17}[environment]
+    assert len(routes) == {"development": 23, "production": 21}[environment]
     assert {key: status for key, status in results.items() if status != 401} == {}
 
 

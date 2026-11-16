@@ -346,8 +346,35 @@ Errors: `422 validation_error` / `invalid_message`; `503 agent_unavailable` (no 
 
 - Usernames are case-insensitive. Every failed sign-in (wrong password, unknown user, disabled or locked account) returns the same `401 invalid_credentials` "Invalid username or password."; an unknown user still costs one password check. Five consecutive failures lock the account for 15 minutes.
 - The token is 43 random URL-safe characters, shown once; only its SHA-256 is stored. A session ends after `EASA_SESSION_IDLE_MINUTES` (480) without use, after `EASA_SESSION_LIFETIME_HOURS` (24), at logout, or when the user is disabled. Expired, revoked or unknown tokens give `401 not_authenticated`.
-- Permissions are derived from the user's role on every request (roles: `employee`, `manager`, `administrator`; P6-M1 grants all three `knowledge:search`, `tickets:read`, `tickets:create`; P6-M2 differentiates them).
-- Audit: sign-in success and failure are logged with the user ID only; audit records for them follow in P6-M2. Passwords and tokens are never logged.
+- Permissions are derived from the user's role on every request (section 3.11).
+- Audit (P6-M2): every sign-in is recorded as `auth.login` with outcome `succeeded`, `failed` (`invalid_password`, `unknown_user`) or `denied` (`locked`, `inactive`), and logout as `auth.logout`. A failure for an unknown username is recorded with a nil tenant and user and without the typed name. Passwords and tokens are never logged or audited.
+
+### 3.11 Roles and user administration (Phase 6, P6-M2)
+
+Each route requires one permission of the signed-in user's role ([ADR-032](ARCHITECTURE_DECISIONS.md#adr-032)); without it the answer is `403 forbidden` "You do not have permission for this action." and an `access.denied` audit record (route, missing permission) is written. The agent, its actions, the tools, `/auth/me` and `/auth/logout` need only a session (each tool checks its own permission).
+
+| Permission | Employee | Manager | Administrator | Used by |
+|---|---|---|---|---|
+| `knowledge:search` | ✓ | ✓ | ✓ | search, answers, conversations, the agent's knowledge tool |
+| `documents:read` | ✓ | ✓ | ✓ | list documents, read a document and its chunks |
+| `documents:upload` | – | ✓ | ✓ | upload documents |
+| `tickets:read` | ✓ | ✓ | ✓ | agent ticket tools (own tickets) |
+| `tickets:read_all` | – | ✓ | ✓ | agent ticket tools read every ticket in the tenant |
+| `tickets:create` | ✓ | ✓ | ✓ | propose draft tickets (confirmed by the user) |
+| `users:manage` | – | – | ✓ | `/api/v1/users` |
+
+User administration (`users:manage`, the administrator's own tenant only):
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `GET /api/v1/users` | — | `200` `{"items": [User]}` sorted by username; User = `{"id", "username", "role", "is_active", "locked", "created_at"}` |
+| `POST /api/v1/users` | `{"username", "password", "role"}` (unknown fields such as `tenant_id` rejected) | `201` User; `409 username_taken`; `422 invalid_account` (username or password rules) |
+| `PATCH /api/v1/users/{user_id}` | `{"role"?, "is_active"?}` (at least one) | `200` User; disabling ends the user's sessions; enabling clears a lockout |
+| `POST /api/v1/users/{user_id}/password` | `{"password"}` | `204`; ends the user's sessions and clears a lockout |
+
+- Users of another tenant, and unknown IDs, give `404 user_not_found`.
+- Administrators cannot change their own role or disable themselves: `409 cannot_modify_self`.
+- Audit: `user.create` (`role=…`), `user.update` (`role=old->new`, `disabled`, `enabled`), `user.password_reset`, each with the administrator as the user; passwords are never recorded.
 
 ## 4. Headers
 
@@ -366,7 +393,7 @@ Errors: `422 validation_error` / `invalid_message`; `503 agent_unavailable` (no 
 | Group | Purpose | Phase |
 |---|---|---|
 | `/api/v1/auth` | Sign-in, sign-out and current user **implemented** (section 3.10) | 6 |
-| `/api/v1/users` | User and role management | 6 |
+| `/api/v1/users` | User administration **implemented** (section 3.11) | 6 |
 | `/api/v1/documents` | Upload, list, get and chunks **implemented** (section 3.4); delete and reprocessing to follow | 2 |
 | `/api/v1/search` | Semantic, keyword and hybrid search **implemented** (section 3.5) | 3 |
 | `/api/v1/answers` | Single-question grounded answers **implemented** (section 3.6) | 4 |
@@ -380,7 +407,7 @@ Each will be documented here with purpose, authentication, authorization, reques
 
 ## 6. Known gaps
 
-- No rate limiting yet (only the per-account sign-in lockout). Roles do not differ yet (P6-M2); document-level permissions follow in P6-M3.
+- No rate limiting yet (only the per-account sign-in lockout). Document-level permissions follow in P6-M3; an audit query endpoint in P6-M4.
 - Uploads are only accepted from non-browser clients for now (CORS allows `GET` only).
 - Health endpoints are public. They expose only coarse status.
 - Only `GET` is allowed by CORS; this will widen as endpoints are added.

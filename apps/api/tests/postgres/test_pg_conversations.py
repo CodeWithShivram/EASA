@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.core.roles import Role
 from app.main import create_app
 from tests.conftest import make_settings, sign_in
 from tests.fixtures import DOCX_BYTES
@@ -17,7 +18,7 @@ DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 @pytest.fixture
 def client(tmp_path: Path, pg_url: str, clean_tables: None) -> Iterator[TestClient]:
     app: FastAPI = create_app(make_settings(tmp_path, database_url=pg_url, model_provider="fake"))
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         response = test_client.post(
             "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
         )

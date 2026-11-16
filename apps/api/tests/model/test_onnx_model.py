@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import API_ROOT
+from app.core.roles import Role
 from app.db.models import Base
 from app.embeddings.onnx import OnnxEmbedder
 from app.embeddings.registry import DEFAULT_MODEL
@@ -56,7 +57,7 @@ def test_semantic_search_finds_meaning_with_the_real_model(tmp_path: Path) -> No
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
     try:
-        with TestClient(app, headers=sign_in(app)) as client:
+        with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
             client.post(
                 "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
             )

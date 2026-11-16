@@ -65,6 +65,7 @@ from app.evaluation.runner import (
 from app.llm.factory import build_chat_model
 from app.llm.registry import DEFAULT_CHAT_MODEL, ModelFileError, download_chat_model
 from app.repositories.accounts import AccountRepository
+from app.repositories.audit import AuditRepository
 from app.services.auth import AuthService
 from app.services.embedding_service import EmbeddingService
 from app.tools.seed import seed_tickets
@@ -321,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         engine = create_db_engine(settings.database_url.get_secret_value())
         try:
             with create_session_factory(engine)() as session:
-                service = AuthService(session, session_policy(settings), ROLE_PERMISSIONS)
+                audit = AuditRepository(create_session_factory(engine))
+                service = AuthService(session, session_policy(settings), ROLE_PERMISSIONS, audit)
                 user = service.create_user(args.tenant, args.username, password, Role(args.role))
                 tenant_id, user_id = user.tenant_id, user.id
         except AppError as error:

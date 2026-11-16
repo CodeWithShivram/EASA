@@ -275,6 +275,14 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - `create_app` mounts auth, documents, search, answers, conversations and agent in every environment; tools only outside production.
 - CLI: `create-user --tenant --username --role [--password-stdin]` (by default a hidden prompt, asked twice), `seed-tickets --username`.
 
+### 2.6o Roles and user administration (P6-M2)
+
+- [core/roles.py](../apps/api/app/core/roles.py): the permission table (employee ⊂ manager ⊂ administrator).
+- [dependencies.py](../apps/api/app/api/dependencies.py) `require(permission)`: wraps `get_identity`; without the permission it writes an `access.denied` audit record (`METHOD path`, the permission, the correlation ID) and raises `403 forbidden`. Used by documents (`documents:upload` for upload, `documents:read` otherwise), search, answers and conversations (`knowledge:search`) and users (`users:manage`).
+- [tools/support.py](../apps/api/app/tools/support.py) `_readable_ticket`: `TicketRepository.get_in_tenant` with `tickets:read_all`, otherwise `get_own`.
+- [services/auth.py](../apps/api/app/services/auth.py): `AuthService(..., audit)` records `auth.login` / `auth.logout`; shared helpers `check_new_account`, `check_new_password`, `add_user`; `NO_ID` (nil UUID) for unknown usernames.
+- [services/users.py](../apps/api/app/services/users.py) `UserAdminService`: `list_users`, `create`, `update(role, is_active)` (`409 cannot_modify_self`; disabling calls `AccountRepository.revoke_all_sessions`), `reset_password`; users of other tenants raise `404 user_not_found`; each change is audited with the administrator as the user. Routes in [routes/users.py](../apps/api/app/api/v1/routes/users.py).
+
 ### 2.7 Health — routes, service, probe
 
 - [routes/health.py](../apps/api/app/api/v1/routes/health.py): `liveness()` takes no dependencies and returns `{"status": "ok"}`. `readiness()` gets a `HealthService` via `get_health_service`, sets status 503 when not ready and maps the report to `ReadinessResponse`.

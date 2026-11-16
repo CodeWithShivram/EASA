@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.roles import Role
 from app.db.documents import Document, DocumentMediaType, DocumentStatus
 from app.db.models import Base
 from app.db.types import utc_now
@@ -43,7 +44,7 @@ def app(settings: Settings) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         yield test_client
 
 
@@ -327,7 +328,7 @@ def test_chunking_settings_are_applied(tmp_path: Path) -> None:
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
 
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         document = upload(client, "travel.pdf", PDF_BYTES, "application/pdf").json()
         chunks = client.get(f"/api/v1/documents/{document['id']}/chunks").json()
 
@@ -343,7 +344,7 @@ def test_pdf_decompression_bomb_fails_the_document_safely(tmp_path: Path) -> Non
     app = create_app(make_settings(tmp_path))  # default 10 MiB upload limit
     Base.metadata.create_all(app.state.engine)
 
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         response = upload(client, "bomb.pdf", make_pdf_decompression_bomb(), "application/pdf")
         chunks = client.get(f"/api/v1/documents/{response.json()['id']}/chunks").json()
 

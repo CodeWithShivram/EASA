@@ -11,7 +11,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
-from app.api.v1.routes import agent, answers, auth, conversations, documents, search, tools
+from app.api.v1.routes import (
+    agent,
+    answers,
+    auth,
+    conversations,
+    documents,
+    search,
+    tools,
+    users,
+)
 from app.core.config import Settings, load_settings
 from app.core.correlation import CORRELATION_ID_HEADER
 from app.core.errors import register_exception_handlers
@@ -83,7 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(api_router)
     # Every route below requires a signed-in user (ADR-031).
-    for module in (auth, documents, search, answers, conversations, agent):
+    for module in (auth, users, documents, search, answers, conversations, agent):
         app.include_router(module.router, prefix="/api/v1")
     if not settings.is_production:
         # Tool listing and direct invocation are development aids only.

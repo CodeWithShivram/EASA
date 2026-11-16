@@ -1,5 +1,6 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
+from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -7,9 +8,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.correlation import get_correlation_id
+from app.core.errors import AppError
 from app.core.identity import Identity
+from app.db.audit import AuditOutcome
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
+from app.repositories.audit import AuditRepository
 from app.retrieval.factory import build_indexes
 from app.services.answers import AnswerService
 from app.services.auth import AuthService, SessionPolicy, not_authenticated
@@ -47,8 +52,12 @@ def session_policy(settings: Settings) -> SessionPolicy:
 def get_auth_service(
     request: Request, session: Annotated[Session, Depends(get_db_session)]
 ) -> AuthService:
+    state = request.app.state
     return AuthService(
-        session, session_policy(request.app.state.settings), request.app.state.role_permissions
+        session,
+        session_policy(state.settings),
+        state.role_permissions,
+        AuditRepository(state.session_factory),
     )
 
 
@@ -68,6 +77,37 @@ def get_identity(request: Request, token: Annotated[str, Depends(get_bearer_toke
             session, session_policy(request.app.state.settings), request.app.state.role_permissions
         )
         return service.authenticate(token)
+
+
+def require(permission: str) -> Callable[..., Identity]:
+    """Dependency: the signed-in user if their role grants the permission; 403 otherwise.
+
+    Refusals are audited (action ``access.denied``, the route and the missing
+    permission), so escalation attempts are visible to administrators.
+    """
+
+    def dependency(
+        request: Request, identity: Annotated[Identity, Depends(get_identity)]
+    ) -> Identity:
+        if identity.can(permission):
+            return identity
+        AuditRepository(request.app.state.session_factory).record(
+            tenant_id=identity.tenant_id,
+            user_id=identity.user_id,
+            action="access.denied",
+            # The requested path (IDs included; the query string is never recorded).
+            target=f"{request.method} {request.url.path}",
+            outcome=AuditOutcome.DENIED,
+            detail=permission,
+            correlation_id=get_correlation_id(),
+        )
+        raise AppError(
+            "You do not have permission for this action.",
+            code="forbidden",
+            status_code=HTTPStatus.FORBIDDEN,
+        )
+
+    return dependency
 
 
 def get_document_service(

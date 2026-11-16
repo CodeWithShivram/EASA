@@ -107,13 +107,17 @@ class TicketStatusOutput(BaseModel):
     updated_at: datetime
 
 
-def _own_ticket(context: ToolContext, number: int) -> SupportTicket:
+def _readable_ticket(context: ToolContext, number: int) -> SupportTicket:
+    """The caller's own ticket, or any ticket in the tenant with tickets:read_all."""
+    identity = context.identity
     with context.session_factory() as session:
-        ticket = TicketRepository(session).get_own(
-            context.identity.tenant_id, context.identity.user_id, number
-        )
+        repository = TicketRepository(session)
+        if identity.can("tickets:read_all"):
+            ticket = repository.get_in_tenant(identity.tenant_id, number)
+        else:
+            ticket = repository.get_own(identity.tenant_id, identity.user_id, number)
         if ticket is None:
-            # Same answer for missing tickets and other people's tickets.
+            # Same answer for missing tickets and tickets the caller may not read.
             raise ToolError(f"Ticket {number} was not found.", code="ticket_not_found")
         session.expunge(ticket)
         return ticket
@@ -121,6 +125,7 @@ def _own_ticket(context: ToolContext, number: int) -> SupportTicket:
 
 class GetTicket(Tool):
     name: ClassVar[str] = "get_ticket"
+    # Unchanged since the agent evaluation: tool descriptions are part of the prompt.
     description: ClassVar[str] = "Show one of your support tickets by its number."
     Input: ClassVar[type[BaseModel]] = TicketNumberInput
     Output: ClassVar[type[BaseModel]] = TicketOutput
@@ -128,7 +133,7 @@ class GetTicket(Tool):
     retries: ClassVar[int] = 1
 
     def run(self, context: ToolContext, arguments: BaseModel) -> BaseModel:
-        ticket = _own_ticket(context, _expect(arguments, TicketNumberInput).number)
+        ticket = _readable_ticket(context, _expect(arguments, TicketNumberInput).number)
         return TicketOutput(
             number=ticket.number,
             title=ticket.title,
@@ -149,7 +154,7 @@ class GetTicketStatus(Tool):
     retries: ClassVar[int] = 1
 
     def run(self, context: ToolContext, arguments: BaseModel) -> BaseModel:
-        ticket = _own_ticket(context, _expect(arguments, TicketNumberInput).number)
+        ticket = _readable_ticket(context, _expect(arguments, TicketNumberInput).number)
         return TicketStatusOutput(
             number=ticket.number, status=ticket.status, updated_at=ticket.updated_at
         )

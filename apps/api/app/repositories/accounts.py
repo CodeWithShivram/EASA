@@ -36,6 +36,13 @@ class AccountRepository:
         self._session.commit()
         return user
 
+    def list_users(self, tenant_id: uuid.UUID) -> list[User]:
+        return list(
+            self._session.scalars(
+                select(User).where(User.tenant_id == tenant_id).order_by(User.username)
+            )
+        )
+
     def save(self) -> None:
         self._session.commit()
 
@@ -54,6 +61,14 @@ class AccountRepository:
         self._session.execute(
             update(UserSession)
             .where(UserSession.token_sha256 == token_sha256, UserSession.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        self._session.commit()
+
+    def revoke_all_sessions(self, user_id: uuid.UUID, now: datetime) -> None:
+        self._session.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
             .values(revoked_at=now)
         )
         self._session.commit()

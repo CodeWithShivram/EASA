@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from app.api.dependencies import get_conversation_service, get_identity
+from app.api.dependencies import get_conversation_service, require
 from app.api.v1.routes.answers import to_answer_response
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
@@ -36,7 +36,7 @@ _ASK_ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 Service = Annotated[ConversationService, Depends(get_conversation_service)]
-CurrentIdentity = Annotated[Identity, Depends(get_identity)]
+CurrentIdentity = Annotated[Identity, Depends(require("knowledge:search"))]
 
 
 def _message(message: ConversationMessage) -> MessageResponse:

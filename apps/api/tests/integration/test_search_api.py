@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.identity import Identity
+from app.core.roles import Role
 from app.main import create_app
 from app.services.documents import DocumentService
 from tests.conftest import create_schema, make_settings, sign_in
@@ -29,7 +30,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         test_client.post(
             "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
         )
@@ -132,7 +133,7 @@ def test_search_without_the_embedding_model_is_unavailable(tmp_path: Path) -> No
 
     app = create_app(settings)
     create_schema(app.state.engine)
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         response = search(client, "annual leave")
     app.state.engine.dispose()
 
@@ -179,7 +180,7 @@ def test_keyword_mode_works_without_the_embedding_model(tmp_path: Path) -> None:
     app = create_app(settings)
     create_schema(app.state.engine)
     try:
-        with TestClient(app, headers=sign_in(app)) as client:
+        with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
             client.post(
                 "/api/v1/documents",
                 files={"file": ("travel.pdf", PDF_BYTES, "application/pdf")},

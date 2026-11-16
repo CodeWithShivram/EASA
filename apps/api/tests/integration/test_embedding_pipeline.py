@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app import cli
 from app.core.config import Settings
+from app.core.roles import Role
 from app.db.embeddings import ChunkEmbedding
 from app.db.models import Base
 from app.embeddings.base import EmbeddingUnavailableError
@@ -39,7 +40,7 @@ def app(settings: Settings) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         yield test_client
 
 
@@ -143,7 +144,7 @@ def test_cli_embed_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
     monkeypatch.setattr(app.state.embedder, "embed", _raise_unavailable)
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         upload(client, "travel.pdf", PDF_BYTES, "application/pdf")
     assert embedding_count(app) == 0
 

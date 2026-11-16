@@ -1,4 +1,4 @@
-"""Data access for support tickets. Reads are scoped to tenant and reporter."""
+"""Data access for support tickets. Reads are scoped to the tenant, and usually to the reporter."""
 
 import uuid
 
@@ -24,6 +24,14 @@ class TicketRepository:
                 SupportTicket.tenant_id == tenant_id,
                 SupportTicket.reporter_id == reporter_id,
                 SupportTicket.number == number,
+            )
+        ).one_or_none()
+
+    def get_in_tenant(self, tenant_id: uuid.UUID, number: int) -> SupportTicket | None:
+        """Any reporter's ticket; only for callers allowed to read all tickets."""
+        return self._session.scalars(
+            select(SupportTicket).where(
+                SupportTicket.tenant_id == tenant_id, SupportTicket.number == number
             )
         ).one_or_none()
 

@@ -34,6 +34,7 @@
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 | [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
+| [ADR-032](#adr-032) | Role permissions, route checks with audited refusals, user administration | P6-M2 |
 | [ADR-031](#adr-031) | Authentication: built-in sign-in with server-side sessions; one role per user; tenants table | P6-M1 |
 | [ADR-030](#adr-030) | Agent safeguards after evaluation: claimed-action check and user-only fields; no prompt change | P5-M5 follow-up |
 
@@ -457,6 +458,20 @@
   - The development identity is removed. Every route except health and sign-in requires a session, in every environment; the protected routes are therefore no longer switched off in production (the tool endpoints stay development-only).
 - **Trade-offs:** An account lockout lets anyone who knows a username block that user's sign-in for 15 minutes; IP-based rate limiting is still missing (needed before any shared deployment). One database lookup per request (and at most one write per minute per session). No single sign-on; an OIDC provider can be added later behind the same `Identity`.
 - **Consequences:** Existing tables keep `tenant_id` without a foreign key to `tenants` (rows from before Phase 6 have no tenant row). Tests sign in through a helper that creates users and sessions directly. P6-M2 differentiates the roles and adds user management and audit records for sign-ins.
+
+<a id="adr-032"></a>
+## ADR-032: Role permissions, route checks with audited refusals, user administration
+
+- **Status:** Accepted (P6-M2, 2026-11-16; role table approved in the Phase 6 plan)
+- **Context:** P6-M1 gave every role the same permissions. The guide asks for employee, manager and administrator roles enforced on the server, audit records for protected operations, and tests of privilege escalation.
+- **Decision:**
+  - Permissions per role (code, `app/core/roles.py`): employees search, read documents, read their own tickets and propose drafts; managers also upload documents and read every ticket in the tenant (support view); administrators also manage users. Each role's set contains the previous one.
+  - Every route declares one permission with a `require(...)` dependency; a refusal is `403 forbidden` and an `access.denied` audit record. A test fails if a new route has neither a permission nor an explicit "session only" decision.
+  - Ticket tools return any ticket of the tenant to callers with `tickets:read_all`; other callers still get the same "not found" for colleagues' tickets as for missing ones.
+  - User administration lives in the administrator's own tenant (`/api/v1/users`): list, create, change role, disable or enable, reset password. Administrators cannot change their own role or disable themselves (a tenant cannot lock itself out by one mistake). Disabling and password resets end the user's sessions.
+  - Audit actions: `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied`, in the existing `audit_logs` table (no schema change).
+- **Trade-offs:** One role per user and a fixed table; finer grants (per department, per document) need P6-M3 or later. Two administrators can still demote each other. Failed sign-ins for unknown usernames are not attributable to a tenant, so tenant administrators will not see them.
+- **Consequences:** Tests sign in with the least role that fits (employee by default, manager where documents are uploaded). P6-M3 adds a minimum role per document; P6-M4 an audit query endpoint.
 
 ---
 ## Open decisions (not yet made)

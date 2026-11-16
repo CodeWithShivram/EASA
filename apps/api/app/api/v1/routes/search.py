@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_identity, get_search_service
+from app.api.dependencies import get_search_service, require
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.schemas.search import Citation, SearchHitResponse, SearchRequest, SearchResponse
@@ -21,7 +21,7 @@ _ERRORS: dict[int | str, dict[str, Any]] = {
 def search(
     request: SearchRequest,
     service: Annotated[SearchService, Depends(get_search_service)],
-    identity: Annotated[Identity, Depends(get_identity)],
+    identity: Annotated[Identity, Depends(require("knowledge:search"))],
 ) -> SearchResponse:
     """Semantic, keyword or hybrid search over the tenant's processed documents, with citations."""
     result = service.search(identity, request.query, top_k=request.top_k, mode=request.mode)

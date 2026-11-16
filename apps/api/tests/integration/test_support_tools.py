@@ -44,7 +44,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         response = test_client.post(
             "/api/v1/documents", files={"file": ("handbook.docx", DOCX_BYTES, DOCX_TYPE)}
         )
@@ -186,7 +186,7 @@ def test_list_tools_follows_configured_permissions(tmp_path: Path) -> None:
     app = create_app(make_settings(tmp_path))
     create_schema(app.state.engine)
     limit_permissions(app, "tickets:read")
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         names = [i["name"] for i in client.get("/api/v1/tools").json()["items"]]
     app.state.engine.dispose()
 

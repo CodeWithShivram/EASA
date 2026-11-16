@@ -44,9 +44,9 @@ def login(body: LoginRequest, service: Service, request: Request) -> LoginRespon
 def logout(
     service: Service,
     token: Annotated[str, Depends(get_bearer_token)],
-    _: Annotated[Identity, Depends(get_identity)],
+    identity: Annotated[Identity, Depends(get_identity)],
 ) -> Response:
-    service.logout(token)
+    service.logout(token, identity)
     return Response(status_code=HTTPStatus.NO_CONTENT)
 
 

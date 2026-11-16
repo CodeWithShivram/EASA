@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app.core.roles import Role
 from app.db.conversations import ConversationMessage
 from app.llm.fake import FakeChatModel
 from app.main import create_app
@@ -30,7 +31,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         for name, content, media_type in (
             ("handbook.docx", DOCX_BYTES, DOCX_TYPE),
             ("travel.pdf", PDF_BYTES, "application/pdf"),

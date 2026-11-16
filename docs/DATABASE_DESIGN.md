@@ -76,14 +76,14 @@ Rules: a question and its reply are written together in one transaction, only af
 
 ### 1.2b `audit_logs` (Phase 5, P5-M1)
 
-[app/db/audit.py](../apps/api/app/db/audit.py), migration `2883c37b9b4f`. One row per attempt at a protected operation (today: tool executions), whatever the outcome.
+[app/db/audit.py](../apps/api/app/db/audit.py), migration `2883c37b9b4f`. One row per attempt at a protected operation, whatever the outcome: tool executions (P5-M1), and since P6-M2 sign-ins, logouts, user administration and refused requests.
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | `id` | UUID | no | Primary key |
-| `tenant_id`, `user_id` | UUID | no | Who attempted it (no foreign keys until users and tenants exist) |
-| `action` | varchar(64) | no | e.g. `tool.execute` |
-| `target` | varchar(128) | no | e.g. the tool name (truncated) |
+| `tenant_id`, `user_id` | UUID | no | Who attempted it (no foreign keys; a sign-in for an unknown username uses the nil UUID for both) |
+| `action` | varchar(64) | no | `tool.execute`, `auth.login`, `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied` |
+| `target` | varchar(128) | no | The tool name, `user:<id>`, `unknown`, or `METHOD /path` for refusals (truncated) |
 | `outcome` | varchar(32) | no | `succeeded`, `confirmation_required`, `denied`, `unknown_tool`, `invalid_arguments`, `failed`, `timeout` (`ck_audit_logs_outcome_allowed`) |
 | `detail` | varchar(128) | yes | Short code: the missing permission, an error code or type |
 | `arguments_digest` | varchar(64) | yes | SHA-256 of the canonical JSON arguments; **never the arguments themselves** |

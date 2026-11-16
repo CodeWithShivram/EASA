@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_answer_service, get_identity
+from app.api.dependencies import get_answer_service, require
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.schemas.answers import AnswerRequest, AnswerResponse, AnswerSource
@@ -52,7 +52,7 @@ def to_answer_response(result: AnswerResult) -> AnswerResponse:
 def answer(
     request: AnswerRequest,
     service: Annotated[AnswerService, Depends(get_answer_service)],
-    identity: Annotated[Identity, Depends(get_identity)],
+    identity: Annotated[Identity, Depends(require("knowledge:search"))],
 ) -> AnswerResponse:
     """Answer a question from the tenant's documents only, with cited sources."""
     return to_answer_response(service.answer(identity, request.question, top_k=request.top_k))

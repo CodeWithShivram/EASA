@@ -89,7 +89,7 @@ Every endpoint except health and sign-in needs a session token (Phase 6, [ADR-03
 
 ```powershell
 # once, from apps/api: asks for a password (12-128 characters, not containing the username)
-uv run python -m app.cli create-user --tenant Larkspur --username alice --role employee
+uv run python -m app.cli create-user --tenant Larkspur --username alice --role manager
 # sign in (prompts for the password; nothing is written to disk or history)
 $cred = Get-Credential alice
 $body = @{ username = $cred.UserName; password = $cred.GetNetworkCredential().Password } | ConvertTo-Json
@@ -98,7 +98,7 @@ $auth = "Authorization: Bearer $token"
 curl.exe -H $auth http://127.0.0.1:8000/api/v1/auth/me
 ```
 
-Sessions end after 8 hours without use or 24 hours at most; `curl.exe -X POST -H $auth http://127.0.0.1:8000/api/v1/auth/logout` ends one now. Five wrong passwords in a row lock the account for 15 minutes.
+Roles: employees search and read documents, managers can also upload, administrators can also manage users (API spec section 3.11). An administrator manages users of their own tenant, for example `curl.exe -H $auth http://127.0.0.1:8000/api/v1/users`. Sessions end after 8 hours without use or 24 hours at most; `curl.exe -X POST -H $auth http://127.0.0.1:8000/api/v1/auth/logout` ends one now. Five wrong passwords in a row lock the account for 15 minutes.
 
 Uploading a document from PowerShell (`curl.exe`, not the PowerShell `curl` alias):
 
@@ -201,7 +201,7 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 745 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 770 tests: 3 real-embedding tests skip without the model, 48 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):

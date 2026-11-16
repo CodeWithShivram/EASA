@@ -1221,8 +1221,8 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P6-M1 | Tenants, users, sessions; sign-in, sign-out, current user; `create-user`; the development identity replaced by sessions | COMPLETE | the commit that adds this row |
-| P6-M2 | Role permissions differentiated and checked on every route; user administration; audit records for sign-ins and user changes | NOT STARTED | |
+| P6-M1 | Tenants, users, sessions; sign-in, sign-out, current user; `create-user`; the development identity replaced by sessions | COMPLETE | `953601d` |
+| P6-M2 | Role permissions differentiated and checked on every route; user administration; audit records for sign-ins and user changes | COMPLETE | the commit that adds this row |
 | P6-M3 | Minimum role per document, enforced in all four search paths, document access, answers, conversations and the agent | NOT STARTED | |
 | P6-M4 | Audit endpoint for administrators; route-by-role security suite (horizontal and vertical escalation, session attacks) | NOT STARTED | |
 | P6-M5 | Leakage evaluation with role-restricted documents and Phase 6 report | NOT STARTED | |
@@ -1260,4 +1260,36 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 - Existing tables have no foreign key to `tenants`.
 
 **Exit criteria:** met. Every request except health and sign-in is tied to a verified user and tenant, and no configuration can bypass it.
+
+## P6-M2: Roles and user administration
+
+**Scope:** make the three roles differ, check a permission on every route, let administrators manage the users of their tenant, and audit sign-ins, user changes and refusals.
+
+**Implemented**
+
+- Permission table (`app/core/roles.py`, ADR-032): employees search, read documents, read their own tickets and propose drafts; managers also upload documents and read every ticket of the tenant; administrators also manage users.
+- `require(permission)` on every route (documents, search, answers, conversations, users); refusals are `403 forbidden` plus an `access.denied` audit record. Agent, actions, tools, `/auth/me` and `/auth/logout` need only a session.
+- Ticket tools: `tickets:read_all` reads any ticket of the tenant (`TicketRepository.get_in_tenant`). Their descriptions, which are part of the agent's prompt, were deliberately left unchanged so the P5-M5 evaluation still applies (a reworded version was reverted before the commit; the 110 agent and ticket tests were rerun after the revert).
+- `UserAdminService` and `/api/v1/users`: list, create, change role, disable or enable, reset password, within the administrator's tenant; no self-demotion or self-disabling; disabling and resets end the user's sessions.
+- Audit: `auth.login` (succeeded, failed with `invalid_password` / `unknown_user`, denied with `locked` / `inactive`), `auth.logout`, `user.create`, `user.update`, `user.password_reset`, `access.denied`; the `create-user` command records its creation too. No schema change.
+- Tests: 25 integration tests in `test_rbac_api.py` (every route classified; every route called as every role, `403` exactly where the permission is missing; refusals audited; user administration in the tenant, self-protection, other tenants' users missing, role changes on live sessions, disabling and password resets ending sessions, invalid updates; sign-in audit without secrets; lockout and refusals audited; managers reading all tickets of their tenant but never another tenant's); existing tests sign in as managers where they upload documents; auth test expectations updated (manager permissions, 23 and 21 routes).
+- Docs: ADR-032, API spec sections 3.10 and 3.11, DATABASE_DESIGN (audit actions), LLD section 2.6o, SECURITY (authorization controls, role table), DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-16)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with PostgreSQL, the CI guard and the live model | All checks passed |
+| `uv run pytest` with PostgreSQL and `EASA_TEST_LLM_URL` | 770 passed (422 unit, 293 integration, 3 real-embedding, 48 PostgreSQL, 4 live model); no throwaway databases left |
+| `uv run pytest` without either | 718 passed, 52 skipped |
+| Live server (scratch database, an administrator from `create-user`, generated synthetic passwords) | The administrator created an employee (201); the employee had the four employee permissions, got `403` for upload and for `/users`, and found the administrator's document by search; after promotion to manager the same session could upload; self-demotion `cannot_modify_self`; disabling ended the employee's session (401); 8 audit records in order (creation by the command, two sign-ins, creation by the administrator, two refusals with the missing permission, promotion, disabling); no password in the audit table or the server log; server stopped |
+| First runs | After the role change, the expected failures (39 failed, 40 errors): 76 tests uploaded documents as employees (now signed in as managers) and three auth tests expected the old permissions and route counts. One new test failed because this FastAPI version keeps route paths without the router prefix; refusals now record the requested path |
+
+**Known limitations**
+
+- Every role still reads every document of its tenant (document-level permissions: P6-M3).
+- No audit query endpoint yet (P6-M4); failed sign-ins for unknown usernames belong to no tenant.
+- Two administrators can demote each other.
+
+**Exit criteria:** met. Each role can do exactly what the table allows, on every route, and administration and refusals leave an audit trail.
 

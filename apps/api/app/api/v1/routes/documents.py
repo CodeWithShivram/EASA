@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 
-from app.api.dependencies import get_document_service, get_identity
+from app.api.dependencies import get_document_service, require
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.repositories.documents import MAX_CHUNK_PAGE_SIZE, MAX_PAGE_SIZE
@@ -19,7 +19,8 @@ from app.services.documents import DocumentService
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 ServiceDep = Annotated[DocumentService, Depends(get_document_service)]
-IdentityDep = Annotated[Identity, Depends(get_identity)]
+IdentityDep = Annotated[Identity, Depends(require("documents:read"))]
+UploaderDep = Annotated[Identity, Depends(require("documents:upload"))]
 
 _ERRORS: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorResponse}
@@ -43,7 +44,7 @@ def upload_document(
     response: Response,
     file: Annotated[UploadFile, File(description="A PDF, DOCX or UTF-8 TXT file.")],
     service: ServiceDep,
-    identity: IdentityDep,
+    identity: UploaderDep,
 ) -> DocumentResponse:
     """Upload a document. Re-uploading identical content returns the existing document (200)."""
     result = service.upload(identity, file.filename, file.file.read())

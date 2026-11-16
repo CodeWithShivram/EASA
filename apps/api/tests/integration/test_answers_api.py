@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.identity import Identity
+from app.core.roles import Role
 from app.llm.fake import FakeChatModel
 from app.main import create_app
 from app.services.answers import INSUFFICIENT_MARKER
@@ -45,7 +46,7 @@ def upload_fixtures(client: TestClient) -> None:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app, headers=sign_in(app)) as test_client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as test_client:
         upload_fixtures(test_client)
         yield test_client
 
@@ -73,7 +74,7 @@ def test_answer_with_citations(client: TestClient) -> None:
 
 
 def test_a_tenant_without_documents_gets_insufficient_evidence(app: FastAPI) -> None:
-    with TestClient(app, headers=sign_in(app)) as client:
+    with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
         body = ask(client, "annual leave days").json()
 
     assert body == {
@@ -159,7 +160,7 @@ def test_answers_are_unavailable_without_a_model(tmp_path: Path) -> None:
     app = create_app(make_settings(tmp_path))  # model_provider defaults to "none"
     create_schema(app.state.engine)
     try:
-        with TestClient(app, headers=sign_in(app)) as client:
+        with TestClient(app, headers=sign_in(app, role=Role.MANAGER)) as client:
             response = ask(client, "annual leave days")
     finally:
         app.state.engine.dispose()
