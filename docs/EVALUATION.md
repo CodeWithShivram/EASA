@@ -388,7 +388,7 @@ Permitted misses: the administrator's grounded answers to the incident-size ques
 
 ### 12.5 Recommendations
 
-1. Treat agent answers like grounded answers when the knowledge tool returns nothing relevant: a fixed "I could not find that in the documents you can access" instead of free text (the agent invented a figure here and in section 11).
+1. Make agent answers cite tool results, checked by the server like grounded answers, so a claim without support in the run's tool results is withheld (planned with the frontend work, Phase 7/8). *Correction (2026-11-18): the first version of this recommendation proposed a fixed reply when the knowledge tool finds nothing; that rule would never have triggered, because the tool always returns its top 3 results (no relevance threshold). A narrower check on invented figures and codes would have caught "100 accounts" but not the false denial or the codename mix-ups. Decision: no code change in Phase 6; the risk is recorded.*
 2. Keep `evaluate-access --surfaces search` in the release checklist: it takes seconds and needs no model.
 
 To reproduce: `uv run python -m app.cli evaluate-access` (with the local model, about 25 minutes) or `--surfaces search` (seconds; add `--backend postgres` with `EASA_EVAL_POSTGRES_URL`).

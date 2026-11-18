@@ -1377,7 +1377,7 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 **Known limitations**
 
 - One tenant and three levels in the evaluation (tenant crossings are covered by the P6-M4 suite); literal canary matching.
-- The agent's uncited answers can invent facts when evidence is hidden (recommendation in EVALUATION.md section 12.5).
+- The agent's uncited answers can invent facts when evidence is hidden. Decided on 2026-11-18: no code change in Phase 6; the recommendation in EVALUATION.md section 12.5 was corrected (the originally proposed "nothing found" rule would never have triggered, because the knowledge tool always returns its top 3 results) and cited agent answers are planned with Phase 7/8.
 
 **Exit criteria:** met. No restricted text reached a lower role in any surface or backend, and the evaluation is shown to detect leaks when the filter is broken.
 
