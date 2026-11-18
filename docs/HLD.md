@@ -32,15 +32,15 @@ The project exists to demonstrate retrieval-augmented generation, document inges
 
 ```mermaid
 flowchart LR
-    user["Developer browser"] -->|"HTTP :3000"| web["apps/web<br/>Next.js dashboard shell"]
-    user -->|"fetch GET /api/v1/health/ready<br/>(CORS, no credentials)"| api["apps/api<br/>FastAPI modular monolith"]
+    user["Browser"] -->|"HTTP :3000<br/>pages, /bff (HttpOnly session cookie)"| web["apps/web<br/>Next.js app + backend for frontend"]
+    web -->|"allowlisted /api/v1 calls<br/>Authorization: Bearer"| api["apps/api<br/>FastAPI modular monolith"]
     api -->|"SQLAlchemy 2"| db[("SQLite<br/>apps/api/var/easa.db")]
     alembic["Alembic migrations"] -->|"same validated settings"| db
 ```
 
 | Component | Technology | Implemented today |
 |---|---|---|
-| Web (`apps/web`) | Next.js 16 (App Router), React 19, strict TypeScript, Tailwind 4, Zod | Dashboard shell; API status card that calls readiness from the browser; every API response validated at runtime |
+| Web (`apps/web`) | Next.js 16 (App Router), React 19, strict TypeScript, Tailwind 4, Zod | Sign-in page and role-aware shell; a backend for frontend (`/bff`) that keeps the API token in an HttpOnly cookie and forwards an allowlist of API routes (ADR-034); every response validated at runtime |
 | API (`apps/api`) | Python 3.14, FastAPI, Pydantic Settings, SQLAlchemy 2 | Strict configuration, correlation IDs, JSON logging, standard error envelope, liveness and readiness endpoints, session management |
 | Database | SQLite file (git-ignored) by default; PostgreSQL 18 + pgvector 0.8.7 (Docker Compose, P3-M4) | `documents`, `document_chunks` (Phase 2), `chunk_embeddings` (P3-M1), `conversations` and `conversation_messages` (P4-M4); tenant-scoped repositories. Keyword index: FTS5 on SQLite, a GIN full-text index on PostgreSQL. Vector search: NumPy brute force on SQLite, pgvector in the database on PostgreSQL |
 | File store | Local disk, content-addressed (git-ignored) | Stores uploaded bytes by SHA-256 |
@@ -87,7 +87,7 @@ flowchart TB
 ### 5.1 Readiness check (implemented)
 
 1. The browser loads the dashboard from the web server.
-2. The API status card calls `GET /api/v1/health/ready` directly on the API (CORS allows only configured origins; no cookies are sent).
+2. The API status card calls `GET /bff/api/v1/health/ready` on the web server, which forwards it to the API (health needs no session; the browser never calls the API directly since P7-M1).
 3. The API generates a correlation ID, runs `SELECT 1` through a database probe and returns `200 ready` or `503 not_ready`.
 4. The web client validates the body with Zod and shows ready, not ready or an error with the correlation ID.
 
@@ -107,7 +107,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 4 | Grounded RAG answering | Complete (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations, P4-M5 answer evaluation; see [EVALUATION.md](EVALUATION.md) section 10) |
 | 5 | Agent and controlled tool calling | Complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial tests, P5-M5 agent evaluation) |
 | 6 | Authentication and RBAC | Complete (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite, P6-M5 leakage evaluation) |
-| 7 | Frontend and integration | Not started |
+| 7 | Frontend and integration | In progress (P7-M1 web sign-in through a backend for frontend done) |
 | 8 | Evaluation, reliability and delivery | Not started |
 
 Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure. See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (873 automated tests today: 846 backend including 49 PostgreSQL and 4 live-model tests, 27 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (932 automated tests today: 846 backend including 49 PostgreSQL and 4 live-model tests, 86 frontend); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parsePublicConfig } from "./config";
+import { parseServerConfig, serverConfig } from "./config";
 
-describe("parsePublicConfig", () => {
+describe("parseServerConfig", () => {
   it("defaults to the local API", () => {
-    expect(parsePublicConfig({ apiBaseUrl: undefined })).toEqual({
-      apiBaseUrl: "http://localhost:8000",
+    expect(parseServerConfig({ apiUrl: undefined })).toEqual({
+      apiUrl: "http://localhost:8000",
+    });
+    expect(parseServerConfig({ apiUrl: "" })).toEqual({
+      apiUrl: "http://localhost:8000",
     });
   });
 
   it("accepts https and strips a trailing slash", () => {
-    expect(parsePublicConfig({ apiBaseUrl: "https://api.example.com/" })).toEqual({
-      apiBaseUrl: "https://api.example.com",
+    expect(parseServerConfig({ apiUrl: "https://api.example.com/" })).toEqual({
+      apiUrl: "https://api.example.com",
     });
   });
 
@@ -21,7 +24,13 @@ describe("parsePublicConfig", () => {
     "javascript:alert(1)",
     "http://localhost:8000/api",
     "http://localhost:8000?x=1",
-  ])("rejects %s", (apiBaseUrl) => {
-    expect(() => parsePublicConfig({ apiBaseUrl })).toThrow(/NEXT_PUBLIC_API_BASE_URL/);
+    "http://user:secret@localhost:8000",
+  ])("rejects %s", (apiUrl) => {
+    expect(() => parseServerConfig({ apiUrl })).toThrow(/EASA_API_URL/);
+  });
+
+  it("reads EASA_API_URL at call time", () => {
+    vi.stubEnv("EASA_API_URL", "http://127.0.0.1:9000");
+    expect(serverConfig().apiUrl).toBe("http://127.0.0.1:9000");
   });
 });

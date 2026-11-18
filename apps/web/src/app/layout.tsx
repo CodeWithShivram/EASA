@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-import { AppHeader } from "@/components/layout/AppHeader";
-import { SideNav } from "@/components/layout/SideNav";
-
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,13 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         >
           Skip to main content
         </a>
-        <AppHeader />
-        <div className="flex flex-1 flex-col md:flex-row">
-          <SideNav />
-          <main id="main-content" tabIndex={-1} className="flex-1 p-4 md:p-6">
-            {children}
-          </main>
-        </div>
+        {children}
       </body>
     </html>
   );

@@ -1,6 +1,6 @@
 # EASA — Security
 
-> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Phase 6 complete (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite, P6-M5 leakage evaluation). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Sign-in, sessions, role permissions and document visibility exist since P6-M1 to P6-M3; the remaining open items are listed with their planned phase.
+> **Status:** Phase 3 in progress (P3-M1 embeddings, P3-M2 semantic search, P3-M3 keyword and hybrid search, P3-M4 PostgreSQL + pgvector, P3-M5 evaluation; Phase 3 complete). Phase 4 in progress (P4-M1 chat model interface, P4-M2 grounded answers, P4-M3 local model, P4-M4 conversations; Phase 4 complete). Phase 5 complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial testing, P5-M5 agent evaluation). Phase 6 complete (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite, P6-M5 leakage evaluation). Phase 7 in progress (P7-M1 web sign-in through a backend for frontend). Foundational controls and the upload, parsing and chunking path are implemented and were security-reviewed in P2-M5. Sign-in, sessions, role permissions and document visibility exist since P6-M1 to P6-M3; the remaining open items are listed with their planned phase.
 > Checked against the P2-M5 changes on 2026-11-14. EASA is a learning project, not a production system.
 
 Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architecture decisions](ARCHITECTURE_DECISIONS.md)
@@ -30,7 +30,7 @@ Related: [HLD](HLD.md) · [API specification](API_SPECIFICATION.md) · [Architec
 | `POST /api/v1/answers` | Signed-in user; retrieves evidence from the user's tenant only and sends it with the question to the configured chat model; returns generated text and the cited chunk text |
 | `POST /api/v1/documents`, `GET /api/v1/documents[/{id}[/chunks]]` | Signed-in user; documents of the user's tenant; accept untrusted files and parse them in the API process |
 | `/docs`, `/openapi.json` | Available outside `production` |
-| Web dashboard | Static page; calls readiness from the browser without credentials |
+| Web app (`/login`, pages, `/bff/session`, `/bff/api/v1/...`) | Pages redirect to sign-in without a session cookie; the browser calls only this app, which forwards an allowlist of API routes with the session's token (ADR-034) |
 | SQLite file (`apps/api/var/easa.db`) | Local disk; holds synthetic document metadata and chunk text |
 | File store (`apps/api/var/uploads/`) | Local disk; uploaded bytes by SHA-256; never served directly |
 | Embedding model files (`apps/api/var/models/`) | Local disk, git-ignored; downloaded once by an explicit command; loaded by ONNX Runtime |
@@ -49,7 +49,7 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | Database URL stored as `SecretStr`; hidden from `repr()`; validation errors never echo input (`hide_input_in_errors`) | [config.py](../apps/api/app/core/config.py) — tested |
 | Database driver allowlist | [config.py](../apps/api/app/core/config.py) |
 | Only `.env.example` templates are committed; `.env` / `.env.*`, `var/`, `*.db`, `*.pem` and `*.key` are git-ignored | [.gitignore](../.gitignore), [apps/web/.gitignore](../apps/web/.gitignore) |
-| Browser configuration limited to `NEXT_PUBLIC_API_BASE_URL`, validated (http/https only), never secret | [config.ts](../apps/web/src/lib/config.ts) |
+| The web app's API URL (`EASA_API_URL`) is server-side only and validated (http/https, no path or credentials); nothing is embedded in the browser bundle | [config.ts](../apps/web/src/lib/config.ts) — tested |
 
 ### HTTP and errors
 
@@ -299,6 +299,18 @@ Leakage evaluation (P6-M5, [EVALUATION.md section 12](EVALUATION.md#12-access-le
 | Mass assignment: `tenant_id`, `is_active`, `username`, `password_hash` in user requests, `tenant_id` in a document update, `role` in sign-in; `owner_id` and `tenant_id` form fields in an upload | `422`; upload fields ignored (owner and tenant come from the session) |
 | Session tampering: a changed or extended token, an upper-cased token, two credentials in one header, an 8,000-character header, a token in a cookie or another header | `401`; the scheme name `bearer` is case-insensitive as RFC 7235 requires |
 | Audit endpoint: SQL-like or upper-case `action`, out-of-range paging, invalid UUIDs and outcomes | `422` |
+
+### Web session (Phase 7, P7-M1)
+
+| Control | Where |
+|---|---|
+| The API token is kept only in an HttpOnly, SameSite=Strict cookie (Secure in production and on https) set by the web server; it never appears in a response body or page, so page scripts cannot read it | [bff.ts](../apps/web/src/lib/server/bff.ts), [session route](../apps/web/src/app/bff/session/route.ts) — tested |
+| Sign-in, sign-out and every non-`GET` proxy request must come from the app's own origin (CSRF and login CSRF) | [bff.ts](../apps/web/src/lib/server/bff.ts) — tested |
+| The proxy forwards only allowlisted method and path pairs (UUID IDs, no development-only tools, no direct API sign-in), never the browser's own `Authorization` header or cookies, and bodies up to the upload limit | [routes.ts](../apps/web/src/lib/server/routes.ts), [proxy route](../apps/web/src/app/bff/api/v1/[...path]/route.ts) — tested |
+| An API `401` clears the cookie; sign-out ends the API session too | [proxy route](../apps/web/src/app/bff/api/v1/[...path]/route.ts), [session route](../apps/web/src/app/bff/session/route.ts) — tested |
+| Role-based navigation and the page redirect are conveniences only; the API decides every request | [SideNav.tsx](../apps/web/src/components/layout/SideNav.tsx), [proxy.ts](../apps/web/src/proxy.ts) |
+
+Residual risks: no security response headers (CSP) yet (planned with this phase's later milestones or Phase 8); Secure cookies need https outside `localhost`; the allowlist must follow API changes.
 
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.

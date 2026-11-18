@@ -312,13 +312,13 @@ See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for details. In short: `create_db_e
 
 ### 3.1 Structure and rules
 
-- UI components never call `fetch`; they receive a loader function. The default loader calls the API client ([ADR-010](ARCHITECTURE_DECISIONS.md#adr-010)).
-- Every API response is validated with a Zod schema before use.
-- Only `NEXT_PUBLIC_*` values reach the browser, and none are secrets.
+- UI components never call `fetch` directly; they receive a loader or submit function. The default ones call this app's backend for frontend ([ADR-010](ARCHITECTURE_DECISIONS.md#adr-010), [ADR-034](ARCHITECTURE_DECISIONS.md#adr-034)).
+- Every response is validated with a Zod schema before use.
+- The browser talks only to this app (`/bff/...`); no configuration reaches the browser bundle.
 
 ### 3.2 Configuration — [src/lib/config.ts](../apps/web/src/lib/config.ts)
 
-`parsePublicConfig({ apiBaseUrl })` validates `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`): an `http`/`https` URL with no path, query or fragment; trailing slashes are removed. Invalid values throw `Invalid NEXT_PUBLIC_API_BASE_URL: …`. `publicConfig` is evaluated at module load, so an invalid value makes `next build` fail while prerendering `/` (verified).
+`parseServerConfig({ apiUrl })` validates `EASA_API_URL` (server only; default `http://localhost:8000`): an `http`/`https` URL with no path, query, fragment or credentials; trailing slashes are removed; invalid values throw `Invalid EASA_API_URL: …`. `serverConfig()` reads it at request time.
 
 ### 3.3 API client — [src/lib/api/client.ts](../apps/web/src/lib/api/client.ts)
 
@@ -356,7 +356,16 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 
 ### 3.5 Layout
 
-[layout.tsx](../apps/web/src/app/layout.tsx) renders a skip link to `#main-content`, `AppHeader` ("Development build" badge), `SideNav` (labelled `Primary`; Dashboard link with `aria-current="page"`; Documents, Chat and Admin as `aria-disabled` text with their phase numbers) and the `main` landmark. Fonts are the system stack; no web fonts are downloaded.
+[layout.tsx](../apps/web/src/app/layout.tsx) renders the skip link to `#main-content`. Pages for signed-in users live in the `(app)` route group, whose layout (`apps/web/src/app/(app)/layout.tsx`) wraps them in `SessionProvider`, `AppHeader` (user name, role, Sign out) and `SideNav` (labelled `Primary`; links with `aria-current="page"`; items not built yet as `aria-disabled` text with their milestone; items the role cannot use hidden, as a convenience). [login/page.tsx](../apps/web/src/app/login/page.tsx) is outside the group. Fonts are the system stack; no web fonts are downloaded.
+
+### 3.6 Backend for frontend and session (P7-M1, ADR-034)
+
+- [lib/server/bff.ts](../apps/web/src/lib/server/bff.ts): `SESSION_COOKIE` (`easa_session`), `isSameOrigin` (`Origin` equals the request's own origin), `setSessionCookie` / `clearSessionCookie` (HttpOnly, SameSite=Strict, Path=/, Secure in production or on https), `callApi(path, init)` (no cache, no redirects, `AbortSignal.timeout`), `errorResponse` (the API's error envelope), `unavailable` (`502 api_unreachable`, `504 api_timeout`).
+- [app/bff/session/route.ts](../apps/web/src/app/bff/session/route.ts): `POST` (same origin; JSON body passed to the API's login; on success the token goes into the cookie and only `{user, expires_at}` is returned), `GET` (the API's `/auth/me`; a `401` clears the cookie), `DELETE` (same origin; API logout, cookie cleared even if the API is down).
+- [lib/server/routes.ts](../apps/web/src/lib/server/routes.ts) `PROXIED_ROUTES` / `findRoute(method, path)`: the allowlist; health is public, answers, conversation messages and the agent are slow (330 s timeout).
+- [app/bff/api/v1/[...path]/route.ts](../apps/web/src/app/bff/api/v1/[...path]/route.ts): rejects suspicious segments (`.`, `..`, empty, `/ \ ? # %`), unlisted routes (`404`), non-`GET` calls from another origin (`403 bad_origin`), missing sessions on non-public routes (`401`), bodies over 10 MiB + 64 KiB (`413`); forwards method, path, `GET` query, body and content type with the bearer token; relays status, body, content type and correlation ID; clears the cookie on an API `401`.
+- [proxy.ts](../apps/web/src/proxy.ts): redirects page requests without the cookie to `/login` (not `/login`, `/bff`, `/_next`, the favicon).
+- Browser side: [lib/api/bff.ts](../apps/web/src/lib/api/bff.ts) `bffRequest(path, {method, json, formData, schema, timeoutMs})` (same-origin credentials, error envelope to `ApiError`), [lib/api/session.ts](../apps/web/src/lib/api/session.ts) (`getCurrentUser`, `signIn`, `signOut`, `currentUserSchema`), [SessionProvider](../apps/web/src/components/auth/SessionProvider.tsx) (`state`, `signOut`, `can(permission)`; a `401` sends the user to `/login`), [LoginForm](../apps/web/src/components/auth/LoginForm.tsx) (one message for every failed sign-in). The status card's readiness check goes through `/bff/api/v1/health/ready`.
 
 ## 4. Testing structure
 
@@ -367,7 +376,7 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 | PostgreSQL | `apps/api/tests/postgres/` | 48 | Run only with `EASA_TEST_POSTGRES_URL` (with `EASA_REQUIRE_POSTGRES_TESTS=1`, as in CI, a missing URL fails instead of skipping); throwaway databases migrated by Alembic. Migrations (upgrade, downgrade, `alembic check`), vector storage round trip, pgvector vs brute-force parity, tenant/status/model/dimension filters, keyword search (stemming, codes, hostile tsquery input, stop words, isolation, GIN index used per `EXPLAIN`), the full app (upload, embeddings, readiness, all search modes), the evaluation runner (semantic metrics equal to SQLite), a small HNSW benchmark, a conversation round trip, and ticket tools with audit records. Always run in CI |
 | Live chat model | `apps/api/tests/llm/` | 4 | Against a running llama.cpp server: readiness, a reply with token counts, an answerable question answered from the right source, an unanswerable one declined; skipped unless `EASA_TEST_LLM_URL` is set (never in CI) |
 | Real embedding model | `apps/api/tests/model/` | 3 | Vector sanity checks and a semantic search through the API; skipped unless the pinned model is downloaded (always skipped in CI) |
-| Frontend | `apps/web/src/**/*.test.ts(x)` | 27 | Config, API client with fake `fetch`, status card with fake loaders, navigation |
+| Frontend | `apps/web/src/**/*.test.ts(x)` | 86 | Server config, API client with fake `fetch`, status card with fake loaders, navigation by role, header, sign-in form, `bffRequest`, the session and proxy route handlers against a mocked API (cookie flags, origin checks, allowlist, token forwarding), the proxy allowlist and `proxy.ts` |
 
 Test doubles are labelled in the code. `pytest` runs with warnings as errors and strict markers ([ADR-011](ARCHITECTURE_DECISIONS.md#adr-011)).
 

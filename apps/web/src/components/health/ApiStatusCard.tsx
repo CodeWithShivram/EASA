@@ -5,12 +5,11 @@ import { useEffect, useState } from "react";
 import { ApiError, type ApiResult } from "@/lib/api/client";
 import { getReadiness } from "@/lib/api/health";
 import type { Readiness } from "@/lib/api/schemas";
-import { publicConfig } from "@/lib/config";
 
 export type ReadinessLoader = (signal: AbortSignal) => Promise<ApiResult<Readiness>>;
 
-const defaultLoader: ReadinessLoader = (signal) =>
-  getReadiness(publicConfig.apiBaseUrl, { signal });
+// Through this app's backend for frontend: the browser never calls the API directly.
+const defaultLoader: ReadinessLoader = (signal) => getReadiness("/bff", { signal });
 
 type CardState =
   | { kind: "loading" }

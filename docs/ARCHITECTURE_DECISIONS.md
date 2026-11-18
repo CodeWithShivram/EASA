@@ -34,6 +34,7 @@
 | [ADR-027](#adr-027) | Answer settings after evaluation: 3 chunks, soft-refusal detection, support check off | P4-M5 |
 | [ADR-028](#adr-028) | Tool framework: typed allowlist, server-side checks, confirmation, audit; no LangGraph | P5-M1 |
 | [ADR-029](#adr-029) | Agent loop: schema-constrained steps, three tool calls, pending actions for consequential tools | P5-M3 |
+| [ADR-034](#adr-034) | Web sign-in through a backend for frontend: HttpOnly session cookie, allowlisted proxy, no streaming | P7-M1 |
 | [ADR-033](#adr-033) | Document visibility: a minimum role per document, filtered inside every query | P6-M3 |
 | [ADR-032](#adr-032) | Role permissions, route checks with audited refusals, user administration | P6-M2 |
 | [ADR-031](#adr-031) | Authentication: built-in sign-in with server-side sessions; one role per user; tenants table | P6-M1 |
@@ -487,6 +488,23 @@
   - Re-uploading content that already exists above the uploader's role returns `409 document_exists` without any details of that document.
 - **Trade-offs:** Three levels only; sharing with named people or groups is not possible. The duplicate-content answer reveals that a hidden copy of content the uploader already holds exists. Conversations keep earlier citation metadata (file name, page) even if a document is later restricted. Filtering before ranking with an extra predicate was not re-measured with the HNSW benchmark (exact search is used, ADR-022).
 - **Consequences:** P6-M4 attacks this filter in the security suite; P6-M5 measures leakage with role-restricted documents.
+
+<a id="adr-034"></a>
+## ADR-034: Web sign-in through a backend for frontend: HttpOnly session cookie, allowlisted proxy, no streaming
+
+- **Status:** Accepted (P7-M1, 2026-11-18; options approved in the Phase 7 plan)
+- **Context:** The API issues bearer tokens (ADR-031). A browser must keep the token somewhere, and every place JavaScript can read is exposed to cross-site scripting. Until Phase 7 the browser called the API directly (health only, CORS `GET`).
+- **Options considered:** a backend for frontend in the Next.js server with an HttpOnly cookie; the API setting a cookie itself (CORS with credentials and CSRF tokens in the API); the token in browser memory or storage.
+- **Decision:**
+  - Next.js route handlers under `/bff` sign in (`POST /bff/session` calls the API's login and puts the token into an `easa_session` cookie: HttpOnly, SameSite=Strict, Path=/, Secure in production and on https, expiring with the API session), return the current user (`GET`) and sign out (`DELETE`, which also ends the API session). The token never appears in a response body or page.
+  - `/bff/api/v1/...` forwards only an allowlist of method and path pairs (UUID-shaped IDs, no development-only tool routes, no direct API sign-in) with the cookie's token as `Authorization: Bearer`; the browser's own `Authorization` and cookies are never forwarded; bodies are limited to the upload limit; slow model routes get a longer timeout; a `401` from the API clears the cookie.
+  - Requests that change something (sign-in, sign-out and every non-`GET` proxy call) must carry an `Origin` header equal to the app's own origin, in addition to SameSite=Strict.
+  - The browser never contacts the API; its configuration (`EASA_API_URL`) is server-side only. The API and its CORS settings are unchanged.
+  - Next.js `proxy.ts` redirects pages without a session cookie to `/login`; this is an optimistic convenience, every decision stays with the API. Navigation entries the user's role cannot use are hidden, also only as a convenience.
+  - No token streaming: answers may only be shown after the server has checked their citations.
+  - No new dependency; browser end-to-end tests (Playwright) are deferred to Phase 8.
+- **Trade-offs:** One more hop per request. The proxy must be kept in step with the API (an allowlist test and the API's own checks catch drift). Secure cookies need https outside `localhost`.
+- **Consequences:** Later Phase 7 milestones call only `/bff/...`; the proxy allowlist already covers the routes they need.
 
 ---
 ## Open decisions (not yet made)

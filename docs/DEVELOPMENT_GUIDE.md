@@ -177,7 +177,7 @@ Stop servers with `Ctrl+C`. If you start them in the background from a script, s
 | `EASA_ANSWER_SUPPORT_CHECK` | API | `false` | Drop citations whose source shares no content words with the citing sentence (P4-M5; see EVALUATION.md section 10) |
 | `EASA_SESSION_IDLE_MINUTES`, `EASA_SESSION_LIFETIME_HOURS` | API | `480`, `24` | Sign-in sessions end after this long without use, and at the latest after the lifetime (ADR-031) |
 | `EASA_PASSWORD_HASH_N` | API | `32768` | scrypt cost (power of two); production refuses lower values. Tests use 1024 |
-| `NEXT_PUBLIC_API_BASE_URL` | Web | `http://localhost:8000` | Embedded in the browser bundle; never secret; invalid values fail `npm run build` |
+| `EASA_API_URL` | Web (server only) | `http://localhost:8000` | Where the web app's backend for frontend finds the API (ADR-034); never sent to the browser |
 
 Invalid API settings stop the server at startup with a validation error that never shows the submitted value.
 

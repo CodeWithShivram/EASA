@@ -1,36 +1,37 @@
 import { z } from "zod";
 
 /**
- * Public (browser-visible) configuration. Only NEXT_PUBLIC_* values belong
- * here: they are embedded in the client bundle, so they must never be secret.
+ * Server-side configuration of the web app's backend for frontend (Phase 7,
+ * ADR-034). Read only in route handlers and the proxy, never in the browser:
+ * the browser talks to this app (`/bff/...`), and this app talks to the API.
  */
-const DEFAULT_API_BASE_URL = "http://localhost:8000";
+const DEFAULT_API_URL = "http://localhost:8000";
 
-const publicConfigSchema = z.object({
-  apiBaseUrl: z
+const serverConfigSchema = z.object({
+  apiUrl: z
     .url({ protocol: /^https?$/, error: "must be an http(s) URL" })
     .refine((value) => {
       // Unparseable values are already reported by .url(); Zod 4 still runs this check.
       if (!URL.canParse(value)) return true;
-      const { pathname, search, hash } = new URL(value);
-      return (pathname === "/" || pathname === "") && !search && !hash;
-    }, "must not contain a path, query or fragment")
+      const { pathname, search, hash, username, password } = new URL(value);
+      return (pathname === "/" || pathname === "") && !search && !hash && !username && !password;
+    }, "must not contain a path, query, fragment or credentials")
     .transform((value) => value.replace(/\/+$/, "")),
 });
 
-export type PublicConfig = z.infer<typeof publicConfigSchema>;
+export type ServerConfig = z.infer<typeof serverConfigSchema>;
 
-export function parsePublicConfig(raw: { apiBaseUrl: string | undefined }): PublicConfig {
-  const result = publicConfigSchema.safeParse({
-    apiBaseUrl: raw.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+export function parseServerConfig(raw: { apiUrl: string | undefined }): ServerConfig {
+  const result = serverConfigSchema.safeParse({
+    apiUrl: raw.apiUrl || DEFAULT_API_URL,
   });
   if (!result.success) {
-    throw new Error(`Invalid NEXT_PUBLIC_API_BASE_URL: ${z.prettifyError(result.error)}`);
+    throw new Error(`Invalid EASA_API_URL: ${z.prettifyError(result.error)}`);
   }
   return result.data;
 }
 
-// Next.js inlines NEXT_PUBLIC_* only when referenced literally like this.
-export const publicConfig: PublicConfig = parsePublicConfig({
-  apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
-});
+/** The current configuration (read at request time, so tests and deployments can set it). */
+export function serverConfig(): ServerConfig {
+  return parseServerConfig({ apiUrl: process.env.EASA_API_URL });
+}

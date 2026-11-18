@@ -1417,3 +1417,45 @@ Plan approved on 2026-11-16 with the recommended options: built-in sign-in with 
 
 **Recommended next phase:** Phase 7, frontend and integration (chat interface with citations, document management for authorized users, conversation history, admin views), including the decision on how the browser keeps the session token.
 
+## Phase 7: Frontend and Integration
+
+Plan approved on 2026-11-18 with the recommended options: a backend for frontend in Next.js with the API token in an HttpOnly cookie, no token streaming, no new dependencies (browser end-to-end tests deferred to Phase 8), and cited agent answers in Phase 8. The leakage evaluation's agent recommendation was corrected first (commit `577b698`).
+
+| Milestone | Scope | Status | Commit |
+|---|---|---|---|
+| P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | the commit that adds this row |
+| P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | NOT STARTED | |
+| P7-M3 | Documents: list, upload with a level, change level, chunks | NOT STARTED | |
+| P7-M4 | Support assistant (agent) with confirm and cancel | NOT STARTED | |
+| P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | NOT STARTED | |
+
+## P7-M1: Web sign-in through a backend for frontend
+
+**Scope:** let people sign in to the web app without exposing the API token to page scripts, and route every browser request through the web server.
+
+**Implemented**
+
+- `app/bff/session/route.ts`: sign-in (the token goes into the `easa_session` cookie: HttpOnly, SameSite=Strict, Path=/, Secure in production or on https; only the user is returned), current user, sign-out (also ends the API session).
+- `app/bff/api/v1/[...path]/route.ts` with `lib/server/routes.ts`: an allowlist of 23 method and path pairs; origin check for changes; session required except for health; bearer token from the cookie; the browser's own `Authorization` and cookies never forwarded; body limit; long timeout for model routes; cookie cleared on an API `401`.
+- `proxy.ts`: pages without the cookie go to `/login` (convenience only).
+- `/login` page and form (one message for every failed sign-in); `(app)` route group with `SessionProvider`, a header with the user, role and Sign out, and navigation that hides items the role cannot use (convenience only); later milestones' items shown as disabled text.
+- Configuration: `EASA_API_URL` (server only) replaces `NEXT_PUBLIC_API_BASE_URL`; the status card's readiness check goes through `/bff`; the browser no longer calls the API.
+- Tests: web tests 27 → 86 (route handlers against a mocked API, the allowlist, `proxy.ts`, `bffRequest`, the sign-in form, navigation by role, the header and sign-out, configuration).
+- Docs: ADR-034, LLD sections 3.1–3.6, SECURITY (web session controls), DEVELOPMENT_GUIDE, README, HLD, `apps/web/.env.example`.
+
+**Verification (executed 2026-11-18)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Frontend` (lint, type check, tests, production build) | All checks passed; 86 web tests |
+| Backend | Unchanged in this milestone (846 tests at P6-M5) |
+| Live check (scratch API database with an administrator from `create-user`, generated synthetic password; `next start` with `EASA_API_URL`) | Dashboard without a cookie redirected to `/login`; sign-in without an `Origin` or from another origin `403`; wrong password `401 invalid_credentials`; sign-in `200` with the cookie flags HttpOnly, Secure, SameSite and Path, and the token neither in the response body nor in the dashboard HTML; `/bff/session` returned the administrator; documents `200` with the cookie and `401` without; health `200` without; creating a conversation from another origin `403` and from the app `201`; the tool routes `404`; sign-out `204` and the old token then `401` at the API; servers stopped |
+| First runs | Five type errors: stale generated Next.js types for the moved dashboard page (regenerated with `next typegen`; the stale `.next/dev/types` from an earlier `next dev` run removed) and typing mistakes in three new test files; one test compared regex sources, which escape `/`. A `prettier --write` over the whole `src` folder reformatted three unrelated files; they were restored from Git and only this milestone's files were formatted |
+
+**Known limitations**
+
+- No security response headers (CSP) yet; Secure cookies need https outside `localhost`.
+- No browser end-to-end tests (Phase 8); the live check drove the web server over HTTP.
+
+**Exit criteria:** met. Users sign in through the web app, the token is unreachable for page scripts, and every browser request passes the web server's allowlist and the API's checks.
+
