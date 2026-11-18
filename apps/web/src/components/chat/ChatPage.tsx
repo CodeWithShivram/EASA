@@ -152,6 +152,8 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
 
   return (
     <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_20rem]">
+      {/* One h1 first, so headings stay in order for screen-reader navigation. */}
+      <h1 className="sr-only">Chat</h1>
       <section aria-labelledby="conversations-heading" className="min-w-0">
         <div className="flex items-center justify-between gap-2">
           <h2 id="conversations-heading" className="text-sm font-semibold">
@@ -171,10 +173,12 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
           </p>
         )}
         {conversations === null && !listError && (
-          <p className="mt-3 text-sm text-slate-500">Loading conversations…</p>
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading conversations…</p>
         )}
         {conversations?.length === 0 && (
-          <p className="mt-3 text-sm text-slate-500">No conversations yet. Start one with New.</p>
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+            No conversations yet. Start one with New.
+          </p>
         )}
         <ul className="mt-3 flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
           {conversations?.map((c) => (
@@ -197,7 +201,7 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
                   className="block w-full text-left focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <span className="block font-medium">{formatDate(c.created_at)}</span>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     {c.messages / 2} question{c.messages === 2 ? "" : "s"}
                   </span>
                 </button>
@@ -220,7 +224,7 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
                     type="button"
                     onClick={() => setConfirmDelete(c.id)}
                     aria-label={`Delete conversation from ${formatDate(c.created_at)}`}
-                    className="mt-1 text-xs text-slate-500 hover:text-red-700"
+                    className="mt-1 text-xs text-slate-500 dark:text-slate-400 hover:text-red-700"
                   >
                     Delete
                   </button>
@@ -234,7 +238,7 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
       <section aria-label="Conversation" className="flex min-w-0 flex-col">
         {!selected && (
           <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-400">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Chat</h1>
+            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">Chat</p>
             <p className="mt-1">
               Ask questions about the documents you can access. Answers cite their sources; choose a
               citation to read the text it comes from.
@@ -248,10 +252,9 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
         )}
         {selected && conversation?.id === selected && (
           <>
-            <h1 className="sr-only">Chat</h1>
             <ol aria-live="polite" className="space-y-3">
               {conversation.messages.length === 0 && !asking && (
-                <li className="text-sm text-slate-500">No questions yet.</li>
+                <li className="text-sm text-slate-500 dark:text-slate-400">No questions yet.</li>
               )}
               {conversation.messages.map((m) => (
                 <MessageItem key={m.id} message={m} onCite={setSource} />
@@ -286,7 +289,7 @@ export function ChatPage({ api = chatApi }: { api?: ChatApi }) {
           />
         ) : (
           selected && (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               Choose a citation such as S1 to see its source.
             </p>
           )
@@ -309,7 +312,7 @@ function MessageItem({ message, onCite }: { message: Message; onCite: (s: Source
       <li className="max-w-prose rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
         <AnswerText text={message.content} sources={message.sources} onCite={onCite} />
         {message.sources.length > 0 && (
-          <p className="mt-2 text-xs text-slate-500">
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             Sources:{" "}
             {message.sources.map((s, i) => (
               <span key={s.label}>

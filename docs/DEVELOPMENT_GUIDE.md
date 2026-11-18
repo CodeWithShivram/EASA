@@ -152,6 +152,18 @@ Use synthetic documents only.
 
 Stop servers with `Ctrl+C`. If you start them in the background from a script, stop the **whole process tree** (`taskkill /PID <pid> /T /F`); killing only the parent can leave the server running (see section 9).
 
+### Browser check (by hand)
+
+The automated checks drive the web server over HTTP; a person should also look at the pages in a browser now and then (Phase 8 adds browser tests). With the API and `npm run start` running and an administrator created:
+
+1. Open http://localhost:3000: you land on `/login`. Sign in; the header shows your name and role.
+2. **Admin**: create an employee and a manager. Check that your own row has no role or disable controls.
+3. **Documents** (as the administrator): upload a TXT at "Managers and administrators"; open it and read its parts.
+4. Sign out, sign in as the employee: the document is not listed; Admin explains it is for administrators; **Chat** answers a question about an employee-level policy with a clickable citation that opens its source.
+5. **Assistant**: ask for a new ticket, check the prompt and arguments, then Cancel.
+6. Narrow the window to phone width: navigation, chat and tables stay usable (tables scroll sideways).
+7. Use only the keyboard (Tab, Shift+Tab, Enter): every control is reachable and shows a focus ring; switch the system to dark mode and check that text stays readable.
+
 ## 4. Configuration
 
 | Variable | App | Default | Notes |

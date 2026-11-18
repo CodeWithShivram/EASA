@@ -142,7 +142,7 @@ export function AssistantPage({ api = agentApi }: { api?: AgentApi }) {
         </p>
       </div>
       {turns.length === 0 && !pending && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           For example: &quot;What is the status of my ticket 2?&quot; or &quot;Open a ticket: my
           headset does not work.&quot;
         </p>
@@ -203,7 +203,7 @@ function Reply({
         <>
           <p className="whitespace-pre-wrap">{result.answer}</p>
           {result.reason === "unsupported_claim" ? (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               The assistant&apos;s reply claimed a change that did not happen, so it was replaced.
             </p>
           ) : (
@@ -213,7 +213,7 @@ function Reply({
           )}
         </>
       )}
-      {steps.length > 0 && <p className="text-xs text-slate-500">Steps: {steps.join("; ")}</p>}
+      {steps.length > 0 && <p className="text-xs text-slate-500 dark:text-slate-400">Steps: {steps.join("; ")}</p>}
     </div>
   );
 }
@@ -268,7 +268,7 @@ function Proposal({
           >
             Cancel
           </button>
-          <span className="text-xs text-slate-500">Expires at {expires}.</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">Expires at {expires}.</span>
         </div>
       )}
     </section>

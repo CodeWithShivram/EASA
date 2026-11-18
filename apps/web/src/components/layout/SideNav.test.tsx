@@ -71,7 +71,9 @@ describe("SideNav", () => {
   it("shows Admin to administrators", async () => {
     const nav = renderAs("administrator");
 
-    // Still planned (P7-M5): disabled text, not a link.
-    expect(await within(nav).findByText("Admin")).toHaveAttribute("aria-disabled", "true");
+    expect(await within(nav).findByRole("link", { name: "Admin" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
   });
 });

@@ -13,14 +13,14 @@ export function AppHeader() {
   return (
     <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 md:px-6 dark:border-slate-700">
       <p className="text-lg font-semibold tracking-tight">
-        EASA <span className="font-normal text-slate-500">· Enterprise AI Support Agent</span>
+        EASA <span className="font-normal text-slate-500 dark:text-slate-400">· Enterprise AI Support Agent</span>
       </p>
       <div className="flex items-center gap-3 text-sm">
         {state.status === "signed-in" && (
           <>
             <span>
               <span className="font-medium">{state.user.username}</span>{" "}
-              <span className="text-slate-500">({ROLE_LABELS[state.user.role]})</span>
+              <span className="text-slate-500 dark:text-slate-400">({ROLE_LABELS[state.user.role]})</span>
             </span>
             <button
               type="button"

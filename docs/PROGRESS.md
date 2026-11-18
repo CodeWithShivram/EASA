@@ -1426,8 +1426,8 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 | P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | `b92053b` |
 | P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | COMPLETE | `0373de2` |
 | P7-M3 | Documents: list, upload with a level, change level, chunks | COMPLETE | `655a23c` |
-| P7-M4 | Support assistant (agent) with confirm and cancel | COMPLETE | the commit that adds this row |
-| P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | NOT STARTED | |
+| P7-M4 | Support assistant (agent) with confirm and cancel | COMPLETE | `11a100f` |
+| P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | COMPLETE | the commit that adds this row |
 
 ## P7-M1: Web sign-in through a backend for frontend
 
@@ -1547,4 +1547,63 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 - Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
 
 **Exit criteria:** met. Users can use the assistant from the web app, and nothing it proposes happens without their explicit confirmation.
+
+## P7-M5: Administration, accessibility and Phase 7 report
+
+**Scope:** the administration page (users and the audit log), an accessibility pass over all pages, a walkthrough per role, and the Phase 7 report.
+
+**Implemented**
+
+- `lib/api/admin.ts`; `/admin` with `UsersPanel` (create, role, disable / enable, reset password; none on one's own row) and `AuditPanel` (filters by action, outcome and user; readable actions; usernames); Admin enabled in the navigation; the now unused "planned" navigation code removed.
+- Accessibility: grey helper text in dark mode raised from 4.24:1 and 3.75:1 to 7.9:1 and 7.0:1 (WCAG AA needs 4.5:1; contrast computed for every colour pair used); the chat page's headings put in order (one `h1` first). Labels, keyboard use, focus, live regions, tables and landmarks reviewed (LLD section 3.11).
+- A browser checklist for a person (DEVELOPMENT_GUIDE section 3).
+- Tests: web tests 120 → 128.
+- Docs: LLD sections 3.10 and 3.11, SECURITY, DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-18)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Frontend` (lint, type check, tests, production build) | All checks passed; 128 web tests |
+| Backend | Unchanged in Phase 7 (846 tests; CI ran them on every push) |
+| Walkthrough per role over HTTP (scratch API database; an administrator from `create-user`, who created an employee and a manager through `/bff`; hashing embedder; `next start`) | Signed out: every page redirected to `/login`. Every page `200` for every role. Employee: list documents `200`, upload `403`, new conversation `201`, users `403`, audit `403`, saw no manager or administrator document. Manager: upload at manager level `201`, users and audit `403`, saw the manager document only. Administrator: everything `200`/`201`, saw both. Promotion of the employee applied to the open session (upload then `201`); disabling the manager ended the session (`401`); self-demotion `cannot_modify_self`; the audit log's refusals were exactly `audit:read`, `documents:upload` and `users:manage`; sign-out `204`; servers stopped |
+| Not checked | The pages in a real browser, with a screen reader or at phone width (no browser automation in this session); the checklist in DEVELOPMENT_GUIDE section 3 covers this by hand |
+| First runs | One test failure: "unknown" appeared twice in an audit row (user and target); the test now checks the user cell |
+
+**Known limitations**
+
+- No browser tests and no visual check (Phase 8); no security response headers (CSP) yet.
+
+**Exit criteria:** met. Every role can use the features its permissions allow from the web app, administrators can manage users and review the audit log, and the API remains the only place where access is decided.
+
+## Phase 7 completion report
+
+**Status: COMPLETE.** Phase 7 delivered the web application on top of the secured API: sign-in through a backend for frontend that keeps the API token out of page scripts, chat with clickable citations, document management with visibility levels, the support assistant with explicit confirmation, administration of users and the audit log, and an accessibility pass.
+
+**Phase 7 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 7) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Build a responsive chat interface | Chat page, one column on narrow screens and three from the `lg` breakpoint (layout not yet seen in a browser) | P7-M2 |
+| Display citations and source details | Citation buttons in answers; a source panel with file, page, section, part and the cited text (reloaded with visibility rules for earlier answers) | P7-M2 |
+| Add document management for authorized administrators | Documents list, upload with a visibility level, level changes and the document text; uploads and levels for managers and administrators | P7-M3 |
+| Add conversation history | Conversation list with history, follow-ups and deletion | P7-M2 |
+| Add loading, empty and error states | On every page, including waiting status with elapsed time for model calls and a message per API error code | P7-M1 to P7-M5 |
+| Integrate streaming if supported reliably | Not adopted: answers are shown only after the server has checked their citations (ADR-034) | P7-M1 |
+| Add admin views for users, documents and audit events | Administration page (users, audit log with filters); documents and their visibility on the documents page | P7-M3, P7-M5 |
+| Ensure frontend permissions are never treated as security controls | Hidden navigation and controls are conveniences; the backend for frontend forwards only an allowlist with the session's token and the API decides every request (walkthrough: refusals for every role where the role table says so) | P7-M1, P7-M5 |
+
+**Commits:** P7-M1 `b92053b` (with the evaluation correction `577b698`), P7-M2 `0373de2`, P7-M3 `655a23c`, P7-M4 `11a100f`, P7-M5 the commit that adds this report.
+
+**Dependencies added in Phase 7:** none.
+
+**Architecture decisions:** ADR-034 (backend for frontend with an HttpOnly session cookie, allowlisted proxy, no streaming).
+
+**Tests:** 846 backend (unchanged) plus 128 frontend = 974, up from 873 at the end of Phase 6 (the frontend from 27 to 128).
+
+**Security considerations:** see [SECURITY.md](SECURITY.md). Residual risks: no security response headers (CSP) yet; Secure cookies need https outside `localhost`; the proxy allowlist must follow API changes; agent answers are uncited (labelled as such); no IP rate limiting; the pages have not been seen in a browser or with a screen reader by an automated check.
+
+**Manual verification steps:** the browser checklist in [DEVELOPMENT_GUIDE section 3](DEVELOPMENT_GUIDE.md) (sign-in, administration, documents with levels, chat with citations, the assistant's confirmation, phone width, keyboard and dark mode).
+
+**Recommended next phase:** Phase 8, evaluation, reliability and delivery: browser tests (Playwright), security headers, cited agent answers, versioned evaluation data, latency and token tracking, and delivery (containers, CI/CD, deployment documentation).
 

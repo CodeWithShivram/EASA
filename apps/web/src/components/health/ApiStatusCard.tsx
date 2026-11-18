@@ -112,7 +112,7 @@ function StatusBody({ state }: { state: CardState }) {
           </p>
           <p className="mt-2 text-slate-700 dark:text-slate-300">{state.message}</p>
           {state.correlationId && (
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Correlation ID: <code>{state.correlationId}</code>
             </p>
           )}

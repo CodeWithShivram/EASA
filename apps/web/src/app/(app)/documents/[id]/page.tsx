@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Document — EASA" };
 // streams in after the prerendered shell.
 export default function Document() {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading the document…</p>}>
+    <Suspense fallback={<p className="text-sm text-slate-500 dark:text-slate-400">Loading the document…</p>}>
       <DocumentDetail />
     </Suspense>
   );

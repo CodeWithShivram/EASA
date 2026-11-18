@@ -67,7 +67,7 @@ export function DocumentDetail({ api = documentsApi }: { api?: DocumentsApi }) {
       <Link href="/documents" className="text-sm text-blue-700 hover:underline dark:text-blue-400">
         ← All documents
       </Link>
-      {state.kind === "loading" && <p className="text-sm text-slate-500">Loading the document…</p>}
+      {state.kind === "loading" && <p className="text-sm text-slate-500 dark:text-slate-400">Loading the document…</p>}
       {state.kind === "error" && (
         <p role="alert" className="text-sm">
           {state.message}
@@ -92,7 +92,7 @@ export function DocumentDetail({ api = documentsApi }: { api?: DocumentsApi }) {
             </p>
           ) : (
             <section aria-label="Document text" className="space-y-3">
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {state.total} part{state.total === 1 ? "" : "s"}; showing {state.chunks.length}.
               </p>
               {state.chunks.map((chunk) => (
@@ -100,7 +100,7 @@ export function DocumentDetail({ api = documentsApi }: { api?: DocumentsApi }) {
                   key={chunk.chunk_index}
                   className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700"
                 >
-                  <p className="mb-1 text-xs text-slate-500">
+                  <p className="mb-1 text-xs text-slate-500 dark:text-slate-400">
                     Part {chunk.chunk_index + 1}
                     {chunk.page_number !== null ? ` · page ${chunk.page_number}` : ""}
                     {chunk.section ? ` · ${chunk.section}` : ""}

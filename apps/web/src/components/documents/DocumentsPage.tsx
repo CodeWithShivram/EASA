@@ -43,7 +43,7 @@ function StatusBadge({ document }: { document: DocumentItem }) {
       </span>
     );
   }
-  return <span className="text-xs text-slate-500">Processing…</span>;
+  return <span className="text-xs text-slate-500 dark:text-slate-400">Processing…</span>;
 }
 
 export function DocumentsPage({ api = documentsApi }: { api?: DocumentsApi }) {
@@ -143,9 +143,9 @@ export function DocumentsPage({ api = documentsApi }: { api?: DocumentsApi }) {
         )}
       </div>
 
-      {documents === null && !error && <p className="text-sm text-slate-500">Loading documents…</p>}
+      {documents === null && !error && <p className="text-sm text-slate-500 dark:text-slate-400">Loading documents…</p>}
       {documents?.length === 0 && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           No documents yet.{canUpload ? " Upload one above." : ""}
         </p>
       )}
@@ -153,7 +153,7 @@ export function DocumentsPage({ api = documentsApi }: { api?: DocumentsApi }) {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[40rem] text-left text-sm">
             <caption className="sr-only">Documents</caption>
-            <thead className="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-700">
+            <thead className="border-b border-slate-200 text-xs text-slate-500 dark:text-slate-400 dark:border-slate-700">
               <tr>
                 <th scope="col" className="py-2 pr-3 font-medium">
                   Name

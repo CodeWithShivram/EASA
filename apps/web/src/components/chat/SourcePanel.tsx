@@ -71,19 +71,19 @@ export function SourcePanel({
           <p className="font-semibold">
             {source.label} · {citation.filename}
           </p>
-          <p className="text-xs text-slate-500">{location.join(" · ")}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{location.join(" · ")}</p>
         </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close source"
-          className="rounded px-2 py-0.5 text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:bg-slate-800"
+          className="rounded px-2 py-0.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:bg-slate-800"
         >
           ×
         </button>
       </div>
       <div className="mt-3" aria-live="polite">
-        {state.kind === "loading" && <p className="text-slate-500">Loading the source text…</p>}
+        {state.kind === "loading" && <p className="text-slate-500 dark:text-slate-400">Loading the source text…</p>}
         {state.kind === "loaded" && (
           <blockquote className="border-l-4 border-slate-300 pl-3 whitespace-pre-wrap dark:border-slate-600">
             {state.text}
