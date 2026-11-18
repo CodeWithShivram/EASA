@@ -27,7 +27,7 @@ const ITEMS: readonly NavItem[] = [
     href: "/documents",
     permission: "documents:read",
   },
-  { label: "Assistant", href: "/assistant", planned: "P7-M4" },
+  { label: "Assistant", href: "/assistant" },
   {
     label: "Admin",
     href: "/admin",

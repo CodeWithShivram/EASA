@@ -1425,8 +1425,8 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 |---|---|---|---|
 | P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | `b92053b` |
 | P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | COMPLETE | `0373de2` |
-| P7-M3 | Documents: list, upload with a level, change level, chunks | COMPLETE | the commit that adds this row |
-| P7-M4 | Support assistant (agent) with confirm and cancel | NOT STARTED | |
+| P7-M3 | Documents: list, upload with a level, change level, chunks | COMPLETE | `655a23c` |
+| P7-M4 | Support assistant (agent) with confirm and cancel | COMPLETE | the commit that adds this row |
 | P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | NOT STARTED | |
 
 ## P7-M1: Web sign-in through a backend for frontend
@@ -1518,4 +1518,33 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 - Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
 
 **Exit criteria:** met. Users see the documents their role allows, and managers and administrators upload and set visibility from the web app, with the API deciding every step.
+
+## P7-M4: Support assistant
+
+**Scope:** the agent in the web app: requests about tickets and policies, proposed actions with the server-written confirmation prompt and Confirm / Cancel, and answers clearly labelled as uncited.
+
+**Implemented**
+
+- `lib/api/agent.ts` (schemas and `run`, `confirm`, `cancel`).
+- `/assistant` (`AssistantPage`): replies with an "uncited" label and the steps in plain words; proposals with the prompt, exact arguments, expiry and Confirm / Cancel, then the outcome; messages for failures and API error codes; a working status; replaced false claims explained.
+- Assistant enabled in the navigation.
+- Tests: web tests 112 → 120.
+- Docs: LLD section 3.9, SECURITY, DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-18)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Frontend` (lint, type check, tests, production build) | All checks passed; 120 web tests |
+| Backend | Unchanged (846 tests) |
+| Live check (scratch API database, an employee from `create-user` with a generated synthetic password and seeded tickets, the local model; `next start`; requests through `/bff`) | `/assistant` `200`; "What is the status of my ticket 2?" answered correctly ("in progress", one `get_ticket_status` step; 118 s on a busy machine with a cold model); "open a ticket: my headset microphone does not work" became a proposal with the server's prompt and sensible arguments (priority `normal`) in 29 s; Confirm created draft ticket 8; a second Confirm `409 action_not_pending`; a second proposal was cancelled; a confirmation from another origin `403`; servers stopped |
+| First runs | No failures; the navigation test was updated because employees no longer see any planned entry |
+
+**Known limitations**
+
+- Requests and replies are not stored; reloading the page clears them (pending proposals remain and expire after 10 minutes).
+- Agent answers are uncited; cited agent answers are planned for Phase 8.
+- Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
+
+**Exit criteria:** met. Users can use the assistant from the web app, and nothing it proposes happens without their explicit confirmation.
 

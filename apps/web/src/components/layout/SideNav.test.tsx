@@ -47,7 +47,7 @@ describe("SideNav", () => {
     expect(dashboard).toHaveAttribute("href", "/");
   });
 
-  it("links built features and renders planned ones as disabled text", async () => {
+  it("links the built features", async () => {
     const nav = renderAs("employee");
 
     expect(await within(nav).findByRole("link", { name: "Chat" })).toHaveAttribute("href", "/chat");
@@ -55,8 +55,11 @@ describe("SideNav", () => {
       "href",
       "/documents",
     );
-    expect(within(nav).getByText("Assistant")).toHaveAttribute("aria-disabled", "true");
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    expect(within(nav).getByRole("link", { name: "Assistant" })).toHaveAttribute(
+      "href",
+      "/assistant",
+    );
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
   });
 
   it("shows Admin only to roles that may manage users (a convenience, not a control)", async () => {
@@ -68,6 +71,7 @@ describe("SideNav", () => {
   it("shows Admin to administrators", async () => {
     const nav = renderAs("administrator");
 
-    expect(await within(nav).findByText("Admin")).toBeInTheDocument();
+    // Still planned (P7-M5): disabled text, not a link.
+    expect(await within(nav).findByText("Admin")).toHaveAttribute("aria-disabled", "true");
   });
 });
