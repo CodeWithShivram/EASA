@@ -1424,8 +1424,8 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
 | P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | `b92053b` |
-| P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | COMPLETE | the commit that adds this row |
-| P7-M3 | Documents: list, upload with a level, change level, chunks | NOT STARTED | |
+| P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | COMPLETE | `0373de2` |
+| P7-M3 | Documents: list, upload with a level, change level, chunks | COMPLETE | the commit that adds this row |
 | P7-M4 | Support assistant (agent) with confirm and cancel | NOT STARTED | |
 | P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | NOT STARTED | |
 
@@ -1489,4 +1489,33 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 - Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
 
 **Exit criteria:** met. Signed-in users can hold cited conversations over the documents their role may see, and every state of the exchange is shown.
+
+## P7-M3: Documents
+
+**Scope:** the documents pages: a list with processing status and visibility, uploads with a visibility level for roles that may upload, changing a document's visibility, and the document's text.
+
+**Implemented**
+
+- `lib/api/documents.ts` (schemas, `levelsUpTo`, list, get, chunks, upload, change level).
+- `/documents` (`DocumentsPage`): table with status and readable failure reasons, visibility, "Load more"; upload form and per-row visibility selector for managers and administrators, offering only levels up to their role; a 10 MB check before sending; messages for every upload error code and notices for new, unprocessable and duplicate uploads.
+- `/documents/[id]` (`DocumentDetail`): metadata and the text in parts with paging; missing and hidden documents look the same; failed documents show the reason.
+- Documents enabled in the navigation, which also marks it on detail pages.
+- Tests: web tests 99 → 112.
+- Docs: LLD section 3.8, SECURITY, DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-18)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Frontend` (lint, type check, tests, production build) | All checks passed; 112 web tests |
+| Backend | Unchanged (846 tests) |
+| Live check (scratch API database, a manager and an employee from `create-user` with generated synthetic passwords, hashing embedder; `next start`; requests through `/bff`) | `/documents` and a detail page `200`; the manager's upload at manager level `201` and processed; the same content again `200` (existing document); an `.exe` `415 unsupported_file_type`; the employee's upload `403`; the manager listed the document, the employee listed nothing and got `404` reading it; the manager read its 2 parts; raising it to administrators `403 min_role_not_allowed`; lowering it to everyone `200`, after which the employee listed it; servers stopped |
+| First live attempt | The production build failed: with `cacheComponents`, `useParams()` (the detail page) and `usePathname()` (the navigation) must render inside `<Suspense>` on a dynamic route, or prerendering stops. Unit tests could not show this; the build did. Both are now wrapped (the navigation with an empty frame of the same size as fallback) |
+
+**Known limitations**
+
+- No document deletion or reprocessing in the API yet, so none in the UI.
+- Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
+
+**Exit criteria:** met. Users see the documents their role allows, and managers and administrators upload and set visibility from the web app, with the API deciding every step.
 

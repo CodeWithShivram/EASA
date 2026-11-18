@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 
 import { useSession } from "@/components/auth/SessionProvider";
 
@@ -25,7 +26,6 @@ const ITEMS: readonly NavItem[] = [
     label: "Documents",
     href: "/documents",
     permission: "documents:read",
-    planned: "P7-M3",
   },
   { label: "Assistant", href: "/assistant", planned: "P7-M4" },
   {
@@ -36,14 +36,26 @@ const ITEMS: readonly NavItem[] = [
   },
 ];
 
+const NAV_CLASSES =
+  "border-b border-slate-200 bg-slate-50 md:w-56 md:shrink-0 md:border-r md:border-b-0 dark:border-slate-700 dark:bg-slate-900";
+
+/**
+ * The current path is request-time data on dynamic routes (e.g. /documents/[id]),
+ * so the links render inside a Suspense boundary; the empty frame keeps the layout.
+ */
 export function SideNav() {
+  return (
+    <Suspense fallback={<nav aria-label="Primary" className={NAV_CLASSES} />}>
+      <SideNavLinks />
+    </Suspense>
+  );
+}
+
+function SideNavLinks() {
   const pathname = usePathname();
   const { can } = useSession();
   return (
-    <nav
-      aria-label="Primary"
-      className="border-b border-slate-200 bg-slate-50 md:w-56 md:shrink-0 md:border-r md:border-b-0 dark:border-slate-700 dark:bg-slate-900"
-    >
+    <nav aria-label="Primary" className={NAV_CLASSES}>
       <ul className="flex gap-1 overflow-x-auto p-3 md:flex-col">
         {ITEMS.filter((item) => !item.permission || can(item.permission)).map((item) => (
           <li key={item.href}>
@@ -58,7 +70,12 @@ export function SideNav() {
             ) : (
               <Link
                 href={item.href}
-                aria-current={pathname === item.href ? "page" : undefined}
+                aria-current={
+                  pathname === item.href ||
+                  (item.href !== "/" && pathname.startsWith(`${item.href}/`))
+                    ? "page"
+                    : undefined
+                }
                 className="block rounded-md px-3 py-2 text-sm font-medium hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 aria-[current=page]:bg-slate-200 dark:hover:bg-slate-800 dark:aria-[current=page]:bg-slate-800"
               >
                 {item.label}

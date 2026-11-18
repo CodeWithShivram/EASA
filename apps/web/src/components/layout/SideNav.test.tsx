@@ -51,8 +51,12 @@ describe("SideNav", () => {
     const nav = renderAs("employee");
 
     expect(await within(nav).findByRole("link", { name: "Chat" })).toHaveAttribute("href", "/chat");
-    expect(within(nav).getByText("Documents")).toHaveAttribute("aria-disabled", "true");
-    expect(within(nav).getAllByRole("link")).toHaveLength(2);
+    expect(within(nav).getByRole("link", { name: "Documents" })).toHaveAttribute(
+      "href",
+      "/documents",
+    );
+    expect(within(nav).getByText("Assistant")).toHaveAttribute("aria-disabled", "true");
+    expect(within(nav).getAllByRole("link")).toHaveLength(3);
   });
 
   it("shows Admin only to roles that may manage users (a convenience, not a control)", async () => {
