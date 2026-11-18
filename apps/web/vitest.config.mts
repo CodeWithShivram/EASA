@@ -15,6 +15,9 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./vitest.setup.ts"],
     restoreMocks: true,
+    // Component tests that type with user-event take a few seconds on a busy
+    // machine; the 5 s default made them fail for load, not for behaviour.
+    testTimeout: 15_000,
     unstubEnvs: true,
   },
 });

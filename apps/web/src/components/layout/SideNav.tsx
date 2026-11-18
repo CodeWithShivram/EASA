@@ -20,7 +20,6 @@ const ITEMS: readonly NavItem[] = [
     label: "Chat",
     href: "/chat",
     permission: "knowledge:search",
-    planned: "P7-M2",
   },
   {
     label: "Documents",

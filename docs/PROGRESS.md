@@ -1423,8 +1423,8 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | the commit that adds this row |
-| P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | NOT STARTED | |
+| P7-M1 | Backend for frontend (session cookie, allowlisted proxy, origin checks), sign-in page, role-aware shell | COMPLETE | `b92053b` |
+| P7-M2 | Chat: conversations, follow-ups, citations with a source panel, states, phone width | COMPLETE | the commit that adds this row |
 | P7-M3 | Documents: list, upload with a level, change level, chunks | NOT STARTED | |
 | P7-M4 | Support assistant (agent) with confirm and cancel | NOT STARTED | |
 | P7-M5 | Admin views (users, audit), accessibility pass, walkthrough per role, Phase 7 report | NOT STARTED | |
@@ -1458,4 +1458,35 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 - No browser end-to-end tests (Phase 8); the live check drove the web server over HTTP.
 
 **Exit criteria:** met. Users sign in through the web app, the token is unreachable for page scripts, and every browser request passes the web server's allowlist and the API's checks.
+
+## P7-M2: Chat
+
+**Scope:** the chat page: conversations with history, questions and follow-ups, answers whose citations open the cited text, and clear waiting, empty, insufficient-evidence and error states, usable at phone width.
+
+**Implemented**
+
+- `lib/api/conversations.ts`: schemas mirroring the API and the calls the page needs, including the text of one cited chunk (through the documents API, so visibility rules apply).
+- `components/chat/ChatPage.tsx`, `AnswerText.tsx`, `SourcePanel.tsx`; `/chat` route; Chat enabled in the navigation for roles with `knowledge:search`.
+- States: loading and empty conversation lists, an introduction before a conversation is chosen, a live waiting status with elapsed seconds ("10–40 seconds on this server"), "No supported answer" with a reason, messages for each API error code, a `401` redirect to sign-in, deletion only after an inline confirmation.
+- Layout: one column on narrow screens, list, thread and source side by side from the `lg` breakpoint.
+- Tests: web tests 86 → 99 (chat page with a fake API, citation rendering including markup that must stay text, conversation API calls); the Vitest per-test timeout raised from 5 to 15 s (see below).
+- Docs: LLD section 3.7, SECURITY, DEVELOPMENT_GUIDE, README, HLD.
+
+**Verification (executed 2026-11-18)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Frontend` (lint, type check, tests, production build) | All checks passed; 99 web tests |
+| Backend | Unchanged (846 tests) |
+| Live check (scratch API database, a manager from `create-user`, the local model; `next start`; requests through `/bff` over HTTP) | `/chat` `200`; the leave policy uploaded; a new conversation; "How many days of paid annual leave…" answered in 36 s with one citation (S1, `leave_policy.txt`) whose text came with the answer; the follow-up about carry-over came back as insufficient evidence in 29 s (a known limit of the small model); the stored conversation had both turns; the cited chunk loaded by offset as the source panel does; listed with 2 questions; deleted (`204`, then `404`); servers stopped |
+| Not checked | The rendered page in a real browser (no browser automation in this session); behaviour is covered by component tests, layout was not seen |
+| First runs | Lint errors from React's hook rules (state set synchronously in effects, a ref read during render): the known source texts became state, the source panel is remounted per source, the list reloads through a version counter and a stale conversation is hidden by comparing IDs. One test failed because the mocked router was a new object on every render, which re-ran effects (Next.js returns a stable router); the mock is now stable. A type error (an optional message lookup) and a test query matching two buttons were fixed. A second test run timed out in five typing tests while another project's browser tests kept the CPU at 100%; the per-test timeout was raised to 15 s and all 99 tests then passed under the same load |
+
+**Known limitations**
+
+- Conversations are listed by date and number of questions, without titles.
+- No streaming; answers appear when the server has checked their citations.
+- Not seen in a real browser in this milestone (planned in the P7-M5 walkthrough).
+
+**Exit criteria:** met. Signed-in users can hold cited conversations over the documents their role may see, and every state of the exchange is shown.
 

@@ -98,7 +98,7 @@ $auth = "Authorization: Bearer $token"
 curl.exe -H $auth http://127.0.0.1:8000/api/v1/auth/me
 ```
 
-Roles: employees search and read documents, managers can also upload, administrators can also manage users (API spec section 3.11). An administrator manages users of their own tenant, for example `curl.exe -H $auth http://127.0.0.1:8000/api/v1/users`, and reads its audit log with `curl.exe -H $auth "http://127.0.0.1:8000/api/v1/audit?action=auth.login&limit=20"`. Sessions end after 8 hours without use or 24 hours at most; `curl.exe -X POST -H $auth http://127.0.0.1:8000/api/v1/auth/logout` ends one now. Five wrong passwords in a row lock the account for 15 minutes.
+Roles: employees search and read documents, managers can also upload, administrators can also manage users (API spec section 3.11). An administrator manages users of their own tenant, for example `curl.exe -H $auth http://127.0.0.1:8000/api/v1/users`, and reads its audit log with `curl.exe -H $auth "http://127.0.0.1:8000/api/v1/audit?action=auth.login&limit=20"`. In the web app (http://localhost:3000, with `npm run dev` or `npm run start` in `apps/web`) sign in on `/login`; **Chat** asks questions over the documents your role may see (it needs `EASA_MODEL_PROVIDER` on the API) and shows the cited text when you choose a citation. Sessions end after 8 hours without use or 24 hours at most; `curl.exe -X POST -H $auth http://127.0.0.1:8000/api/v1/auth/logout` ends one now. Five wrong passwords in a row lock the account for 15 minutes.
 
 Uploading a document from PowerShell (`curl.exe`, not the PowerShell `curl` alias):
 

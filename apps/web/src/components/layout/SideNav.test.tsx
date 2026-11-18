@@ -47,16 +47,17 @@ describe("SideNav", () => {
     expect(dashboard).toHaveAttribute("href", "/");
   });
 
-  it("renders planned features as disabled text, not links", async () => {
+  it("links built features and renders planned ones as disabled text", async () => {
     const nav = renderAs("employee");
 
-    expect(await within(nav).findByText("Chat")).toHaveAttribute("aria-disabled", "true");
-    expect(within(nav).getAllByRole("link")).toHaveLength(1);
+    expect(await within(nav).findByRole("link", { name: "Chat" })).toHaveAttribute("href", "/chat");
+    expect(within(nav).getByText("Documents")).toHaveAttribute("aria-disabled", "true");
+    expect(within(nav).getAllByRole("link")).toHaveLength(2);
   });
 
   it("shows Admin only to roles that may manage users (a convenience, not a control)", async () => {
     const employeeNav = renderAs("employee");
-    await within(employeeNav).findByText("Chat");
+    await within(employeeNav).findByRole("link", { name: "Chat" });
     expect(within(employeeNav).queryByText("Admin")).toBeNull();
   });
 
