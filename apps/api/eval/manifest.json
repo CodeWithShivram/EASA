@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "files": {
+    "access/board_minutes.txt": "e9bb16060d8ef8bb30a00da2f3e389b66bd5b45f533ceb8aa1dd3a91c5029158",
+    "access/manager_compensation.txt": "b9cfdb5aff945753185ed2de34594c7a802eaae132e82e9e08e2577baf170da4",
+    "access/security_incident.txt": "30c7aac63f0341425320a6d52252f3d3ecda77e66ff8d17cbb031d3e3d968745",
+    "access/team_restructuring.txt": "839717c8ac0a2b9ab6991c628b41232f8d933948dda840c20e925d79a469243e",
+    "access.json": "5a7822e924a647847d0832f42fb0d4b055be81e003924fc7afd984d25d60b45b",
+    "adversarial/notice_board.txt": "d9a36d8de90b66584fb07775589a24d5d9497e84400002ab5f16bb8377c4911a",
+    "adversarial/staff_newsletter.txt": "3842f5cbcb9ca134c1d2a02808230e5bd5da6d614de5a06e117a964884c2fcc1",
+    "adversarial/vendor_portal_faq.txt": "a24aa6b15d77ce5b2cc63646c6825b51f25ae2cf23d9e32c18e9fc2994e39fb3",
+    "agent.json": "aacb18ab517d664309faa9235a9c3fc3922758bd015ee874dae6ed6e09b6eaad",
+    "answers.json": "540f3ffc2f2f736c706208d2651e2ef876b0d962d8a518545a338f49af394995",
+    "corpus/benefits.txt": "4f8428fbe9b1206e65e9a48516a09a081d8ec72650a5825767b36b0e49b6804f",
+    "corpus/code_of_conduct.txt": "dd3a65cff0292746277c682744f666a425655f3dba843170ef4b17e64ab16747",
+    "corpus/data_retention.txt": "79f94dffc4ef6fa554abdb73bcb19d8d9b9361f391e4b192fa75b34a70066f62",
+    "corpus/expense_policy.txt": "ecb1c49d6a5934f4bf473d9c4b185d91e5b154ee444c29588146c3a31caf4d8e",
+    "corpus/facilities.txt": "465cbb15069c4bad3fb7be78d1ea4ba48d27d12d3a06956c5dcaf28eb491422a",
+    "corpus/it_security.txt": "a0a675ec009b79fb4c6d5c9da112841b3d654e46c8c3abf73a6053bdd9f0d128",
+    "corpus/leave_policy.txt": "264625a99dfeb7d9fd2d0e2c61e4e479ecaf0903a2a505d47ebf77249ee7a953",
+    "corpus/onboarding.txt": "a412768d90188b1810b6f291ade3f927579b53297e728ee4c2e9feea4bb04073",
+    "corpus/performance_reviews.txt": "67e016d17fd2a9860c7a005ab95b24452932e0095c935d087e49e4c152be0974",
+    "corpus/procurement.txt": "8e7a958db16154d67731e8e09b6c2f32a599e15f2efd804a1e7312076c353432",
+    "corpus/remote_work.txt": "b3bc72c08d8df264b5d28209ca3fbe9d53e40d0f43d43719a1281576d7eb29b1",
+    "corpus/travel_policy.txt": "c0fbed5addc731b311437ab3d5edffdf8144a9022639e71ca5340fe18c5ad6e8",
+    "queries.json": "9da733e47c5ea551c9b102f9735f4ad85b5d1baa0ea5f33f85daf330f1f09e11"
+  }
+}

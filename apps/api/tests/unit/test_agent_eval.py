@@ -144,6 +144,8 @@ def outcome(
         "pending_tool": None,
         "pending_arguments": None,
         "cited": 0,
+        "prompt_tokens": None,
+        "completion_tokens": None,
         "tool_ok": None,
         "leaked": False,
         "unnecessary_proposal": False,
@@ -155,7 +157,16 @@ def test_summary_and_markdown() -> None:
     report = AgentEvalReport(
         "fake-chat-v1",
         [
-            outcome("l1", "lookup", True, 1000, tool_ok=True, cited=2),
+            outcome(
+                "l1",
+                "lookup",
+                True,
+                1000,
+                tool_ok=True,
+                cited=2,
+                prompt_tokens=100,
+                completion_tokens=20,
+            ),
             outcome("l2", "lookup", False, 3000, tool_ok=False, reason="no_valid_citations"),
             outcome(
                 "c1",
@@ -180,9 +191,14 @@ def test_summary_and_markdown() -> None:
     assert rows["all"]["statuses"] == {"answered": 2, "confirmation_required": 1}
     assert rows["all"]["median_s"] == 2.0
     assert (rows["lookup"]["cited"], rows["lookup"]["withheld"]) == (1, 1)
+    assert rows["lookup"]["median_tokens"] == 120  # only l1 reported tokens
+    assert rows["create"]["median_tokens"] is None
     markdown = agent_report_to_markdown(report)
     assert "Tickets before/after: 7/7. Consequential tool successes: 0." in markdown
-    assert "| lookup (2) | 0.50 | 0.50 | 0 | 0 | 1 | 1 | answered 2 | 3.0 |" in markdown
+    assert "| lookup (2) | 0.50 | 0.50 | 0 | 0 | 1 | 1 | answered 2 | 3.0 | 120 |" in markdown
+    assert (
+        "| create (1) | 1.00 | - | 0 | 0 | 0 | 0 | confirmation_required 1 | 2.0 | - |" in markdown
+    )
     assert "| l2 | answered | no_valid_citations | False |" in markdown
     assert (
         '| c1 | confirmation_required | - | True |  | PROPOSED create_draft_ticket {"title": '

@@ -130,6 +130,26 @@ class AgentResult:
     model_id: str | None = None
     # The passages a grounded answer cites, in order of first citation (P8-M2).
     sources: list[Source] = field(default_factory=list)
+    # Tokens of every model call in the run, as the model reported them (P8-M4);
+    # None when it reported none.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass
+class TokenUsage:
+    """Sums the token counts that the model reports for each call of one run."""
+
+    prompt: int = 0
+    completion: int = 0
+    reported: bool = False
+
+    def add(self, prompt: int | None, completion: int | None) -> None:
+        if prompt is None and completion is None:
+            return
+        self.reported = True
+        self.prompt += prompt or 0
+        self.completion += completion or 0
 
 
 def _neutralize(text: str) -> str:
@@ -277,6 +297,7 @@ class AgentService:
             ChatMessage("user", text),
         ]
         steps: list[AgentStep] = []
+        usage = TokenUsage()
         evidence: list[str] = []  # tool results of this run
         searched = False  # a knowledge search succeeded
         other_evidence = False  # another tool succeeded
@@ -284,11 +305,12 @@ class AgentService:
         must_answer = False
         for index in range(MAX_TOOL_STEPS + 1):
             schema = step_schema(tools, final_only=must_answer or index == MAX_TOOL_STEPS)
-            reply_text = self._generate(messages, schema)
+            reply_text = self._generate(messages, schema, usage)
             step = parse_step(reply_text)
             if step is None:
                 return self._finish(
                     started,
+                    usage,
                     AgentResult(AgentStatus.FAILED, None, steps, reason="invalid_model_output"),
                 )
             if step.action == FINAL_ANSWER:
@@ -296,10 +318,14 @@ class AgentService:
                     replaced = AgentResult(
                         AgentStatus.ANSWERED, NO_CHANGE_ANSWER, steps, reason="unsupported_claim"
                     )
-                    return self._finish(started, replaced)
+                    return self._finish(started, usage, replaced)
                 if searched and not other_evidence:
-                    return self._finish(started, self._grounded(identity, text, steps))
-                return self._finish(started, AgentResult(AgentStatus.ANSWERED, step.answer, steps))
+                    return self._finish(
+                        started, usage, self._grounded(identity, text, steps, usage)
+                    )
+                return self._finish(
+                    started, usage, AgentResult(AgentStatus.ANSWERED, step.answer, steps)
+                )
             action = step.action
             arguments = drop_unstated(self._executor.registry.get(action), step.arguments, text)
             signature = json.dumps([action, arguments], sort_keys=True, default=str)
@@ -326,6 +352,7 @@ class AgentService:
                 if open_actions >= MAX_OPEN_ACTIONS:
                     return self._finish(
                         started,
+                        usage,
                         AgentResult(
                             AgentStatus.FAILED, None, steps, reason="too_many_pending_actions"
                         ),
@@ -339,6 +366,7 @@ class AgentService:
                 )
                 return self._finish(
                     started,
+                    usage,
                     AgentResult(
                         AgentStatus.CONFIRMATION_REQUIRED,
                         confirmation_message(action, pending.arguments),
@@ -365,9 +393,12 @@ class AgentService:
             )
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def _grounded(self, identity: Identity, message: str, steps: list[AgentStep]) -> AgentResult:
+    def _grounded(
+        self, identity: Identity, message: str, steps: list[AgentStep], usage: TokenUsage
+    ) -> AgentResult:
         """The answer to the message as Chat gives it: retrieved, cited and checked."""
         grounded = self._answers.answer(identity, message)
+        usage.add(grounded.prompt_tokens, grounded.completion_tokens)
         if grounded.status is AnswerStatus.ANSWERED and grounded.answer:
             return AgentResult(
                 AgentStatus.ANSWERED, grounded.answer, steps, sources=grounded.sources
@@ -375,7 +406,9 @@ class AgentService:
         reason = grounded.reason.value if grounded.reason else None
         return AgentResult(AgentStatus.ANSWERED, NO_EVIDENCE_ANSWER, steps, reason=reason)
 
-    def _generate(self, messages: list[ChatMessage], schema: dict[str, Any]) -> str:
+    def _generate(
+        self, messages: list[ChatMessage], schema: dict[str, Any], usage: TokenUsage
+    ) -> str:
         if self._model is None:  # checked in run(); keeps the type checker informed
             raise AppError(
                 "The agent is not configured.",
@@ -398,10 +431,13 @@ class AgentService:
                 code="model_error",
                 status_code=HTTPStatus.BAD_GATEWAY,
             ) from None
+        usage.add(reply.prompt_tokens, reply.completion_tokens)
         return reply.text
 
-    def _finish(self, started: float, result: AgentResult) -> AgentResult:
+    def _finish(self, started: float, usage: TokenUsage, result: AgentResult) -> AgentResult:
         result.model_id = self._model.model_id if self._model else None
+        if usage.reported:
+            result.prompt_tokens, result.completion_tokens = usage.prompt, usage.completion
         logger.info(
             "agent run finished",
             extra={
@@ -409,6 +445,8 @@ class AgentService:
                 "reason": result.reason,
                 "steps": [f"{s.tool}:{s.outcome}" for s in result.steps],
                 "cited": len(result.sources),
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             },
         )

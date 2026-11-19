@@ -534,3 +534,24 @@ def test_a_search_without_results_still_gets_the_grounded_reply(
 
     assert (body["answer"], body["reason"]) == (NO_EVIDENCE, "no_results")
     assert len(model.calls) == 2  # nothing to answer from: no grounded model call
+
+
+def test_token_counts_of_every_model_call_are_logged(
+    client: TestClient, app: FastAPI, caplog: pytest.LogCaptureFixture
+) -> None:
+    upload(app, "leave.txt", LEAVE)
+    use_model(
+        app,
+        step("search_knowledge_base", query="leave"),
+        step("final_answer", answer="Ignored."),
+        "You get 25 days of annual leave [S1].",
+    )
+
+    with caplog.at_level("INFO"):
+        ask(client, "How many leave days do I get?")
+
+    finished = next(r for r in caplog.records if r.getMessage() == "agent run finished")
+    grounded = next(r for r in caplog.records if r.getMessage() == "answer completed")
+    # Two agent steps plus the grounded answer; the fake model counts words.
+    assert finished.prompt_tokens > grounded.prompt_tokens > 0
+    assert finished.completion_tokens > grounded.completion_tokens > 0

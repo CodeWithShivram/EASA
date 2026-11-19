@@ -27,6 +27,7 @@ from app.db.migrate import upgrade_to_head
 from app.db.session import create_session_factory
 from app.embeddings.base import Embedder
 from app.evaluation.dataset import EVAL_ROOT
+from app.evaluation.metrics import format_tokens, median_tokens
 from app.evaluation.runner import DatabaseFactory
 from app.llm.base import ChatMessage, ChatModel, ChatResult
 from app.repositories.audit import AuditRepository
@@ -76,6 +77,9 @@ class AccessOutcome:
     # to tell refusals from invented facts when reading the report.
     reply: str | None
     latency_ms: float
+    # All model calls of the check (None for search, or when the model reports none).
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 @dataclass
@@ -142,13 +146,20 @@ class RecordingModel:
         self._inner = inner
         self.model_id = inner.model_id
         self.seen: list[str] = []
+        # Token counts reported by the model, summed over every call (P8-M4).
+        self.prompt_tokens: int | None = None
+        self.completion_tokens: int | None = None
 
     def is_available(self) -> bool:
         return self._inner.is_available()
 
     def generate(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         self.seen.extend(m.content for m in messages)
-        return self._inner.generate(messages, **kwargs)
+        result = self._inner.generate(messages, **kwargs)
+        if result.prompt_tokens is not None or result.completion_tokens is not None:
+            self.prompt_tokens = (self.prompt_tokens or 0) + (result.prompt_tokens or 0)
+            self.completion_tokens = (self.completion_tokens or 0) + (result.completion_tokens or 0)
+        return result
 
 
 def _first_canary(texts: Sequence[str], canaries: Sequence[str]) -> str | None:
@@ -265,6 +276,7 @@ def _run(
     outputs: list[str] = []  # what the user receives
     replies: list[str] = []  # the reply, and a proposed action's arguments
     cited: list[uuid.UUID] = []
+    recorder: RecordingModel | None = None
     try:
         if surface == "search":
             hits = search.search(
@@ -329,6 +341,8 @@ def _run(
         found=found,
         reply=reply,
         latency_ms=(time.perf_counter() - started) * 1000,
+        prompt_tokens=recorder.prompt_tokens if recorder else None,
+        completion_tokens=recorder.completion_tokens if recorder else None,
     )
 
 
@@ -352,6 +366,9 @@ def summarize_access(report: AccessReport) -> list[dict[str, Any]]:
                     "found": sum(bool(o.found) for o in checked),
                     "errors": sum(o.status.startswith("error") for o in group),
                     "median_s": latencies[len(latencies) // 2] / 1000,
+                    "median_tokens": median_tokens(
+                        [(o.prompt_tokens, o.completion_tokens) for o in group]
+                    ),
                 }
             )
     return rows
@@ -377,13 +394,15 @@ def access_report_to_markdown(report: AccessReport) -> str:
         f"Backend: {report.backend}. Model: `{report.model_id or 'none'}`. "
         f"Checks: {len(report.outcomes)}. Leaks: {total}.",
         "",
-        "| Surface | Role | Questions | Leaks | Found where permitted | Errors | Median s |",
-        "|---|---|---|---|---|---|---|",
+        "| Surface | Role | Questions | Leaks | Found where permitted | Errors | Median s "
+        "| Median tokens |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in summarize_access(report):
         lines.append(
             f"| {row['surface']} | {row['role']} | {row['questions']} | {row['leaks']} | "
-            f"{row['found']}/{row['permitted']} | {row['errors']} | {row['median_s']:.1f} |"
+            f"{row['found']}/{row['permitted']} | {row['errors']} | {row['median_s']:.1f} | "
+            f"{format_tokens(row['median_tokens'])} |"
         )
     leaks = [o for o in report.outcomes if o.leaked]
     if leaks:

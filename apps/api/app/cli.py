@@ -12,9 +12,14 @@ Run from apps/api:
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
     uv run python -m app.cli evaluate-agent [--limit N]
     uv run python -m app.cli evaluate-access [--backend sqlite|postgres] [--surfaces all|search]
+    uv run python -m app.cli evaluate-all [--no-model]
+    uv run python -m app.cli update-eval-manifest --version N
 
 The evaluation commands use the PostgreSQL URL in EASA_EVAL_POSTGRES_URL (a
 user that may create databases); they create and drop throwaway databases.
+They refuse to run when the data under eval/ does not match eval/manifest.json,
+and every report records the data version, models, settings and code version
+(P8-M4, ADR-038).
 """
 
 import argparse
@@ -26,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.api.dependencies import session_policy
-from app.core.config import API_ROOT, load_settings
+from app.core.config import API_ROOT, Settings, load_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.roles import ROLE_PERMISSIONS, Role
@@ -62,10 +67,13 @@ from app.evaluation.answers_eval import (
 )
 from app.evaluation.dataset import load_dataset, validate_dataset
 from app.evaluation.hnsw import hnsw_report_to_markdown, run_hnsw_benchmark
+from app.evaluation.manifest import check_manifest, write_manifest
 from app.evaluation.report import report_to_json, report_to_markdown
+from app.evaluation.run_info import RunInfo, run_info, with_run_info
 from app.evaluation.runner import (
     ALL_CONFIGS,
     DEFAULT_CONFIG,
+    TOP_K,
     DatabaseFactory,
     postgres_database,
     run_evaluation,
@@ -92,8 +100,95 @@ def _postgres_factory() -> DatabaseFactory | None:
     return postgres_database(url)
 
 
-def _write(output_dir: Path, stem: str, files: dict[str, str]) -> None:
+def _evaluate_all(settings: Settings, output_dir: Path, stamp: str, *, use_model: bool) -> int:
+    """Run each evaluation as its own command; skip those whose prerequisites are missing.
+
+    The retrieval and search-only access evaluations always run; PostgreSQL
+    variants need EASA_EVAL_POSTGRES_URL; the answer, agent and full access
+    evaluations need an available chat model. The HNSW benchmark (synthetic
+    vectors, slow) stays a separate command. Writes ``<stamp>-all.md``.
+    """
+    out = ["--output-dir", str(output_dir)]
+    model = build_chat_model(settings) if use_model else None
+    model_reason = None
+    if not use_model:
+        model_reason = "--no-model"
+    elif model is None or not model.is_available():
+        model_reason = "no available chat model (EASA_MODEL_PROVIDER)"
+    postgres_reason = (
+        None if os.environ.get("EASA_EVAL_POSTGRES_URL") else "EASA_EVAL_POSTGRES_URL not set"
+    )
+    steps: list[tuple[str, list[str], str | None]] = [
+        ("Retrieval, SQLite", ["evaluate", *out], None),
+        ("Retrieval, PostgreSQL", ["evaluate", "--backend", "postgres", *out], postgres_reason),
+        ("Access, search only, SQLite", ["evaluate-access", "--surfaces", "search", *out], None),
+        (
+            "Access, search only, PostgreSQL",
+            ["evaluate-access", "--surfaces", "search", "--backend", "postgres", *out],
+            postgres_reason,
+        ),
+        ("Answers", ["evaluate-answers", "--fresh", *out], model_reason),
+        ("Agent", ["evaluate-agent", *out], model_reason),
+        ("Access, all surfaces, SQLite", ["evaluate-access", *out], model_reason),
+    ]
+    rows = []
+    failed = False
+    for name, argv, skip in steps:
+        if skip is not None:
+            rows.append(f"| {name} | skipped: {skip} | - | - |")
+            continue
+        logger.info("evaluation started", extra={"evaluation": name})
+        before = set(output_dir.glob("*")) if output_dir.exists() else set()
+        began = datetime.now(UTC)
+        code = main(argv)
+        seconds = (datetime.now(UTC) - began).total_seconds()
+        written = sorted(p.name for p in set(output_dir.glob("*")) - before if p.suffix == ".md")
+        failed = failed or code != 0
+        result = "written" if code == 0 else f"failed (exit code {code})"
+        rows.append(f"| {name} | {result} | {seconds:.0f} | {', '.join(written) or '-'} |")
+    _write(
+        output_dir,
+        f"{stamp}-all",
+        {
+            "md": "\n".join(
+                [
+                    "# All evaluations",
+                    "",
+                    "| Evaluation | Result | Seconds | Report |",
+                    "|---|---|---|---|",
+                    *rows,
+                ]
+            )
+            + "\n"
+        },
+        run_info(
+            "all",
+            datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC),
+            chat_model=model.model_id if model is not None and model_reason is None else None,
+            settings={"model": model_reason is None, "postgres": postgres_reason is None},
+        ),
+    )
+    return 1 if failed else 0
+
+
+EVALUATION_COMMANDS = frozenset(
+    {
+        "evaluate",
+        "evaluate-hnsw",
+        "evaluate-answers",
+        "evaluate-access",
+        "evaluate-agent",
+        "evaluate-all",
+    }
+)
+# What the model evaluations pass to the chat model (answers_eval, access_eval, agent_eval).
+GROUNDED_SETTINGS = {"max_output_tokens": 256, "temperature": 0.0}
+
+
+def _write(output_dir: Path, stem: str, files: dict[str, str], run: RunInfo | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    if run is not None:
+        files = with_run_info(files, run)
     for suffix, content in files.items():
         path = output_dir / f"{stem}.{suffix}"
         path.write_text(content, encoding="utf-8")
@@ -187,6 +282,21 @@ def main(argv: list[str] | None = None) -> int:
         help="all: search, answers and the agent (needs a chat model); search: no model",
     )
     access.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
+    every = commands.add_parser(
+        "evaluate-all",
+        help="run every evaluation whose prerequisites are present and write a summary",
+    )
+    every.add_argument(
+        "--no-model", action="store_true", help="skip the evaluations that need a chat model"
+    )
+    every.add_argument("--output-dir", type=Path, default=EVAL_OUTPUT_DIR)
+    manifest = commands.add_parser(
+        "update-eval-manifest",
+        help="record the SHA-256 of every file under eval/ in eval/manifest.json",
+    )
+    manifest.add_argument(
+        "--version", type=int, required=True, help="the new data version (higher than before)"
+    )
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -212,7 +322,33 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    started = datetime.now(UTC)
+    stamp = started.strftime("%Y%m%dT%H%M%SZ")
+    if args.command in EVALUATION_COMMANDS:
+        problems = check_manifest()
+        if problems:
+            logger.error(
+                "the evaluation data does not match eval/manifest.json; update it with "
+                "update-eval-manifest after reviewing the changes",
+                extra={"problems": problems},
+            )
+            return 1
+
+    if args.command == "update-eval-manifest":
+        try:
+            manifest = write_manifest(args.version)
+        except ValueError as error:
+            logger.error("manifest not updated", extra={"error": str(error)})
+            return 1
+        logger.info(
+            "evaluation manifest written",
+            extra={"version": manifest.version, "files": len(manifest.files)},
+        )
+        return 0
+
+    if args.command == "evaluate-all":
+        return _evaluate_all(settings, args.output_dir, stamp, use_model=not args.no_model)
+
     if args.command == "evaluate-hnsw":
         factory = _postgres_factory()
         if factory is None:
@@ -228,6 +364,16 @@ def main(argv: list[str] | None = None) -> int:
             args.output_dir,
             f"{stamp}-hnsw-{args.tenants}t-noise{args.noise}",
             {"md": hnsw_report_to_markdown(hnsw_report)},
+            run_info(
+                "hnsw",
+                started,
+                settings={
+                    "vectors": args.vectors,
+                    "tenants": args.tenants,
+                    "queries": args.queries,
+                    "noise": args.noise,
+                },
+            ),
         )
         return 0
 
@@ -272,6 +418,13 @@ def main(argv: list[str] | None = None) -> int:
                 "json": answer_report_to_json(answer_report),
                 "md": answer_report_to_markdown(answer_report),
             },
+            run_info(
+                "answers",
+                started,
+                embedding_model=embedder.model_id,
+                chat_model=model.model_id,
+                settings={"configs": args.configs, "cases": len(selected), **GROUNDED_SETTINGS},
+            ),
         )
         return 0
 
@@ -317,6 +470,17 @@ def main(argv: list[str] | None = None) -> int:
                 "json": access_report_to_json(access_report),
                 "md": access_report_to_markdown(access_report),
             },
+            run_info(
+                "access",
+                started,
+                embedding_model=embedder.model_id,
+                chat_model=chat_model.model_id if chat_model else None,
+                settings={
+                    "backend": args.backend,
+                    "surfaces": args.surfaces,
+                    **(GROUNDED_SETTINGS if chat_model else {}),
+                },
+            ),
         )
         return 0
 
@@ -350,6 +514,17 @@ def main(argv: list[str] | None = None) -> int:
                 "json": agent_report_to_json(agent_report),
                 "md": agent_report_to_markdown(agent_report),
             },
+            run_info(
+                "agent",
+                started,
+                embedding_model=embedder.model_id,
+                chat_model=model.model_id,
+                settings={
+                    "tasks": args.limit if args.limit > 0 else len(agent_cases),
+                    "agent_temperature": 0.0,
+                    **GROUNDED_SETTINGS,
+                },
+            ),
         )
         return 0
 
@@ -374,6 +549,12 @@ def main(argv: list[str] | None = None) -> int:
             args.output_dir,
             f"{stamp}-{args.backend}-{args.configs}",
             {"json": report_to_json(report), "md": report_to_markdown(report)},
+            run_info(
+                "retrieval",
+                started,
+                embedding_model=embedder.model_id,
+                settings={"backend": args.backend, "configs": args.configs, "top_k": TOP_K},
+            ),
         )
         return 0
 

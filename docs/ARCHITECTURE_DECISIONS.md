@@ -569,6 +569,28 @@
 - **Trade-offs:** The fake model does not test answer quality; that is what the model evaluations are for. The browser tests take about three minutes and depend on `uv` and Node in the same job. Test isolation comes from the order of the setup project, not from a database per test.
 - **Consequences:** Regressions in the browser flows fail CI. The DEVELOPMENT_GUIDE describes how to run the tests locally.
 
+<a id="adr-038"></a>
+## ADR-038: Versioned evaluation data, run metadata in every report, token figures, one command for all evaluations
+
+- **Status:** Accepted (P8-M4, 2026-11-19; scope approved in the Phase 8 plan)
+- **Context:** Five evaluation commands wrote reports that named the model but not the data version, settings or code they were measured with. The data under `apps/api/eval/` changed between phases (the agent tasks went to version 2 in P8-M2), so an older report could not be tied to its exact data. Token counts were recorded only for grounded answers. Running everything meant five commands with different prerequisites.
+- **Options considered:** a manifest with SHA-256 per file versus relying on Git history; run metadata in a separate file versus inside each report; a shell script versus a CLI command for "run all".
+- **Decision:**
+  - `eval/manifest.json` holds a data-set version and the SHA-256 of every file under `eval/`. The repository checks text out with LF everywhere, so the bytes are the same on every platform. `update-eval-manifest --version N` rewrites it and refuses a version that is not higher than the current one. A unit test fails when the files and the manifest differ, and every evaluation command refuses to run on data that does not match.
+  - Every report's JSON starts with `run`, and its Markdown has a block under the title. The run records:
+    - the evaluation and its start, end and duration;
+    - the data version and the SHA-256 of the manifest;
+    - the Git commit, with `-dirty` for uncommitted changes;
+    - the Python version, the embedding and chat models, and the settings that shape the result.
+  - Token figures: the agent now sums the token counts of each model call in a run, including the grounded answer, and logs them in `agent run finished`. The agent and access evaluations record tokens per task. The answer, agent and access reports show median tokens per group next to median latency.
+  - `evaluate-all` runs each evaluation as its own command:
+    - the retrieval and search-only access evaluations always;
+    - their PostgreSQL variants with `EASA_EVAL_POSTGRES_URL`;
+    - the answer, agent and full access evaluations when a chat model is available (`--no-model` skips them).
+    It writes a summary that names every report and every skipped evaluation with the reason. The HNSW benchmark stays separate.
+- **Trade-offs:** The manifest has to be updated in the same commit as any data change (the test enforces this). Token counts are what the model server reports (llama.cpp reports them; the fake model counts words). `evaluate-all` with the model takes about an hour on the CPU.
+- **Consequences:** Every result in EVALUATION.md from P8-M4 on can be traced to a data version, a commit and settings. Older reports remain as they were.
+
 ---
 ## Open decisions (not yet made)
 

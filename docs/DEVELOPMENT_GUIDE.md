@@ -219,7 +219,7 @@ uv sync --locked              # fails if uv.lock is out of date with pyproject.t
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
 uv run pip-audit --strict     # known vulnerabilities in the locked dependencies
-uv run pytest                 # 879 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 892 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -330,6 +330,15 @@ uv run python -m app.cli evaluate-agent                      # 26 agent tasks (P
 uv run python -m app.cli evaluate-access --surfaces search   # leakage by role, no model (P6-M5)
 uv run python -m app.cli evaluate-access                     # search, answers and agent with the model
 ```
+
+All evaluations with one command (P8-M4, [ADR-038](ARCHITECTURE_DECISIONS.md#adr-038)). It runs every evaluation whose prerequisites are present and writes `<time>-all.md`, listing each report and each skipped evaluation with the reason:
+
+```powershell
+uv run python -m app.cli evaluate-all --no-model   # retrieval and search-only access: about a minute
+uv run python -m app.cli evaluate-all              # plus answers, agent and full access with the chat model: about an hour
+```
+
+**Changing evaluation data.** `eval/manifest.json` records a version and the SHA-256 of every file under `eval/`. After reviewing a change to any file there, run `uv run python -m app.cli update-eval-manifest --version <current + 1>` and commit the manifest together with the data. Until then the evaluation commands refuse to run, and a unit test fails. Each report starts with its run: the data version, manifest SHA-256, commit, models, settings and timing.
 
 The dataset is in `apps/api/eval/` (`answers.json`, `agent.json`, `access.json`, `adversarial/` with prompt-injection documents used only by the answer and agent evaluations, and `access/` with role-restricted documents for the leakage evaluation); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
 

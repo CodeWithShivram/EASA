@@ -1615,8 +1615,8 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 |---|---|---|---|
 | P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | `83b634f` |
 | P8-M2 | Cited agent answers; agent and access evaluations rerun | COMPLETE | `1515767` |
-| P8-M3 | Browser end-to-end tests (Playwright) in CI | COMPLETE | the commit that adds this row |
-| P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | NOT STARTED | |
+| P8-M3 | Browser end-to-end tests (Playwright) in CI | COMPLETE | `ead0f9e` |
+| P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | COMPLETE | the commit that adds this row |
 | P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | NOT STARTED | |
 
 ## P8-M1: Security hardening
@@ -1738,3 +1738,40 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 - Not covered in the browser: document visibility changes, password resets, conversation deletion and dark mode.
 
 **Exit criteria:** met. The main flows run in a real browser against the real API locally and in CI.
+
+## P8-M4: Evaluation and observability
+
+**Scope:** a manifest for the evaluation data, reports that record the data version, models and settings, token and latency figures in logs and reports, and one command for all evaluations.
+
+**Implemented**
+
+- `eval/manifest.json` (data version 1, 23 files, SHA-256 each). `app/evaluation/manifest.py` checks and writes it; `update-eval-manifest --version N` refuses a version that is not higher. Every evaluation command checks the data first.
+- `app/evaluation/run_info.py`: the run (data version, manifest SHA-256, Git commit with `-dirty`, Python, models, settings, timing) goes first in every report's JSON and into a block under its Markdown title.
+- Tokens: `AgentResult` and the `agent run finished` log line now carry the run's prompt and completion tokens, including the grounded answer. The agent and access evaluations record tokens per task. The answer, agent and access reports show median tokens per group.
+- `evaluate-all [--no-model]` runs retrieval and search-only access (SQLite, and PostgreSQL with `EASA_EVAL_POSTGRES_URL`), then answers, agent and full access when a chat model is available, and writes `<stamp>-all.md`.
+- Tests: backend 879 → 892:
+  - the committed manifest matches the data;
+  - every kind of difference is detected, and the version must rise;
+  - the run metadata in JSON and Markdown;
+  - median tokens;
+  - `evaluate-all --no-model` end to end with the hashing embedder;
+  - every command refuses mismatched data;
+  - the agent's token log.
+- Docs: ADR-038; EVALUATION section 14; DEVELOPMENT_GUIDE 6d; LLD; README; HLD.
+
+**Verification (executed 2026-11-19)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL`, `EASA_REQUIRE_POSTGRES_TESTS=1` and `EASA_TEST_LLM_URL` | All checks passed; 892 tests, none skipped; `pip-audit`: no known vulnerabilities |
+| `scripts\check.ps1 -Frontend` | All checks passed; 135 web tests; production audit: 0 vulnerabilities |
+| `evaluate-all` with the local model and `EASA_EVAL_POSTGRES_URL` | Exit code 0 in 49 minutes; all 7 evaluations written (retrieval and search-only access on SQLite and PostgreSQL, answers, agent, full access), each report with the run block; no leaks; see EVALUATION section 14 |
+| `update-eval-manifest --version 1` twice | The first run wrote 23 files; the second was refused ("the new version must be higher than 1") |
+
+**Known limitations**
+
+- The manifest must be updated together with data changes (enforced by a test).
+- Token figures are as reported by the model server.
+- Reports written before P8-M4 have no run block.
+
+**Exit criteria:** met. Every report names its data version, commit, models and settings; tokens and latency appear in logs and reports; one command runs all evaluations.

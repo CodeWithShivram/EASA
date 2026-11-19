@@ -38,7 +38,7 @@ from app.db.session import create_session_factory
 from app.db.tickets import SupportTicket
 from app.embeddings.base import Embedder
 from app.evaluation.dataset import EVAL_ROOT
-from app.evaluation.metrics import mean
+from app.evaluation.metrics import format_tokens, mean, median_tokens
 from app.evaluation.runner import DatabaseFactory
 from app.llm.base import ChatModel
 from app.repositories.audit import AuditRepository
@@ -83,6 +83,8 @@ class AgentOutcome:
     pending_tool: str | None
     pending_arguments: dict[str, Any] | None
     cited: int  # document passages the answer cites (P8-M2)
+    prompt_tokens: int | None  # all model calls of the task (P8-M4)
+    completion_tokens: int | None
     success: bool
     tool_ok: bool | None  # an expected tool was called (None when no tool is expected)
     leaked: bool  # forbidden content in the answer
@@ -242,9 +244,11 @@ def _run_case(service: AgentService, identity: Identity, case: AgentCase) -> Age
         steps = tuple(f"{s.tool}:{s.outcome}" for s in result.steps)
         pending = result.pending_action
         cited = len(result.sources)
+        tokens = (result.prompt_tokens, result.completion_tokens)
     except AppError as error:
         status, reason, answer, steps, pending = "error", error.code, None, (), None
         cited = 0
+        tokens = (None, None)
     latency = (time.perf_counter() - started) * 1000
     pending_tool = pending.tool if pending else None
     success, tool_ok, leaked, unnecessary = score(case, status, answer, steps, pending_tool)
@@ -258,6 +262,8 @@ def _run_case(service: AgentService, identity: Identity, case: AgentCase) -> Age
         pending_tool=pending_tool,
         pending_arguments=pending.arguments if pending else None,
         cited=cited,
+        prompt_tokens=tokens[0],
+        completion_tokens=tokens[1],
         success=success,
         tool_ok=tool_ok,
         leaked=leaked,
@@ -285,6 +291,9 @@ def summarize_agent(report: AgentEvalReport) -> list[dict[str, Any]]:
                 "withheld": sum(o.reason in WITHHELD for o in group),
                 "statuses": dict(Counter(o.status for o in group)),
                 "median_s": sorted(o.latency_ms for o in group)[len(group) // 2] / 1000,
+                "median_tokens": median_tokens(
+                    [(o.prompt_tokens, o.completion_tokens) for o in group]
+                ),
             }
         )
     return rows
@@ -314,8 +323,8 @@ def agent_report_to_markdown(report: AgentEvalReport) -> str:
         f"Consequential tool successes: {report.consequential_successes}.",
         "",
         "| Kind (n) | Success | Right tool | Unneeded proposals | Leaked | Cited | Replaced "
-        "| Statuses | Median s |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Statuses | Median s | Median tokens |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in summarize_agent(report):
         tool_ok = "-" if row["tool_ok"] is None else f"{row['tool_ok']:.2f}"
@@ -324,7 +333,7 @@ def agent_report_to_markdown(report: AgentEvalReport) -> str:
             f"| {row['kind']} ({row['cases']}) | {row['success']:.2f} | {tool_ok} | "
             f"{row['unnecessary_proposals']} | {row['leaked']} | {row['cited']} | "
             f"{row['withheld']} | {statuses} | "
-            f"{row['median_s']:.1f} |"
+            f"{row['median_s']:.1f} | {format_tokens(row['median_tokens'])} |"
         )
     lines += [
         "",

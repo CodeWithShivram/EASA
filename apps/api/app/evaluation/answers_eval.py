@@ -24,7 +24,7 @@ from app.db.migrate import upgrade_to_head
 from app.db.session import create_session_factory
 from app.embeddings.base import Embedder
 from app.evaluation.dataset import EVAL_ROOT, Dataset
-from app.evaluation.metrics import mean
+from app.evaluation.metrics import format_tokens, mean, median_tokens
 from app.evaluation.runner import (
     EVAL_IDENTITY,
     DatabaseFactory,
@@ -335,6 +335,9 @@ def summarize(report: AnswerEvalReport) -> list[dict[str, Any]]:
                     "outcomes": dict(Counter(o.outcome for o in group)),
                     "injected": sum(o.injected for o in group),
                     "median_ms": _median([o.latency_ms for o in group]),
+                    "median_tokens": median_tokens(
+                        [(o.prompt_tokens, o.completion_tokens) for o in group]
+                    ),
                 }
             )
         rows.append(
@@ -390,8 +393,8 @@ def answer_report_to_markdown(report: AnswerEvalReport) -> str:
         "Temperature 0.",
         "",
         "| Config | Kind (n) | Correct | Correct with support check | Outcomes "
-        "| Injected | Median s |",
-        "|---|---|---|---|---|---|---|",
+        "| Injected | Median s | Median tokens |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         if row["kind"] == "citation_precision":
@@ -400,7 +403,7 @@ def answer_report_to_markdown(report: AnswerEvalReport) -> str:
         lines.append(
             f"| {row['config']} | {row['kind']} ({row['cases']}) | {row['correct']:.2f} | "
             f"{row['correct_with_support_check']:.2f} | {outcomes} | {row['injected']} | "
-            f"{row['median_ms'] / 1000:.1f} |"
+            f"{row['median_ms'] / 1000:.1f} | {format_tokens(row['median_tokens'])} |"
         )
     lines += [
         "",

@@ -1,6 +1,6 @@
 # EASA — Retrieval and Answer Evaluation
 
-> **Status:** Retrieval: Phase 3, P3-M5, measured on 2026-11-14 (sections 1–9). Answers: Phase 4, P4-M5, measured on 2026-11-15 (section 10). Agent: Phase 5, P5-M5, measured on 2026-11-16 (section 11). Access leakage: Phase 6, P6-M5, measured on 2026-11-16 (section 12). Cited agent answers: Phase 8, P8-M2, measured on 2026-11-19 (section 13). All data is synthetic.
+> **Status:** Retrieval: Phase 3, P3-M5, measured on 2026-11-14 (sections 1–9). Answers: Phase 4, P4-M5, measured on 2026-11-15 (section 10). Agent: Phase 5, P5-M5, measured on 2026-11-16 (section 11). Access leakage: Phase 6, P6-M5, measured on 2026-11-16 (section 12). Cited agent answers: Phase 8, P8-M2, measured on 2026-11-19 (section 13). All evaluations in one run with versioned data: Phase 8, P8-M4, measured on 2026-11-19 (section 14). All data is synthetic.
 
 This document records how well EASA's retrieval finds the right text, how the three search modes and six chunking settings compare, whether PostgreSQL gives the same results as SQLite, and whether an approximate vector index (HNSW) is worth adopting yet.
 
@@ -438,3 +438,37 @@ Run-to-run variation: in runs 2 and 3 the agent's prompt, tools and decoding wer
 3. To reduce unneeded proposals, consider a server rule that a draft ticket is only proposed when the user's message asks for a ticket. This changes behaviour and needs its own evaluation.
 
 To reproduce: `uv run python -m app.cli evaluate-agent` and `uv run python -m app.cli evaluate-access` with the local model (section 6d of the [Development guide](DEVELOPMENT_GUIDE.md#6d-retrieval-evaluation)).
+
+## 14. All evaluations in one run (Phase 8, P8-M4)
+
+### 14.1 What changed
+
+- **Versioned data.** `apps/api/eval/manifest.json` (data version 1) lists all 23 data files with their SHA-256. The commands refuse to run when the files differ, and a unit test fails when a file changes without the manifest (ADR-038).
+- **Run metadata.** Every report starts with the run: the data version and manifest SHA-256, the Git commit, the models, the settings and the timing.
+- **Token figures.** The answer, agent and access reports show median tokens (prompt plus completion) per group. The agent's log line now has its token totals.
+- **One command.** `evaluate-all` ran every evaluation below in one go and wrote a summary.
+
+### 14.2 Results (2026-11-19, `evaluate-all` with the local model and PostgreSQL)
+
+| Evaluation | Seconds | Result | Median tokens |
+|---|---|---|---|
+| Retrieval, SQLite (60 queries, real embeddings) | 17 | Hybrid R@1 0.833, R@3 0.967, R@10 1.000, MRR 0.895 (as in section 4) | - |
+| Retrieval, PostgreSQL | 18 | Hybrid R@1 0.817, R@3 0.933, R@10 1.000, MRR 0.884 (as in section 5) | - |
+| Access, search only, SQLite and PostgreSQL | 6 and 9 | 0 leaks in 30 checks each; 17 of 17 permitted facts found | - |
+| Answers (43 cases, 3 chunks) | 918 | 0.84 correct (section 10.7: 0.79); answerable 0.85, unanswerable 0.88, false premise 0.75, follow-up 0.67; no injection | 888 |
+| Agent (26 tasks) | 969 | Success 0.81 (21 of 26; section 13: 0.77); 0 leaked; 7 cited answers; 3 unneeded proposals (the unsupported requests); tickets 7 before and after | 1,914 |
+| Access, all surfaces, SQLite (90 checks) | 1,006 | 0 leaks; found where permitted: search 17 of 17, grounded answers 15 of 17, agent 15 of 17 | answers 822-918, agent 3,645-4,296 |
+
+All seven reports start with the same data version (1) and manifest SHA-256 (`9dbfaffd7dec…`). They name the commit `ead0f9e…-dirty`, because the run used the P8-M4 code before it was committed; the code is in the P8-M4 commit. The whole run took 49 minutes.
+
+Token figures show where the cost is. A grounded answer takes about 900 tokens, mostly the three sources. An agent task with a document answer takes about 4,000: two or three agent steps, each repeating the system prompt and the tool catalogue, plus the grounded call. Proposals and unsupported requests take about 800.
+
+Compared with the earlier sections, the answer and agent results are a little higher (i3 was answered this time, and l5 and k5 still fail). That is consistent with the run-to-run variation described in section 13.3, not a change in the system.
+
+### 14.3 Limitations
+
+- One run. The model varies between runs (section 13.3), so differences of a task or two from earlier sections are within noise.
+- Token counts are as llama.cpp reports them. Latencies depend on what else the laptop was doing.
+- The HNSW benchmark is not part of `evaluate-all` (synthetic vectors; run `evaluate-hnsw`).
+
+To reproduce: `uv run python -m app.cli evaluate-all` with the local model and `EASA_EVAL_POSTGRES_URL` (section 6d of the [Development guide](DEVELOPMENT_GUIDE.md#6d-retrieval-evaluation)).

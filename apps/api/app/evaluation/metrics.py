@@ -1,4 +1,4 @@
-"""Retrieval metrics over ranked chunk texts and evidence phrases.
+"""Retrieval metrics over ranked chunk texts and evidence phrases, and token figures.
 
 Ranks are 1-based. ``None`` means the phrase was not retrieved at all.
 """
@@ -31,3 +31,17 @@ def reciprocal_rank(ranks: Sequence[int | None], k: int) -> float:
 
 def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def median_tokens(calls: Sequence[tuple[int | None, int | None]]) -> float | None:
+    """Median of prompt plus completion tokens over the items whose model reported
+    any (P8-M4); None when none did."""
+    totals = sorted((p or 0) + (c or 0) for p, c in calls if p is not None or c is not None)
+    if not totals:
+        return None
+    middle = len(totals) // 2
+    return float(totals[middle]) if len(totals) % 2 else (totals[middle - 1] + totals[middle]) / 2
+
+
+def format_tokens(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0f}"
