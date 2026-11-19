@@ -118,6 +118,52 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Browser end-to-end tests (P8-M3): the built web app against the real API with the
+  # fake chat model, the hashing embedder and a throwaway SQLite database
+  # (apps/web/e2e/stack.mjs). No traces or reports are uploaded: traces record what
+  # the tests type, including the generated passwords of the throwaway users.
+  e2e:
+    name: Browser tests (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.9"
+
+      - name: Install API dependencies (locked)
+        working-directory: apps/api
+        run: uv sync --locked
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies (locked)
+        run: npm ci
+
+      # Playwright's own Chromium build and the system libraries it needs.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Browser tests
+        run: npx playwright test
+
   # New or changed dependencies in a pull request: refuse known-vulnerable ones.
   dependency-review:
     name: Dependency review

@@ -546,6 +546,29 @@
   - A run that searched and also read a ticket keeps uncited model text.
 - **Consequences:** The assistant's answers from documents are as checkable as Chat's. The invented answers seen in Phase 6 are gone: on questions above the role, the agent declined 12 of 13, against 9 before.
 
+<a id="adr-037"></a>
+## ADR-037: Browser end-to-end tests with Playwright against the real stack and a scripted fake model
+
+- **Status:** Accepted (P8-M3, 2026-11-19; Playwright with Chromium approved in the Phase 8 plan)
+- **Context:** Until Phase 8 the web app was verified by component tests with fake APIs and by live checks that drove the web server over HTTP. No test ran a real browser against the real API, so cookies, redirects, the proxy and the pages working together were checked only by hand.
+- **Options considered:** Playwright or Cypress; the real API or a mocked one; the local model or a fake one.
+- **Decision:**
+  - `@playwright/test` is a web development dependency. Tests live in `apps/web/e2e`.
+  - The tests run the built web app (`next start`) against the real API. `e2e/stack.mjs` gives each run a fresh SQLite database in the git-ignored `apps/web/.e2e`, one synthetic user per role with a generated password (written only to `.e2e/credentials.json`, never printed), the synthetic tickets, the hashing embedder and the fake chat model. Uvicorn runs with `--no-proxy-headers`.
+  - `EASA_MODEL_PROVIDER=fake` now uses `development_reply`. For grounded answers it quotes the first source, as before. For agent steps it follows a script: a request for a ticket becomes a draft proposal, "ticket N" a status lookup, anything else a knowledge search, then a short final answer. Every page can therefore be exercised without a model, and the fake is still refused in production.
+  - A setup project uploads the synthetic documents as a manager through the documents page. The tests then cover:
+    - sign-in, its errors, the cookie flags and keyboard-only use;
+    - document visibility by role;
+    - chat with a citation and its source panel;
+    - a restricted canary that never reaches an employee;
+    - the assistant: confirm, cancel, a ticket lookup and a cited document answer;
+    - administration and its absence for other roles;
+    - phone width without sideways scrolling.
+  - One worker, because the tests share one database. CI installs Playwright's Chromium in a separate job. Locally, `EASA_E2E_CHANNEL=msedge` or `chrome` uses an installed browser, so no download is needed.
+  - Traces are recorded only on a developer's machine, and CI uploads no report: traces contain what the tests type, including the generated passwords.
+- **Trade-offs:** The fake model does not test answer quality; that is what the model evaluations are for. The browser tests take about three minutes and depend on `uv` and Node in the same job. Test isolation comes from the order of the setup project, not from a database per test.
+- **Consequences:** Regressions in the browser flows fail CI. The DEVELOPMENT_GUIDE describes how to run the tests locally.
+
 ---
 ## Open decisions (not yet made)
 

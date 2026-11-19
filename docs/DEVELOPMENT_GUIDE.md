@@ -183,7 +183,7 @@ The automated checks drive the web server over HTTP; a person should also look a
 | `EASA_EMBEDDING_PROVIDER` | API | `onnx` | `onnx` (pinned local bge-small-en-v1.5; download first) or `hashing` (deterministic, non-semantic; used by tests) |
 | `EASA_EMBEDDING_MODEL_DIR` | API | `apps/api/var/models` | Where the pinned model files live (git-ignored) |
 | `EASA_EMBEDDING_BATCH_SIZE` | API | `32` | Chunks per embedding batch (1–256) |
-| `EASA_MODEL_PROVIDER` | API | `none` | Answer generation: `none` (disabled), `fake` (deterministic test double; rejected in production), `llamacpp` (local llama.cpp server, section 6e) or `ollama` |
+| `EASA_MODEL_PROVIDER` | API | `none` | Answer generation: `none` (disabled), `fake` (deterministic test double that quotes the first source and scripts the agent's steps; rejected in production), `llamacpp` (local llama.cpp server, section 6e) or `ollama` |
 | `EASA_LLAMACPP_BASE_URL`, `EASA_OLLAMA_BASE_URL` | API | `http://127.0.0.1:8082`, `http://127.0.0.1:11434` | `http(s)://host[:port]` only; proxy environment variables are ignored for model calls |
 | `EASA_MODEL_NAME` | API | empty | Required for `llamacpp` and `ollama`; letters, digits and `. _ : / -`. For the local model: `qwen2.5-1.5b-instruct-q4_k_m` |
 | `EASA_CHAT_MODEL_DIR` | API | `apps/api/var/models/llm` | Where `download-chat-model` stores the GGUF file (git-ignored; mounted read-only into the `llm` container) |
@@ -219,7 +219,7 @@ uv sync --locked              # fails if uv.lock is out of date with pyproject.t
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
 uv run pip-audit --strict     # known vulnerabilities in the locked dependencies
-uv run pytest                 # 872 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 879 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -233,6 +233,16 @@ npm run build       # production build
 ```
 
 `npm run test:watch` exists for interactive use; it has not been run as part of verification.
+
+**Browser tests** (P8-M3, [ADR-037](ARCHITECTURE_DECISIONS.md#adr-037); from `apps/web`, with the API dependencies installed by `uv sync`):
+
+```powershell
+npm run build                              # the tests run the built app (next start)
+$env:EASA_E2E_CHANNEL = "msedge"           # use the installed Edge (or "chrome"); or once: npx playwright install chromium
+npm run test:e2e                           # 16 tests, about 3 minutes
+```
+
+Playwright starts both servers itself: the API on port 8200 (`e2e/stack.mjs`: a fresh SQLite database in the git-ignored `.e2e` folder, synthetic users with generated passwords, the fake chat model and the hashing embedder) and the web app on port 3200, and stops them afterwards. Ports 8200 and 3200 must be free. A failed test keeps a trace in `test-results/` (`npx playwright show-trace <file>`); traces contain the generated passwords, so do not share them. CI runs the same tests in the `e2e` job with Playwright's Chromium.
 
 Run `scripts\check.ps1` (or the relevant commands) before every commit.
 

@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# browser tests (Playwright): scratch database, credentials and reports
+/.e2e/
+/test-results/
+/playwright-report/
+/blob-report/

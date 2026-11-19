@@ -1614,8 +1614,8 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
 | P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | `83b634f` |
-| P8-M2 | Cited agent answers; agent and access evaluations rerun | COMPLETE | the commit that adds this row |
-| P8-M3 | Browser end-to-end tests (Playwright) in CI | NOT STARTED | |
+| P8-M2 | Cited agent answers; agent and access evaluations rerun | COMPLETE | `1515767` |
+| P8-M3 | Browser end-to-end tests (Playwright) in CI | COMPLETE | the commit that adds this row |
 | P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | NOT STARTED | |
 | P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | NOT STARTED | |
 
@@ -1692,3 +1692,49 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 - The local model varies between runs at temperature 0 (EVALUATION section 13.3).
 
 **Exit criteria:** met. The agent's answers from documents are cited and checked by the server like grounded answers, and both evaluations were rerun with the local model: no leaks, no injected text, and fewer invented answers.
+
+## P8-M3: Browser end-to-end tests
+
+**Scope:** browser tests of the main flows against the real stack with the fake model, run in CI.
+
+**Implemented**
+
+- `@playwright/test` 1.65.1 (Apache-2.0) as a web development dependency; `npm run test:e2e`; `playwright.config.ts` with three projects:
+  - `setup`: a manager uploads two synthetic documents;
+  - `desktop`;
+  - `phone`: Pixel 7.
+  One worker. Traces are kept on failure locally and never in CI.
+- `e2e/stack.mjs` runs before the API starts. It creates a fresh SQLite database in the git-ignored `.e2e` folder, then one synthetic user per role (`create-user --password-stdin`, with passwords generated in memory and written only to `.e2e/credentials.json`) and the employee's synthetic tickets. It then starts uvicorn with `--no-proxy-headers`, the fake model and the hashing embedder. The web app runs with `next start` on port 3200 against the API on 8200.
+- The 16 tests cover:
+  - signed-out redirect, wrong password, keyboard-only sign-in and sign-out, and the session cookie (HttpOnly, SameSite=Strict, not readable by scripts);
+  - documents visible by role, with no upload form for employees;
+  - a chat answer with a citation and its source panel;
+  - a restricted canary never in an employee's chat, and a manager's cited answer from a manager document;
+  - the assistant: a draft created only after Confirm, Cancel, a ticket status and a cited document answer;
+  - administration (users and audit log) and its absence for other roles;
+  - no sideways scrolling on four pages at phone width, and navigation by tap.
+- `EASA_MODEL_PROVIDER=fake` now uses `development_reply`, which adds a scripted agent to the extractive grounded reply, so the assistant works without a model.
+- CI: a new `e2e` job (Python 3.14 with uv, Node 24.13, `npx playwright install --with-deps chromium`, build, tests), pinned to the same Action SHAs.
+- Tests: backend 872 → 879 (the scripted agent); web unit tests unchanged at 135; 16 browser tests.
+- Docs: ADR-037; DEVELOPMENT_GUIDE (browser tests); LLD (testing structure); SECURITY; README; HLD.
+
+**Verification (executed 2026-11-19)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL`, `EASA_REQUIRE_POSTGRES_TESTS=1` and `EASA_TEST_LLM_URL` | All checks passed; 879 tests, none skipped; `pip-audit`: no known vulnerabilities |
+| `scripts\check.ps1 -Frontend` (lint and type check now include `e2e/`) | All checks passed; 135 web tests; production audit: 0 vulnerabilities |
+| `npm run test:e2e` with `EASA_E2E_CHANNEL=msedge` (the installed Edge; no browser download) | 16 passed in 3.1 minutes (three times: the first run after two test fixes, a second after a session restart, and the final run); servers stopped afterwards |
+| `npm audit` (including development tools) | 0 vulnerabilities, including development tools. The 17 high findings recorded in P8-M1 (the `picomatch` ReDoS advisory) no longer appear although `picomatch` is still 4.0.7, so the advisory data has changed |
+| Workflow file | Parsed with a YAML parser; jobs `api`, `web`, `e2e`, `dependency-review`; every `uses:` is a 40-character SHA |
+| Interrupted run | Docker restarted during the session and only another project's containers came back, so the first full backend run had 53 PostgreSQL and live-model tests fail with connection timeouts (826 passed); the EASA containers were restarted and everything was rerun |
+| First runs | 14 of 16 passed. The audit log shows readable action names ("Sign-in"), not codes; and the chat's Ask button stays disabled after sending because the question box is emptied, so the test now waits for the "Searching your documents" status to disappear. A heredoc turned the regex `\b` into backspace characters in the fake model; found by inspecting the bytes and fixed before any test ran |
+
+**Known limitations**
+
+- The fake model does not test answer quality (the model evaluations do).
+- The tests share one database, so they run one at a time in a fixed order.
+- CI keeps no traces; a failure is diagnosed from the log, or by running the tests locally.
+- Not covered in the browser: document visibility changes, password resets, conversation deletion and dark mode.
+
+**Exit criteria:** met. The main flows run in a real browser against the real API locally and in CI.
