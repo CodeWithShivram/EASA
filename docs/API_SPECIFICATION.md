@@ -48,6 +48,7 @@ Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](AR
 | 429 | `rate_limited` | Too many sign-in attempts from one client address, or too many model calls (`POST /answers`, `POST /conversations/{id}/messages`, `POST /agent`) by one user within a minute; `Retry-After` gives the seconds to wait (P8-M1) |
 | various | document-specific codes | See section 3.4 |
 | 500 | `internal_error` | Unexpected server error; message `An unexpected error occurred.` |
+| 503 | `database_unavailable` | The database cannot be reached or its connection pool is exhausted; `Retry-After: 5` (P8-M5) |
 | other 4xx/5xx from the framework | HTTP reason phrase in snake case | e.g. `service_unavailable` |
 
 **Exceptions to the envelope**

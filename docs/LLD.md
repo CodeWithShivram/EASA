@@ -119,6 +119,8 @@ Response shape: `{"error": {"code", "message", "correlation_id", "details"?}}` (
 | `RequestValidationError` | 422 | `validation_error` | `Request validation failed.`; `details` = `[{location, message, type}]`, never the submitted values |
 | Any other exception | 500 | `internal_error` | `An unexpected error occurred.` |
 
+`register_exception_handlers` also maps SQLAlchemy `OperationalError` and pool `TimeoutError` to `503 database_unavailable` with `Retry-After: 5`, and logs `database unavailable` with the error type only (P8-M5).
+
 ### 2.6 Logging — [app/core/logging.py](../apps/api/app/core/logging.py)
 
 `configure_logging(level)` installs one JSON handler on the root logger (stderr), removes Uvicorn's own handlers so `uvicorn` and `uvicorn.error` propagate to it, and raises `uvicorn.access` to `WARNING` (request logging is done by the middleware). `JsonFormatter` emits `timestamp` (UTC, milliseconds), `level`, `logger`, `message`, `correlation_id` (null outside a request), any `extra=` fields and `exception` when present. Uvicorn's ANSI `color_message` duplicate is dropped.
@@ -273,7 +275,7 @@ See [EVALUATION.md](EVALUATION.md) for method and results.
 - Grounded answers (P8-M2, ADR-036): `AgentService(session, executor, model, answers)` takes the request's `AnswerService`. The run tracks `searched` (a `search_knowledge_base` call succeeded) and `other_evidence` (another tool succeeded). A final answer that passes the claim check is replaced, when `searched and not other_evidence`, by `_grounded(identity, message)`. That calls `answers.answer(identity, message)`: an answered result gives its text and `sources`; any other result gives `NO_EVIDENCE_ANSWER` with the grounded reason. The route builds the agent service with the `get_answer_service` dependency; the evaluations pass an `AnswerService` with 256 tokens at temperature 0.
 - Token figures (P8-M4): a `TokenUsage` per run sums the `prompt_tokens` and `completion_tokens` of each step's `ChatResult` and of the grounded answer. They are stored in `AgentResult` and logged in `agent run finished`; `None` when the model reported none.
 - [services/agent_actions.py](../apps/api/app/services/agent_actions.py) `AgentActionService`: `get`, `confirm` (atomic claim, then `execute(..., confirmed=True)`, result stored; `confirmed` or `failed`) and `cancel`; `404 action_not_found`, `409 action_expired` / `action_not_pending`. [repositories/pending_actions.py](../apps/api/app/repositories/pending_actions.py): `create`, `get_own`, `claim` (`UPDATE ... WHERE status = pending AND expires_at > now`), `record_result`.
-- [routes/agent.py](../apps/api/app/api/v1/routes/agent.py): `POST /api/v1/agent` and the three action endpoints; development only.
+- [routes/agent.py](../apps/api/app/api/v1/routes/agent.py): `POST /api/v1/agent` and the three action endpoints; mounted in every environment since Phase 6 (signed-in users only).
 
 ### 2.6n Authentication (P6-M1)
 
@@ -406,6 +408,15 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 ### 3.11 Accessibility (P7-M5)
 
 Checked in code and with computed contrast ratios: one `h1` per page, in order before other headings; labels on every field (visible, or `aria-label` for per-row selectors); native buttons, links and form controls only (keyboard operable, visible focus); live regions for answers, notices and errors (`role="status"` / `role="alert"`); tables with captions and column headers; the skip link and `main` landmark; model and document text rendered as text. Colour contrast meets WCAG AA (4.5:1) for all text pairs; grey helper text in dark mode was 4.24:1 (page) and 3.75:1 (navigation) and now uses `slate-400` (7.9:1 and 7.0:1). Not checked: a screen reader or a real browser (no browser automation in this session).
+
+## 3a. Containers and operations (P8-M5, ADR-039)
+
+- [apps/api/Dockerfile](../apps/api/Dockerfile): the `uv` stage copies the pinned uv binary; the build stage runs `uv sync --locked --no-dev` into `/opt/venv` and copies `alembic.ini`, `migrations/`, `app/` and `eval/`; the runtime stage adds the user `easa` (uid 10001), `/data/uploads` and `EASA_STORAGE_DIR`. Health check: `GET /api/v1/health`. Command: `alembic upgrade head`, then Uvicorn on 0.0.0.0:8000 with `--no-proxy-headers`.
+- [apps/web/Dockerfile](../apps/web/Dockerfile): the build stage runs `npm ci`, `npm run build` and `npm prune --omit=dev`; the runtime stage copies `package.json`, `next.config.ts`, `node_modules`, `.next` and `src/lib/securityHeaders.ts` (imported by the config) and runs `next start` as `node`. Health check: `GET /login`.
+- [compose.yaml](../compose.yaml): profile `app` adds `app-db`, `api` and `web`. `app-db` runs `createdb easa_app` if the database is missing and exits; `api` waits for it to complete. `EASA_APP_ENVIRONMENT`, `EASA_APP_MODEL_PROVIDER` and `EASA_APP_EMBEDDING_PROVIDER` are set by the demo script.
+- CLI `upload-documents --username U [--min-role R] FILE...` (`_upload_documents`): an active user with `documents:upload`, `DocumentService` with the configured chunking and embedder, and one `document.upload` audit record per file (detail ends with `cli`). A failed file is logged and counted and does not stop the others; the exit code is 1 if any failed. `create-user --password-stdin` drops a leading U+FEFF.
+- [lib/server/bff.ts](../apps/web/src/lib/server/bff.ts) `isSameOrigin`: `Origin` must equal `<nextUrl.protocol>//<Host header>`.
+- [scripts/demo.ps1](../scripts/demo.ps1) and [scripts/load_test.py](../scripts/load_test.py): see [OPERATIONS.md](OPERATIONS.md).
 
 ## 4. Testing structure
 

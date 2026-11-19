@@ -117,6 +117,24 @@ describe("POST /bff/session (sign in)", () => {
     expect(api).not.toHaveBeenCalled();
   });
 
+  it("compares the origin with the host the browser addressed, not the listening address", async () => {
+    // In the container the server listens on 0.0.0.0 (P8-M5).
+    const at = (origin: string) =>
+      new NextRequest("http://0.0.0.0:3000/bff/session", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin, host: "localhost:3000" },
+        body: '{"username":"a","password":"b"}',
+      });
+    api.mockResolvedValueOnce(
+      Response.json({ error: { code: "invalid_credentials" } }, { status: 401 }),
+    );
+
+    expect((await POST(at("http://localhost:3000"))).status).toBe(401); // reached the API
+    expect((await POST(at("http://evil.example"))).status).toBe(403);
+    expect((await POST(at("http://0.0.0.0:3000"))).status).toBe(403);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a body that is not JSON", async () => {
     const response = await POST(request("POST", { body: "username=alice" }));
 

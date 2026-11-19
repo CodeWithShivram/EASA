@@ -7,6 +7,7 @@ Run from apps/api:
     uv run python -m app.cli rebuild-keyword-index
     uv run python -m app.cli create-user --tenant T --username U --role R [--password-stdin]
     uv run python -m app.cli seed-tickets --username NAME
+    uv run python -m app.cli upload-documents --username NAME [--min-role R] FILE...
     uv run python -m app.cli evaluate [--backend sqlite|postgres] [--configs default|all]
     uv run python -m app.cli evaluate-hnsw [--vectors N] [--tenants N] [--queries N]
     uv run python -m app.cli evaluate-answers [--configs default|all] [--limit N]
@@ -33,8 +34,10 @@ from pathlib import Path
 from app.api.dependencies import session_policy
 from app.core.config import API_ROOT, Settings, load_settings
 from app.core.errors import AppError
+from app.core.identity import Identity
 from app.core.logging import configure_logging
 from app.core.roles import ROLE_PERMISSIONS, Role
+from app.db.audit import AuditOutcome
 from app.db.engine import create_db_engine
 from app.db.fts import rebuild_keyword_index
 from app.db.session import create_session_factory
@@ -84,7 +87,10 @@ from app.llm.registry import DEFAULT_CHAT_MODEL, ModelFileError, download_chat_m
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.services.auth import AuthService
+from app.services.chunking import ChunkingConfig, ChunkingStrategy
+from app.services.documents import DocumentService
 from app.services.embedding_service import EmbeddingService
+from app.storage.blob_store import LocalBlobStore
 from app.tools.seed import seed_tickets
 
 logger = logging.getLogger("app.cli")
@@ -171,6 +177,74 @@ def _evaluate_all(settings: Settings, output_dir: Path, stamp: str, *, use_model
     return 1 if failed else 0
 
 
+def _upload_documents(settings: Settings, username: str, min_role: Role, files: list[Path]) -> int:
+    """Upload files as the user, with the same checks and audit record as the API (P8-M5)."""
+    embedder = build_embedder(settings)
+    if not embedder.is_available():
+        logger.error("embedding model not available; run download-embedding-model first")
+        return 1
+    engine = create_db_engine(settings.database_url.get_secret_value())
+    failed = 0
+    try:
+        sessions = create_session_factory(engine)
+        audit = AuditRepository(sessions)
+        with sessions() as session:
+            user = AccountRepository(session).get_user_by_username(username.lower())
+            if user is None or not user.is_active:
+                logger.error("no such active user", extra={"username": username})
+                return 1
+            identity = Identity(
+                user.tenant_id, user.id, ROLE_PERMISSIONS[user.role], user.role.value
+            )
+            if not identity.can("documents:upload"):
+                logger.error("this user may not upload documents", extra={"role": user.role.value})
+                return 1
+            service = DocumentService(
+                session,
+                LocalBlobStore(settings.storage_dir),
+                max_upload_bytes=settings.max_upload_bytes,
+                max_pdf_pages=settings.max_pdf_pages,
+                chunking=ChunkingConfig(
+                    strategy=ChunkingStrategy(settings.chunk_strategy),
+                    max_chars=settings.chunk_max_chars,
+                    overlap_chars=settings.chunk_overlap_chars,
+                ),
+                embedder=embedder,
+                embedding_batch_size=settings.embedding_batch_size,
+            )
+            for path in files:
+                try:
+                    result = service.upload(
+                        identity, path.name, path.read_bytes(), min_role=min_role
+                    )
+                except (AppError, OSError) as error:
+                    failed += 1
+                    code = error.code if isinstance(error, AppError) else type(error).__name__
+                    logger.error("document not uploaded", extra={"file": path.name, "code": code})
+                    continue
+                audit.record(
+                    tenant_id=identity.tenant_id,
+                    user_id=identity.user_id,
+                    action="document.upload",
+                    target=f"document:{result.document.id}",
+                    outcome=AuditOutcome.SUCCEEDED,
+                    detail=f"min_role={result.document.min_role} "
+                    f"created={str(result.created).lower()} cli",
+                )
+                logger.info(
+                    "document uploaded",
+                    extra={
+                        "file": path.name,
+                        "document_id": str(result.document.id),
+                        "status": result.document.status.value,
+                        "new_document": result.created,
+                    },
+                )
+    finally:
+        engine.dispose()
+    return 1 if failed else 0
+
+
 EVALUATION_COMMANDS = frozenset(
     {
         "evaluate",
@@ -226,6 +300,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="read the password from the first line of standard input instead of a prompt",
     )
+    upload = commands.add_parser(
+        "upload-documents",
+        help="upload files as a user (who may upload), like the documents page; audited",
+    )
+    upload.add_argument("--username", required=True)
+    upload.add_argument(
+        "--min-role",
+        choices=[role.value for role in Role],
+        default=Role.EMPLOYEE.value,
+        help="lowest role that may see the documents (at most the user's own)",
+    )
+    upload.add_argument("files", nargs="+", type=Path)
     seed = commands.add_parser(
         "seed-tickets", help="create synthetic support tickets for a user's tenant (once)"
     )
@@ -560,7 +646,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "create-user":
         if args.password_stdin:
-            password = sys.stdin.readline().rstrip("\r\n")
+            # Windows PowerShell may put a byte order mark in front of piped text.
+            password = sys.stdin.readline().removeprefix("\ufeff").rstrip("\r\n")
         else:
             password = getpass.getpass("Password: ")
             if getpass.getpass("Repeat password: ") != password:
@@ -583,6 +670,9 @@ def main(argv: list[str] | None = None) -> int:
             extra={"tenant_id": str(tenant_id), "user_id": str(user_id), "role": args.role},
         )
         return 0
+
+    if args.command == "upload-documents":
+        return _upload_documents(settings, args.username, Role(args.min_role), args.files)
 
     if args.command == "seed-tickets":
         engine = create_db_engine(settings.database_url.get_secret_value())

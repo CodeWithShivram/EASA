@@ -142,3 +142,24 @@ def test_request_log_is_json_with_matching_correlation_id(test_client: TestClien
     assert request_entry["status_code"] == 200
     assert isinstance(request_entry["duration_ms"], float)
     assert "should-not-be-logged" not in stream.getvalue()
+
+
+def test_an_unreachable_database_is_a_temporary_503(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A SQLite file in a directory that does not exist cannot be opened: the same
+    # OperationalError a stopped PostgreSQL server raises (P8-M5 failure tests).
+    missing = tmp_path / "no-such-directory" / "easa.db"
+    app = create_app(make_settings(tmp_path, database_url=f"sqlite:///{missing.as_posix()}"))
+
+    with TestClient(app) as client, caplog.at_level(logging.WARNING):
+        response = client.post(
+            "/api/v1/auth/login", json={"username": "alice", "password": "a synthetic password"}
+        )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "5"
+    assert response.json()["error"]["code"] == "database_unavailable"
+    assert "sqlite" not in response.text.lower()
+    assert "no-such-directory" not in caplog.text  # the error type only, no driver message
+    assert any(r.getMessage() == "database unavailable" for r in caplog.records)

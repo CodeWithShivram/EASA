@@ -1,0 +1,15 @@
+# Only what the image needs: pyproject.toml, uv.lock, alembic.ini, migrations/, app/, eval/.
+.venv/
+var/
+tests/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.db-*
+.env
+.env.*
+Dockerfile
+.dockerignore

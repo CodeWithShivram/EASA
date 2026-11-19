@@ -1,8 +1,13 @@
-# Local services for EASA. Development only; ports are bound to localhost.
+# Local services for EASA. Ports are bound to localhost only.
 #
 #   docker compose up -d postgres            PostgreSQL 18 + pgvector (Phase 3, P3-M4)
 #   docker compose --profile llm up -d llm   llama.cpp chat model server (Phase 4, P4-M3)
-#   docker compose down                      (stop; add -v to also delete the data volume)
+#   docker compose --profile app up -d       the whole stack: API and web app too (P8-M5);
+#                                            scripts\demo.ps1 starts it with demo data
+#   docker compose down                      (stop; add -v to also delete the data volumes)
+#
+# Images are pinned by digest (P8-M5). The API and web images are built from
+# apps/api/Dockerfile and apps/web/Dockerfile.
 #
 # The password comes from EASA_POSTGRES_PASSWORD in the git-ignored .env next to
 # this file (see .env.example). The port is bound to localhost only.
@@ -10,7 +15,7 @@ name: easa
 
 services:
   postgres:
-    image: pgvector/pgvector:0.8.7-pg18
+    image: pgvector/pgvector:0.8.7-pg18@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782
     environment:
       POSTGRES_USER: easa
       POSTGRES_DB: easa
@@ -30,7 +35,7 @@ services:
   # downloaded first with `uv run python -m app.cli download-chat-model`
   # (from apps/api) and mounted read-only.
   llm:
-    image: ghcr.io/ggml-org/llama.cpp:server-b12407
+    image: ghcr.io/ggml-org/llama.cpp:server-b12407@sha256:89fe93c2ef53ea2d09ca9f53db8878a8f57bb6b143eb63c76a9c218fb583b392
     profiles: ["llm"]
     command:
       - "--model"
@@ -57,5 +62,61 @@ services:
       timeout: 5s
       retries: 30
 
+  # The API in production mode. The chat model is the llm service when the llm
+  # profile runs too; EASA_APP_MODEL_PROVIDER and EASA_APP_EMBEDDING_PROVIDER let
+  # scripts/demo.ps1 fall back when the model files are not downloaded.
+  # The stack's own database (easa_app) on the PostgreSQL server, so it never
+  # touches the development database; created once, then the step exits.
+  app-db:
+    image: pgvector/pgvector:0.8.7-pg18@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: easa
+      PGPASSWORD: ${EASA_POSTGRES_PASSWORD:?set EASA_POSTGRES_PASSWORD in .env}
+    entrypoint:
+      - sh
+      - -c
+      - psql -d easa -tAc "SELECT 1 FROM pg_database WHERE datname = 'easa_app'" | grep -q 1 || createdb easa_app
+    restart: "no"
+
+  api:
+    build: ./apps/api
+    image: easa-api:local
+    profiles: ["app"]
+    depends_on:
+      app-db:
+        condition: service_completed_successfully
+    environment:
+      EASA_ENVIRONMENT: ${EASA_APP_ENVIRONMENT:-production}
+      EASA_DATABASE_URL: postgresql+psycopg://easa:${EASA_POSTGRES_PASSWORD:?set EASA_POSTGRES_PASSWORD in .env}@postgres:5432/easa_app
+      EASA_EMBEDDING_PROVIDER: ${EASA_APP_EMBEDDING_PROVIDER:-onnx}
+      EASA_MODEL_PROVIDER: ${EASA_APP_MODEL_PROVIDER:-llamacpp}
+      EASA_LLAMACPP_BASE_URL: http://llm:8080
+      EASA_MODEL_NAME: qwen2.5-1.5b-instruct-q4_k_m
+      EASA_MODEL_TIMEOUT_SECONDS: "300"
+    ports:
+      - "127.0.0.1:${EASA_API_PORT:-8000}:8000"
+    volumes:
+      - uploads:/data/uploads
+      # The pinned embedding model (download-embedding-model), read-only.
+      - ./apps/api/var/models:/app/var/models:ro
+
+  web:
+    build: ./apps/web
+    image: easa-web:local
+    profiles: ["app"]
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      EASA_API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:${EASA_WEB_PORT:-3000}:3000"
+
 volumes:
   postgres-data:
+  uploads:

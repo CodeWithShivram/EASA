@@ -164,6 +164,20 @@ jobs:
       - name: Browser tests
         run: npx playwright test
 
+  # The API and web images build from their Dockerfiles with the pinned base
+  # images (P8-M5). Nothing is started or pushed.
+  containers:
+    name: Container images
+    runs-on: ubuntu-latest
+    env:
+      # Only for compose.yaml's variable check; no database runs in this job.
+      EASA_POSTGRES_PASSWORD: ci-throwaway
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the API and web images
+        run: docker compose --profile app build
+
   # New or changed dependencies in a pull request: refuse known-vulnerable ones.
   dependency-review:
     name: Dependency review

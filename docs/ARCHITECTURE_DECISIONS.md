@@ -591,6 +591,32 @@
 - **Trade-offs:** The manifest has to be updated in the same commit as any data change (the test enforces this). Token counts are what the model server reports (llama.cpp reports them; the fake model counts words). `evaluate-all` with the model takes about an hour on the CPU.
 - **Consequences:** Every result in EVALUATION.md from P8-M4 on can be traced to a data version, a commit and settings. Older reports remain as they were.
 
+<a id="adr-039"></a>
+## ADR-039: Containers, a demo command and scripted load and failure tests
+
+- **Status:** Accepted (P8-M5, 2026-11-19; containers, a full-stack Compose profile and a demo command approved in the Phase 8 plan)
+- **Context:** The stack ran only from source with several manual steps, and nobody had measured how it behaves under concurrent use or when a service fails.
+- **Options considered:** Docker images with Compose or a native installer; a load tool (k6, Locust) or a script with the existing HTTP client; one shared database or a separate one for the stack.
+- **Decision:**
+  - The images:
+    - `apps/api/Dockerfile`: multi-stage, uv from `uv.lock` without development tools, a non-root user. It runs `alembic upgrade head` on start, then Uvicorn with `--no-proxy-headers`. It includes the synthetic `eval/` data.
+    - `apps/web/Dockerfile`: multi-stage, `npm ci`, the build, the development dependencies pruned, a non-root user, `next start`.
+    - Base images and the PostgreSQL and llama.cpp images are pinned by digest.
+  - Compose profile `app` adds `api`, `web` and a one-shot `app-db` step that creates the stack's own database `easa_app`, so the stack never touches the development database. Uploads get their own volume, and the models are mounted read-only. Every port is bound to localhost. The API runs in production mode.
+  - `scripts/demo.ps1` builds and starts the stack and waits for the health checks. Once, it creates three demo users with generated passwords (written only to the git-ignored `var/demo/credentials.txt`), uploads the synthetic documents at three levels with a new audited `upload-documents` command, and seeds tickets. `-Down` stops the stack; `-Reset` deletes only the demo's database, volume and credentials. Without the model files it falls back to the fake model in development mode, or to the hashing embedder, with a warning.
+  - `scripts/load_test.py` drives the stack through the web app with `httpx` (already a dependency). It covers concurrent searches, grounded answers, page loads and a sign-in burst. With `--failures` it stops PostgreSQL, the model and the API in turn with `docker compose stop`, checks the responses and waits for recovery. It writes a Markdown report.
+  - CI builds both images on every push.
+- **Defects found by running the stack, now fixed and tested:**
+  - A stopped database gave `500`; database connection errors and pool timeouts now return `503 database_unavailable` with `Retry-After`.
+  - In the container, the web app's origin check compared against the address it listens on (`0.0.0.0`) and refused every sign-in; it now compares the browser's `Origin` with the `Host` it addressed.
+  - Windows PowerShell put a byte order mark in front of piped passwords; `create-user --password-stdin` now drops it, and the demo script pipes without one.
+- **Trade-offs:**
+  - Migrations at start suit one instance, not several.
+  - The web image is large (1.08 GB, the full production `node_modules`).
+  - The load test measures one laptop with the model on the same CPU.
+  - Backups are manual commands (in the runbook).
+- **Consequences:** One command gives a working demo; [OPERATIONS.md](OPERATIONS.md) describes running it, and [PROJECT_REPORT.md](PROJECT_REPORT.md) records the results.
+
 ---
 ## Open decisions (not yet made)
 

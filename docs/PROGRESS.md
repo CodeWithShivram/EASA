@@ -1616,8 +1616,8 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 | P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | `83b634f` |
 | P8-M2 | Cited agent answers; agent and access evaluations rerun | COMPLETE | `1515767` |
 | P8-M3 | Browser end-to-end tests (Playwright) in CI | COMPLETE | `ead0f9e` |
-| P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | COMPLETE | the commit that adds this row |
-| P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | NOT STARTED | |
+| P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | COMPLETE | `ae7f39b` |
+| P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | COMPLETE | the commit that adds this row |
 
 ## P8-M1: Security hardening
 
@@ -1775,3 +1775,89 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 - Reports written before P8-M4 have no run block.
 
 **Exit criteria:** met. Every report names its data version, commit, models and settings; tokens and latency appear in logs and reports; one command runs all evaluations.
+
+## P8-M5: Delivery
+
+**Scope:** load and failure tests with a script and no new tool, containers and a demo command, an operations runbook, documented limitations, and the final project report.
+
+**Implemented**
+
+- `apps/api/Dockerfile` and `apps/web/Dockerfile`: multi-stage builds from the lockfiles, non-root users, health checks, and base images pinned by digest. The PostgreSQL and llama.cpp images in `compose.yaml` are pinned by digest too.
+- Compose profile `app`: `app-db` creates the stack's own database `easa_app`; then `api` (production mode, migrations on start) and `web`. Uploads get their own volume and the models are mounted read-only; every port is on localhost.
+- `scripts/demo.ps1`:
+  - generates the database password into `.env` if it is missing;
+  - builds, starts and waits for the health checks;
+  - once, creates three demo users with generated passwords (written only to `var/demo/credentials.txt`), uploads 16 synthetic documents at three levels and seeds tickets;
+  - `-Down` stops the stack, `-Reset` deletes only the demo data, and `-NoModel` uses the fake model.
+- CLI `upload-documents`: uploads like the documents page, with the same rules and audit record.
+- `scripts/load_test.py`: searches, answers, page loads and a sign-in burst through the web app. `--failures` stops PostgreSQL, the model and the API in turn and checks recovery. It writes a Markdown report.
+- Defects found by running the stack, each fixed and tested:
+  - a stopped database gave `500`; it now gives `503 database_unavailable` with `Retry-After`;
+  - the web app refused every sign-in in the container, because its origin check compared against the listening address `0.0.0.0`; it now compares against the `Host` header;
+  - piped passwords got a byte order mark from Windows PowerShell; it is now dropped, and the demo pipes without one.
+- CI: a `containers` job builds both images.
+- Docs:
+  - new: [OPERATIONS.md](OPERATIONS.md) (runbook) and [PROJECT_REPORT.md](PROJECT_REPORT.md) (final report and known limitations);
+  - updated: ADR-039, SECURITY (container controls; stale "not mounted in production" statements from Phases 3–4 corrected), API_SPECIFICATION (`503 database_unavailable`), LLD, DEVELOPMENT_GUIDE, HLD, and README (demo quick start, route table corrected).
+- Tests: backend 892 → 895 (`upload-documents`, a byte order mark in piped passwords, the unreachable database); web 135 → 136 (the origin check behind `0.0.0.0`).
+
+**Verification (executed 2026-11-19)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL`, `EASA_REQUIRE_POSTGRES_TESTS=1` and `EASA_TEST_LLM_URL` | All checks passed; 895 tests, none skipped; `pip-audit`: no known vulnerabilities |
+| `scripts\check.ps1 -Frontend` | All checks passed; 136 web tests; production audit: 0 vulnerabilities |
+| `npm run test:e2e` (Edge) | 16 passed in 2.9 minutes |
+| `docker compose --profile app build` | Both images built: API 628 MB, web 1.08 GB |
+| `scripts\demo.ps1` (model files present: production mode, llama.cpp, ONNX embeddings) | All services healthy; 3 users, 16 documents, 7 tickets loaded; `-Reset` deleted only `easa_app`, the upload volume and the credentials, and the next start loaded the data again |
+| `scripts/load_test.py --failures` | 200 searches at 10 at a time all `200` (median 0.4 s, 95th percentile 2.3 s, 18 per second); 3 simultaneous answers `200` in 86–110 s (one CPU model); 50 page loads `200`. PostgreSQL stopped: readiness, search and documents `503`, serving again at once after restart. Model stopped: answer `503 model_unavailable`, search `200`; ready 34 s after restart. API stopped: `502 api_unreachable`, login page `200`; back after 9 s. 30 sign-ins: 20 `200`, 10 `429 rate_limited` |
+| Backup and restore ([OPERATIONS.md section 5](OPERATIONS.md#5-backup-and-restore)) | `pg_dump` and an uploads archive. A restore into a scratch database had the same row counts (3 users, 16 documents, 28 chunks, 7 tickets, 69 audit records), and the extracted archive matched the volume's file checksums. The documented in-place restore then ran on `easa_app`: same counts afterwards, and the manager could sign in, list 14 documents, read a document's text and search |
+| First runs | Under `$ErrorActionPreference = 'Stop'`, Windows PowerShell turned the containers' log output into errors and stopped the demo after the first user. The demo still used the development database, so the stack got its own database `easa_app` (one stray synthetic user, `demo-employee`, remains in the development database, with a password nobody knows). Then: the byte order mark in passwords, the origin check in the container, and the load test's Python client not sending the Secure cookie to http://localhost, which browsers do (the script now sends it explicitly). After the full checks, the pre-commit scan found an actual U+FEFF character, instead of the `\ufeff` escape, in `cli.py` and its test; it was replaced by the escape (the same string) and `test_auth_api.py` was rerun: 30 passed |
+
+**Known limitations:** [PROJECT_REPORT.md section 7](PROJECT_REPORT.md#7-known-limitations). For this milestone:
+- one machine, migrations on start, manual backups;
+- a 1.08 GB web image;
+- load measured on a laptop with the model on the same CPU.
+
+**Exit criteria:** met. One command starts a working demo with synthetic data; load and failure behaviour is measured and recorded; operations, limitations and the final report are written.
+
+## Phase 8 completion report
+
+**Status: COMPLETE.** Phase 8 hardened, measured and packaged the system:
+- security headers, rate limits and dependency audits;
+- assistant answers from documents that are cited and checked like Chat's;
+- browser end-to-end tests in CI;
+- versioned evaluation data, with run metadata and token figures in every report;
+- containers, a demo command, load and failure tests, an operations runbook and the final project report.
+
+**Phase 8 goals (CLAUDE_DEVELOPMENT_GUIDE.txt, Phase 8) against what was delivered**
+
+| Goal | Delivered | Milestone |
+|---|---|---|
+| Build a versioned evaluation dataset | `eval/manifest.json`: version and SHA-256 per file, checked by a test and by every evaluation command | P8-M4 |
+| Measure retrieval quality using appropriate metrics | Recall@k and MRR in every run (hybrid R@1 0.833, R@10 1.000) | P3-M5, P8-M4 |
+| Measure answer relevance and groundedness | Answer, agent and access evaluations with the local model; cited assistant answers | P4-M5, P8-M2, P8-M4 |
+| Track latency and token usage where available | Median latency and tokens in every model report; tokens in the answer and agent log lines | P8-M4 |
+| Add structured logs and correlation IDs | Since Phase 1; tokens added to the agent log line | P1, P8-M4 |
+| Add unit, integration, security and end-to-end tests | 895 backend (including the security suite), 136 web and 16 browser tests | P8-M3, P8-M5 |
+| Add CI checks and dependency review | pip-audit, npm audit, dependency review, SHA-pinned Actions, browser tests and container builds in CI | P8-M1, P8-M3, P8-M5 |
+| Perform load and failure testing within available resources | `scripts/load_test.py` with the failure scenarios | P8-M5 |
+| Document limitations and operational procedures | [PROJECT_REPORT.md](PROJECT_REPORT.md#7-known-limitations), [OPERATIONS.md](OPERATIONS.md) | P8-M5 |
+| Prepare a reproducible demo with synthetic data | `scripts/demo.ps1` | P8-M5 |
+
+**Files:** see the milestone sections above.
+
+**Dependencies added in Phase 8:**
+- `pip-audit` (development; vulnerability audit);
+- `@playwright/test` (development; browser tests);
+- container base images `python:3.14-slim`, `node:24.13.0-slim` and `ghcr.io/astral-sh/uv:0.12.9`, pinned by digest.
+
+**Architecture decisions:** ADR-035 to ADR-039.
+
+**Tests:** 895 backend plus 136 web plus 16 browser tests = 1,047, up from 974 at the end of Phase 7.
+
+**Security considerations:** [SECURITY.md](SECURITY.md) lists the Phase 8 controls (headers, rate limits, audits, containers). Residual risks are listed in the project report: no TLS, rate limits per process, a CSP with inline scripts, parsing in the API process, and secret scanning still to be enabled by the owner.
+
+**Manual verification steps:** `scripts\demo.ps1`, then the walkthrough in [PROJECT_REPORT.md section 10](PROJECT_REPORT.md#10-trying-it).
+
+**Recommended next steps:** the project is complete as planned. [PROJECT_REPORT.md section 9](PROJECT_REPORT.md#9-recommended-next-steps) lists what a real deployment would need first: TLS and a reverse proxy, sandboxed parsing, a larger evaluation set, single sign-on.

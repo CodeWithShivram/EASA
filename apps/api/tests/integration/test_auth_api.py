@@ -15,6 +15,10 @@ from app import cli
 from app.core.passwords import DEFAULT_N
 from app.core.roles import ROLE_PERMISSIONS, Role
 from app.db.accounts import User, UserSession
+from app.db.audit import AuditLog
+from app.db.documents import Document
+from app.db.engine import create_db_engine
+from app.db.session import create_session_factory
 from app.db.types import utc_now
 from app.main import create_app
 from app.services.auth import MAX_FAILED_LOGINS
@@ -327,3 +331,73 @@ def test_create_user_and_seed_tickets_commands(
         response = login(client, "carol", "a synthetic password")
     assert response.status_code == 200
     assert response.json()["user"]["role"] == "employee"
+
+
+def test_upload_documents_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app(
+        make_settings(tmp_path, database_url=f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    )
+    create_schema(app.state.engine)
+    app.state.engine.dispose()
+    monkeypatch.setenv("EASA_EMBEDDING_PROVIDER", "hashing")
+    monkeypatch.setenv("EASA_STORAGE_DIR", str(tmp_path / "files"))
+    for name, role in (("mia", "manager"), ("eve", "employee")):
+        args = ["create-user", "--tenant", "Larkspur", "--username", name, "--role", role]
+        assert (
+            run_cli(monkeypatch, tmp_path, [*args, "--password-stdin"], "a synthetic password\n")
+            == 0
+        )
+    plan = tmp_path / "plan.txt"
+    plan.write_text("The restructuring plan for the support desk.", encoding="utf-8")
+    upload = ["upload-documents", "--min-role", "manager"]
+
+    assert run_cli(monkeypatch, tmp_path, [*upload, "--username", "Mia", str(plan)]) == 0
+    # Employees may not upload; a missing file fails without stopping the others.
+    assert run_cli(monkeypatch, tmp_path, [*upload, "--username", "eve", str(plan)]) == 1
+    assert (
+        run_cli(
+            monkeypatch,
+            tmp_path,
+            [*upload, "--username", "mia", str(tmp_path / "gone.txt"), str(plan)],
+        )
+        == 1
+    )
+
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    try:
+        with create_session_factory(engine)() as session:
+            documents = list(session.scalars(select(Document)))
+            uploads = list(
+                session.scalars(select(AuditLog).where(AuditLog.action == "document.upload"))
+            )
+    finally:
+        engine.dispose()
+    assert [(d.filename, d.min_role.value, d.status.value) for d in documents] == [
+        ("plan.txt", "manager", "processed")
+    ]
+    # The second upload of the same content is recorded too (created=false).
+    assert [u.detail for u in uploads] == [
+        "min_role=manager created=true cli",
+        "min_role=manager created=false cli",
+    ]
+
+
+def test_a_piped_password_with_a_byte_order_mark_is_read_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows PowerShell can prefix piped text with U+FEFF (found by the P8-M5 demo).
+    app = create_app(
+        make_settings(tmp_path, database_url=f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    )
+    create_schema(app.state.engine)
+    args = ["create-user", "--tenant", "Larkspur", "--username", "erin", "--role", "employee"]
+
+    assert (
+        run_cli(
+            monkeypatch, tmp_path, [*args, "--password-stdin"], "\ufeffa synthetic password\r\n"
+        )
+        == 0
+    )
+
+    with TestClient(app) as client:
+        assert login(client, "erin", "a synthetic password").status_code == 200

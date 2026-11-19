@@ -2,8 +2,7 @@
 
 A learning and portfolio project. The goal is an enterprise-style AI support agent: authorized employees ask questions about company knowledge and get answers grounded in approved documents, with citations and server-side access control.
 
-> **Status: Phase 3 (Embeddings and Retrieval) complete: local embeddings; semantic, keyword and hybrid search on SQLite and PostgreSQL + pgvector; a retrieval evaluation ([results](docs/EVALUATION.md)). Phase 4 (grounded answering) complete: grounded answers with checked citations, a local CPU model (Qwen2.5 1.5B on llama.cpp in Docker), conversations with follow-up questions, and an answer evaluation ([results](docs/EVALUATION.md#10-answer-evaluation-phase-4-p4-m5)). Phase 5 (agent and controlled tools) complete: tool framework with allowlist, permissions, confirmation and audit log (P5-M1), synthetic support tickets and four tools (P5-M2), an agent whose consequential actions wait for your confirmation (P5-M3), an adversarial test suite (P5-M4), and an agent evaluation with the local model ([results](docs/EVALUATION.md#11-agent-evaluation-phase-5-p5-m5)). Phase 6 (authentication and roles) complete: sign-in with server-side sessions; every endpoint except health requires it (P6-M1); employee, manager and administrator permissions, user administration and audited sign-ins (P6-M2); a minimum role per document, enforced in search, answers and the agent (P6-M3); an audit log for administrators and a security suite (P6-M4); a leakage evaluation with no leak in 240 checks ([results](docs/EVALUATION.md#12-access-leakage-evaluation-phase-6-p6-m5)) (P6-M5). Phase 7 (frontend) complete: sign-in in the web app with the session token kept in an HttpOnly cookie by a backend for frontend (P7-M1); a chat page with conversations, follow-ups and clickable citations (P7-M2); document management with uploads, visibility levels and the document text (P7-M3); a support assistant whose proposed actions wait for your Confirm (P7-M4); user administration and the audit log for administrators, and an accessibility pass (P7-M5). Phase 8 (evaluation, reliability and delivery) in progress: security headers, rate limits for sign-in and model calls, and dependency audits in CI (P8-M1); the support assistant's answers from documents are cited and checked like Chat's (P8-M2); browser end-to-end tests with Playwright in CI (P8-M3); versioned evaluation data, run metadata and token figures in every report, and one command for all evaluations (P8-M4).**
-> The backend skeleton exists: configuration, logging, error handling, health endpoints, database sessions and Alembic migrations. Phase 2 added document upload with validation, PDF/DOCX/TXT text extraction and normalization, configurable chunking and a tenant-scoped chunks endpoint, security-reviewed in P2-M5. The frontend is a dashboard shell with an API status card. Architecture, API, database, security and development documentation is in [docs/](docs/).
+> **Status: complete (all eight phases, 2026-11-19).** Sign-in with roles; document upload with visibility levels; semantic, keyword and hybrid search; answers that cite and are checked against their sources; a support assistant whose actions wait for your confirmation; a web app; security hardening; evaluations with a local CPU model; browser tests; containers and a demo. The [final project report](docs/PROJECT_REPORT.md) summarises the results and the known limitations.
 > This is not production software. All company documents and employee data used in this project are synthetic.
 
 ## Structure
@@ -13,11 +12,20 @@ easa/
   apps/api/   FastAPI backend (Python 3.14, uv)          [M1–M2]       
   apps/web/   Next.js frontend (TypeScript, Tailwind)    [M3: shell]
   docs/       Design, API, security and dev docs         [M4]
-  scripts/    check.ps1 (all checks), dev.ps1 (run both) [M5]
+  scripts/    check.ps1 (all checks), dev.ps1 (run both) [M5], demo.ps1, load_test.py [P8-M5]
   .github/    GitHub Actions CI                          [M5]
 ```
 
-## Quick start (Windows PowerShell)
+## Try the demo (Docker)
+
+```powershell
+cd apps/api; uv sync; uv run python -m app.cli download-embedding-model; uv run python -m app.cli download-chat-model; cd ../..
+powershell -ExecutionPolicy Bypass -File scripts\demo.ps1   # builds and starts everything with synthetic demo data
+```
+
+Open http://localhost:3000 and sign in with a user from `var\demo\credentials.txt` (generated, git-ignored). Stop with `scripts\demo.ps1 -Down`. Without the model downloads the demo still runs, with a fake model that quotes sources. Details: [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## Quick start for development (Windows PowerShell)
 
 ```powershell
 cd apps/api; uv sync; uv run alembic upgrade head; cd ../web; npm ci; cd ../..
@@ -59,14 +67,14 @@ Endpoints:
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v1/health` | Liveness. Always `200 {"status":"ok"}` while the process is up; never touches the database |
-| `GET /api/v1/health/ready` | Readiness: database (`SELECT 1`) and embedding model files; `200 ready` or `503 not_ready` with the failing check `unavailable` |
-| `POST /api/v1/documents` | Upload a PDF, DOCX or UTF-8 TXT file (validated; identical content returns the existing document). Development only |
-| `GET /api/v1/documents`, `GET /api/v1/documents/{id}` | List and get the current tenant's documents. Development only |
-| `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets. Development only |
-| `POST /api/v1/search` | Hybrid (default), semantic or keyword (BM25) search over the current tenant's documents, with citations. Development only |
-| `POST /api/v1/answers` | An answer from the current tenant's documents only, with cited sources, or `insufficient_evidence`. Needs a configured chat model. Development only |
-| `/api/v1/conversations` | Create, list, read and delete your conversations; ask follow-up questions that use the last turns. Development only |
-| `/api/v1/agent` | Ask the agent; it uses your permitted tools and proposes consequential actions for you to confirm or cancel. Development only |
+| `GET /api/v1/health/ready` | Readiness: database (`SELECT 1`), embedding model files and the chat model; `200 ready` or `503 not_ready` with the failing check |
+| `POST /api/v1/documents` | Upload a PDF, DOCX or UTF-8 TXT file (validated; identical content returns the existing document). Managers and administrators |
+| `GET /api/v1/documents`, `GET /api/v1/documents/{id}` | List and get the documents of your tenant that your role may see |
+| `GET /api/v1/documents/{id}/chunks` | The document's chunks with page, section and text offsets |
+| `POST /api/v1/search` | Hybrid (default), semantic or keyword (BM25) search over the documents you may see, with citations |
+| `POST /api/v1/answers` | An answer from the current tenant's documents only, with cited sources, or `insufficient_evidence`. Needs a configured chat model |
+| `/api/v1/conversations` | Create, list, read and delete your conversations; ask follow-up questions that use the last turns |
+| `/api/v1/agent` | Ask the agent; it uses your permitted tools and proposes consequential actions for you to confirm or cancel |
 | `/api/v1/tools` | List your permitted tools and invoke one (knowledge search, ticket lookup, draft tickets that need confirmation); every call audited. Development only |
 | `GET /docs` | OpenAPI UI (disabled when `EASA_ENVIRONMENT=production`) |
 
@@ -120,7 +128,9 @@ Runtime data, including the SQLite database, is stored in `var/` directories. Gi
 | [Security](docs/SECURITY.md) | Implemented controls, gaps, threat notes, tests |
 | [Development guide](docs/DEVELOPMENT_GUIDE.md) | Setup, running, checks, migrations, troubleshooting |
 | [Evaluation](docs/EVALUATION.md) | Retrieval (search modes, chunk sizes, PostgreSQL vs SQLite, exact vs HNSW) and answers (correctness, refusals, prompt injection, latency) |
-| [Architecture decisions](docs/ARCHITECTURE_DECISIONS.md) | ADR-001 to ADR-027 |
+| [Architecture decisions](docs/ARCHITECTURE_DECISIONS.md) | ADR-001 to ADR-039 |
+| [Operations](docs/OPERATIONS.md) | Running the container stack: start, stop, health, users, backup and restore, incidents, load test |
+| [Project report](docs/PROJECT_REPORT.md) | What was built, results, known limitations, lessons |
 
 ## Progress
 

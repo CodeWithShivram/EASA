@@ -108,7 +108,7 @@ Identity is resolved from a verified authentication context → authorized chunk
 | 5 | Agent and controlled tool calling | Complete (P5-M1 tool framework and audit log, P5-M2 support tools, P5-M3 agent loop, P5-M4 adversarial tests, P5-M5 agent evaluation) |
 | 6 | Authentication and RBAC | Complete (P6-M1 sign-in and sessions, P6-M2 roles and user administration, P6-M3 document visibility, P6-M4 audit endpoint and security suite, P6-M5 leakage evaluation) |
 | 7 | Frontend and integration | Complete (P7-M1 web sign-in through a backend for frontend, P7-M2 chat, P7-M3 documents, P7-M4 support assistant, P7-M5 administration and accessibility) |
-| 8 | Evaluation, reliability and delivery | In progress (P8-M1 security headers, rate limits and dependency audits; P8-M2 cited agent answers; P8-M3 browser tests; P8-M4 versioned evaluations) |
+| 8 | Evaluation, reliability and delivery | Complete (P8-M1 security hardening, P8-M2 cited agent answers, P8-M3 browser tests, P8-M4 versioned evaluations, P8-M5 containers, demo, load and failure tests, runbook, final report; see [PROJECT_REPORT.md](PROJECT_REPORT.md)) |
 
 Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 
@@ -126,7 +126,7 @@ Milestone status and commit hashes: [PROGRESS.md](PROGRESS.md).
 | Security | Deny by default, server-side checks, strict config, safe errors, minimal exposure, security headers, rate limits and dependency audits ([ADR-035](ARCHITECTURE_DECISIONS.md#adr-035)). See [SECURITY.md](SECURITY.md) |
 | Observability | JSON logs with a server-generated correlation ID on every request ([ADR-006](ARCHITECTURE_DECISIONS.md#adr-006)) |
 | Maintainability | Small modules, typed interfaces, dependency inversion at external boundaries |
-| Testability | App factory, injected dependencies, deterministic tests (1,043 automated tests today: 892 backend including 49 PostgreSQL and 4 live-model tests, 135 frontend unit and 16 browser tests); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
+| Testability | App factory, injected dependencies, deterministic tests (1,047 automated tests: 895 backend including 49 PostgreSQL and 4 live-model tests, 136 frontend unit and 16 browser tests); a retrieval evaluation with labelled queries ([EVALUATION.md](EVALUATION.md)) |
 | Portability | SQLAlchemy and Alembic abstractions; the same code and migrations run on SQLite and PostgreSQL, with backend-specific retrieval chosen at runtime ([ADR-003](ARCHITECTURE_DECISIONS.md#adr-003), [ADR-021](ARCHITECTURE_DECISIONS.md#adr-021)) |
 
 ## 9. Risks

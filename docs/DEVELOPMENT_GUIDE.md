@@ -219,7 +219,7 @@ uv sync --locked              # fails if uv.lock is out of date with pyproject.t
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
 uv run pip-audit --strict     # known vulnerabilities in the locked dependencies
-uv run pytest                 # 892 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 895 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -227,7 +227,7 @@ uv run pytest                 # 892 tests: 3 real-embedding tests skip without t
 ```powershell
 npm run lint        # ESLint
 npm run typecheck   # tsc --noEmit
-npm test            # Vitest, 135 tests
+npm test            # Vitest, 136 tests
 npm audit --omit=dev --audit-level=high   # known vulnerabilities in what the app ships
 npm run build       # production build
 ```
@@ -341,6 +341,16 @@ uv run python -m app.cli evaluate-all              # plus answers, agent and ful
 **Changing evaluation data.** `eval/manifest.json` records a version and the SHA-256 of every file under `eval/`. After reviewing a change to any file there, run `uv run python -m app.cli update-eval-manifest --version <current + 1>` and commit the manifest together with the data. Until then the evaluation commands refuse to run, and a unit test fails. Each report starts with its run: the data version, manifest SHA-256, commit, models, settings and timing.
 
 The dataset is in `apps/api/eval/` (`answers.json`, `agent.json`, `access.json`, `adversarial/` with prompt-injection documents used only by the answer and agent evaluations, and `access/` with role-restricted documents for the leakage evaluation); reports go to `apps/api/var/eval/` (git-ignored). PostgreSQL runs create and drop throwaway `easa_eval_<random>` databases. Method and results: [EVALUATION.md](EVALUATION.md).
+
+## 6f. Containers, demo and load test (P8-M5)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\demo.ps1     # build and start the whole stack with demo data
+uv run --project apps/api python scripts/load_test.py --failures   # load and failure test against it
+scripts\demo.ps1 -Down                                        # stop; -Reset deletes the demo data
+```
+
+The stack runs the API in production mode against its own database, `easa_app`. It uses ports 3000, 8000, 5433 and 8082, so stop `scripts\dev.ps1` first. After a code change, `docker compose --profile app --profile llm up -d --build --wait` rebuilds the images. Running the stack, backups and incidents: [OPERATIONS.md](OPERATIONS.md).
 
 ## 6e. Local chat model (llama.cpp)
 

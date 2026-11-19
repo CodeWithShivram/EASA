@@ -24,10 +24,15 @@ export function errorResponse(status: number, code: string, message: string): Ne
  * Requests that change something must come from this app's own pages. With
  * SameSite=Strict cookies this blocks cross-site request forgery even in
  * browsers that send the cookie in unusual cases.
+ *
+ * The browser's Origin is compared with the host it addressed (the Host
+ * header), not with request.nextUrl: a server listening on 0.0.0.0, as in the
+ * container (P8-M5), reports that address there instead of the browser's.
  */
 export function isSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
-  return origin !== null && origin === request.nextUrl.origin;
+  const host = request.headers.get("host") ?? request.nextUrl.host;
+  return origin !== null && origin === `${request.nextUrl.protocol}//${host}`;
 }
 
 export function sessionToken(request: NextRequest): string | undefined {

@@ -85,7 +85,7 @@ The documented API command and `scripts/dev.ps1` bind the API to `127.0.0.1`. Ne
 | TXT must be UTF-8 without NUL bytes (the whole file is decoded to check) | [uploads.py](../apps/api/app/services/uploads.py) — tested |
 | Filenames sanitized for display: last path component only; Unicode control (`Cc`) and format (`Cf`) characters removed — zero-width characters, bidirectional controls that can disguise an extension, tag characters, soft hyphens; reserved characters removed; never used as paths. Windows reserved names (`CON.txt`) are kept, as names are display-only | [uploads.py](../apps/api/app/services/uploads.py) — tested |
 | Bytes stored by SHA-256 outside any web root; only validated lowercase hex digests become paths | [blob_store.py](../apps/api/app/storage/blob_store.py) — tested |
-| Identity comes from server configuration only; document endpoints are not mounted in production | [dependencies.py](../apps/api/app/api/dependencies.py), [main.py](../apps/api/app/main.py) — tested |
+| Identity comes from the signed-in session (Phase 6; in Phase 2 it came from server configuration, for development only) | [dependencies.py](../apps/api/app/api/dependencies.py), [main.py](../apps/api/app/main.py) — tested |
 | Every repository query filters by `tenant_id`; another tenant's document (and its chunks) answers exactly like a missing one; deduplication is per tenant, so there is no cross-tenant content oracle | [documents.py](../apps/api/app/repositories/documents.py), [documents.py](../apps/api/app/services/documents.py) — tested |
 
 ### Parsing and chunking
@@ -330,6 +330,18 @@ Residual risks: the CSP allows inline scripts (no nonces; section below); Secure
 
 The CSP has no nonces, because nonces would make Next.js render every page dynamically. Inline scripts are therefore allowed, and protection against injected markup comes from React's escaping and from no component rendering HTML (tested for answers in P7-M2). The rate limits live in one API process ([ADR-035](ARCHITECTURE_DECISIONS.md#adr-035)).
 
+### Containers and operations (Phase 8, P8-M5)
+
+| Control | Where |
+|---|---|
+| Base images and service images pinned by digest; the images install only from `uv.lock` and `package-lock.json`, without development tools in the API image; CI builds them on every push | [api Dockerfile](../apps/api/Dockerfile), [web Dockerfile](../apps/web/Dockerfile), [compose.yaml](../compose.yaml), [ci.yml](../.github/workflows/ci.yml) |
+| Both application containers run as non-root users; every published port is bound to 127.0.0.1; the API runs in production mode (no interactive docs, HSTS, fake model refused) with `--no-proxy-headers` | [Dockerfiles](../apps/api/Dockerfile), [compose.yaml](../compose.yaml) |
+| The stack has its own database (`easa_app`) and upload volume; `demo.ps1 -Reset` deletes only those. The database password is generated into the git-ignored `.env`; demo passwords are generated and written only to the git-ignored `var/demo/credentials.txt` | [demo.ps1](../scripts/demo.ps1) |
+| A database that cannot be reached gives `503 database_unavailable` with `Retry-After`, never a `500` with driver details; only the error type is logged | [errors.py](../apps/api/app/core/errors.py) — tested; failure test |
+| The web app's origin check compares the browser's `Origin` with the `Host` it addressed, so it also works behind a server that listens on `0.0.0.0` (it refused every sign-in in the container before) | [bff.ts](../apps/web/src/lib/server/bff.ts) — tested |
+| `upload-documents` applies the same visibility rules as the API (at most the uploader's role, uploaders only) and writes the same audit record | [cli.py](../apps/api/app/cli.py) — tested |
+| Backups (`pg_dump` and an uploads archive) contain password hashes and documents and are written to the git-ignored `var/backup/` | [OPERATIONS.md](OPERATIONS.md#5-backup-and-restore) |
+
 <a id="secret-scanning"></a>
 ### Secret scanning (repository settings)
 
@@ -377,7 +389,8 @@ Until then, and in addition, the manual pre-commit check of the commit workflow 
 | Rate limits shared between several API instances (today per process) | Before running more than one instance |
 | Running parsers in a separate process with hard CPU, memory and time limits. Today a PDF page can still take seconds of CPU (pypdf's form-XObject limit resets per page) within the 30-second budget, and memory is bounded only by the input and budget limits | Before handling untrusted uploads from real users |
 | TLS (HTTP and database connections) | Any non-local deployment |
-| Container images pinned to digests; GitHub secret scanning and push protection enabled (a repository setting; see [Secret scanning](#secret-scanning)) | P8-M5; repository owner |
+| GitHub secret scanning and push protection enabled (a repository setting; see [Secret scanning](#secret-scanning)) | Repository owner |
+| TLS, a reverse proxy, shared rate limits and sandboxed parsing for any deployment beyond one machine ([PROJECT_REPORT.md](PROJECT_REPORT.md#7-known-limitations)) | Before any shared deployment |
 | Reference counting before blob deletion (blobs are shared across tenants with identical content) | With a delete endpoint |
 
 ## 5. Threat notes
@@ -402,15 +415,15 @@ Until then, and in addition, the manual pre-commit check of the commit workflow 
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 892 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 895 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
-- Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
+- Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.
 - Agent: only permitted tools are offered; refused and unknown calls are reported back without running; at most 3 tool calls, then only an answer; repeated calls are not rerun; invalid model output fails safely; injected `</tool_result>` text stays inside its element; consequential calls become pending actions that run once on confirmation, never after cancel or expiry, never for other users, and not after the permission is revoked; messages are not logged; tool calls are audited.
 - Support tools: other reporters' and other tenants' tickets look missing; drafts need confirmation, take the caller as reporter and normalize text; invalid or extra draft fields are rejected; missing permissions are denied; the list endpoint shows only permitted tools; invocations are audited; not mounted in production.
 - Tools: unknown tools, missing permissions (also with invalid arguments), unknown or oversized arguments and missing confirmation never run a tool; timeouts return without waiting; transient errors are retried; unexpected exceptions and wrong outputs become safe failures without leaking exception text; every attempt is audited with a digest and without plaintext arguments.
-- Conversations: other users' and tenants' conversations are `404` for get, ask and delete; lists show only own conversations; model failures store nothing; stored sources have no text; the turn limit applies; deleting removes messages; content is not logged; not mounted in production; history cannot close its element.
-- Answers: no evidence means no model call; refusals (including refusals phrased in words), uncited and wrongly cited replies are withheld; another tenant's documents never reach the prompt; a document containing `</source>` and fake system instructions stays inside its source element; filenames and sections are escaped; questions and answers are not logged; answers are not mounted in production and return `503` without a model.
+- Conversations: other users' and tenants' conversations are `404` for get, ask and delete; lists show only own conversations; model failures store nothing; stored sources have no text; the turn limit applies; deleting removes messages; content is not logged; history cannot close its element.
+- Answers: no evidence means no model call; refusals (including refusals phrased in words), uncited and wrongly cited replies are withheld; another tenant's documents never reach the prompt; a document containing `</source>` and fake system instructions stays inside its source element; filenames and sections are escaped; questions and answers are not logged; answers return `503` without a model.
 - Local model: the downloaded file is rejected unless its size and SHA-256 match the pinned values; llama.cpp errors never include the prompt; a server still loading its model is reported unavailable.
 - Chat models: model errors never include the prompt; the fake provider is rejected in production; invalid Ollama URLs (credentials, paths, queries, non-http schemes) and model names are rejected; an unreachable model server makes readiness `503`.
 - Keyword index: FTS5 syntax in queries (`NEAR(...)`, unbalanced quotes, column filters, `*`, `AND NOT`, `^`) is harmless; queries without words return nothing; the index follows chunk replacement, text updates and cascade deletes (FTS5 `integrity-check` passes); the migrated index matches the application module.

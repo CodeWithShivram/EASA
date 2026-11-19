@@ -7,15 +7,22 @@ Every error returned to a client has the shape::
 Stack traces and internal exception messages are never returned to clients.
 """
 
+import logging
 from http import HTTPStatus
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.correlation import get_correlation_id
+
+logger = logging.getLogger(__name__)
+# Seconds a client should wait before retrying while the database is unreachable.
+DATABASE_RETRY_AFTER = "5"
 
 
 class ValidationIssue(BaseModel):
@@ -96,6 +103,20 @@ def register_exception_handlers(app: FastAPI) -> None:
             _code_for_status(exc.status_code),
             message,
             headers=exc.headers,
+        )
+
+    # The database cannot be reached (stopped, restarting, network) or the connection
+    # pool is exhausted: a temporary condition, not a bug (P8-M5 failure tests).
+    @app.exception_handler(OperationalError)
+    @app.exception_handler(PoolTimeoutError)
+    async def handle_database_unavailable(_: Request, exc: Exception) -> JSONResponse:
+        # The error type only: driver messages can contain host names and SQL.
+        logger.warning("database unavailable", extra={"error_type": type(exc).__name__})
+        return error_response(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "database_unavailable",
+            "The database is temporarily unavailable. Try again shortly.",
+            headers={"Retry-After": DATABASE_RETRY_AFTER},
         )
 
     @app.exception_handler(RequestValidationError)
