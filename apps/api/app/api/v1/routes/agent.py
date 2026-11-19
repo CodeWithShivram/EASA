@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db_session, get_identity
+from app.api.dependencies import get_db_session, get_identity, limit_model_calls
 from app.api.v1.routes.tools import ToolResultResponse
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
@@ -98,7 +98,12 @@ CurrentIdentity = Annotated[Identity, Depends(get_identity)]
 Actions = Annotated[AgentActionService, Depends(get_action_service)]
 
 
-@router.post("", response_model=AgentResponse, responses=_RUN_ERRORS)
+@router.post(
+    "",
+    response_model=AgentResponse,
+    responses=_RUN_ERRORS,
+    dependencies=[Depends(limit_model_calls)],
+)
 def run_agent(
     request: AgentRequest,
     service: Annotated[AgentService, Depends(get_agent_service)],

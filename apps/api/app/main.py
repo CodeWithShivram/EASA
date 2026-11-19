@@ -1,6 +1,7 @@
 """Application factory.
 
-Run with: ``uv run uvicorn app.main:create_app --factory``
+Run with: ``uv run uvicorn app.main:create_app --factory --no-proxy-headers``
+(the API decides which proxies to trust itself, EASA_TRUSTED_PROXIES; ADR-035).
 """
 
 from collections.abc import AsyncIterator
@@ -29,8 +30,10 @@ from app.core.logging import configure_logging
 from app.core.middleware import (
     BodySizeLimitMiddleware,
     CorrelationIdMiddleware,
+    SecurityHeadersMiddleware,
     UnhandledErrorMiddleware,
 )
+from app.core.rate_limit import RateLimiter
 from app.core.roles import ROLE_PERMISSIONS
 from app.db.engine import create_db_engine
 from app.db.session import create_session_factory
@@ -81,6 +84,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The ONNX model loads lazily on first use, so startup stays fast.
     app.state.embedder = build_embedder(settings)
     app.state.chat_model = chat_model
+    # In-process rate limits (ADR-035).
+    app.state.login_limiter = RateLimiter(settings.rate_limit_login_per_minute)
+    app.state.model_limiter = RateLimiter(settings.rate_limit_model_per_minute)
     # Role -> permissions (app.core.roles); replaceable in tests.
     app.state.role_permissions = ROLE_PERMISSIONS
     app.state.tool_executor = ToolExecutor(
@@ -113,6 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
         expose_headers=[CORRELATION_ID_HEADER],
     )
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)
     app.add_middleware(CorrelationIdMiddleware)
 
     return app

@@ -1607,3 +1607,49 @@ Plan approved on 2026-11-18 with the recommended options: a backend for frontend
 
 **Recommended next phase:** Phase 8, evaluation, reliability and delivery: browser tests (Playwright), security headers, cited agent answers, versioned evaluation data, latency and token tracking, and delivery (containers, CI/CD, deployment documentation).
 
+## Phase 8: Evaluation, Reliability and Delivery
+
+Plan approved on 2026-11-18 with the recommended options: Playwright with Chromium as a web development dependency; `pip-audit`, `npm audit`, GitHub dependency review and Actions pinned to commit SHAs (secret scanning is a repository setting for the owner); Dockerfiles for the API and web app with a full-stack Compose profile and a demo command; rate limits in the API process.
+
+| Milestone | Scope | Status | Commit |
+|---|---|---|---|
+| P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | the commit that adds this row |
+| P8-M2 | Cited agent answers; agent and access evaluations rerun | NOT STARTED | |
+| P8-M3 | Browser end-to-end tests (Playwright) in CI | NOT STARTED | |
+| P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | NOT STARTED | |
+| P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | NOT STARTED | |
+
+## P8-M1: Security hardening
+
+**Scope:** security response headers on the API and the web app, rate limits on sign-in and model calls, dependency audits in CI, Actions pinned to commit SHAs, and instructions for GitHub secret scanning.
+
+**Implemented**
+
+- API: `SecurityHeadersMiddleware` (nosniff, no referrer, no framing, same-site resources; CSP `default-src 'none'` and `no-store` outside the docs; HSTS in production).
+- API: `app/core/rate_limit.py`, with `RateLimiter` (a sliding window per key, bounded memory), `too_many_requests` (`429 rate_limited` with `Retry-After`) and `client_address`, which trusts `X-Forwarded-For` only from `EASA_TRUSTED_PROXIES` and reads it from the right. Route dependencies: `limit_sign_in` on login, per client address; `limit_model_calls` on answers, conversation questions and the agent, per user. Settings: `EASA_RATE_LIMIT_LOGIN_PER_MINUTE` (20), `EASA_RATE_LIMIT_MODEL_PER_MINUTE` (10), `EASA_TRUSTED_PROXIES` (`[]`).
+- Uvicorn launch commands (`scripts/dev.ps1`, README, DEVELOPMENT_GUIDE, LLD) now pass `--no-proxy-headers`; see the live check below.
+- Web: `lib/securityHeaders.ts`, applied to every route in `next.config.ts`. The CSP has no nonces and has `'unsafe-eval'` only in development. It has no `upgrade-insecure-requests`, so that `next start` keeps working on http://localhost. The other headers: nosniff, referrer policy, `DENY`, a permissions policy, and HSTS in production. The sign-in route passes the incoming `X-Forwarded-For` on to the API.
+- Supply chain: `pip-audit` (development dependency 2.10.1) and `npm audit --omit=dev --audit-level=high` in CI and `check.ps1`; a `dependency-review` job on pull requests (fails on high); all Actions pinned to commit SHAs; `npm audit fix` (without `--force`) applied to the web lockfile.
+- Tests: backend 846 → 864 (rate limiter, `client_address` cases, trusted-proxy validation, headers on success, `401` and `404`, docs without a CSP, HSTS in production, the sign-in limit with forged and trusted forwarded addresses, the model limit per user across answers and the agent, reads never limited); web 128 → 133 (headers, forwarding the address on sign-in).
+- Docs: ADR-035; SECURITY (hardening controls, [secret-scanning instructions](SECURITY.md#secret-scanning), supply chain, threats); API_SPECIFICATION (`429 rate_limited`, headers); LLD; DEVELOPMENT_GUIDE; HLD; README; `apps/api/.env.example`.
+
+**Verification (executed 2026-11-19)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL`, `EASA_REQUIRE_POSTGRES_TESTS=1` and `EASA_TEST_LLM_URL` (local PostgreSQL and llama.cpp containers) | All checks passed; 864 tests, none skipped; `pip-audit`: no known vulnerabilities |
+| `scripts\check.ps1 -Frontend` (audit, lint, type check, tests, production build) | All checks passed; 133 web tests; production audit: 0 vulnerabilities |
+| `npm audit` | Production dependencies: 0 vulnerabilities. Including development tools: 18 before (6 moderate, 12 high), then 17 high after `npm audit fix`, all from the `picomatch` advisory with no fixed release (ADR-035) |
+| Workflow file | Parsed with a YAML parser; every `uses:` is a 40-character SHA |
+| Live check (scratch API with `EASA_RATE_LIMIT_LOGIN_PER_MINUTE=5`; `next start` with `EASA_API_URL`) | Uvicorn with `--no-proxy-headers`. The API's health response carried CSP `default-src 'none'; frame-ancestors 'none'`, `no-store`, nosniff, `DENY`, `no-referrer` and `same-site`. The login page carried the CSP (no `'unsafe-eval'`, no `upgrade-insecure-requests`), nosniff, `DENY`, the referrer and permissions policies and HSTS. Seven sign-ins through the web app, each with a different forged `X-Forwarded-For`, got `401` five times, then `429 rate_limited` twice. A direct sign-in from the same host got `429` with `Retry-After: 55`. Servers stopped |
+| Uvicorn proxy headers (scratch API, limit 2, a different forged `X-Forwarded-For` on each sign-in) | Default Uvicorn: `401, 401, 401, 401`, because Uvicorn trusts the header from 127.0.0.1 and the limit never applies. With `--no-proxy-headers`: `401, 401, 429, 429` |
+| First runs | The first live check showed `upgrade-insecure-requests` and HSTS on http://localhost, because `next start` is production mode; the directive was removed (HSTS is ignored over http). A sign-in through the web app was not limited although it came from the same host; the cause was Uvicorn's proxy headers, found with the check above |
+
+**Known limitations**
+
+- The limits are per API process and reset on restart. Without a trusted proxy, all sign-ins through the web app share the web server's bucket.
+- The CSP allows inline scripts (no nonces).
+- GitHub secret scanning and push protection have to be enabled by the repository owner.
+- 17 high-severity advisories remain in development-only npm tooling.
+
+**Exit criteria:** met. Both servers send the headers, sign-in and model calls are limited with a `429` that says when to retry, and CI fails on known-vulnerable dependencies and runs only pinned Actions.

@@ -5,6 +5,7 @@ an optional ``.env`` file in the working directory. Invalid or unknown values
 fail application startup instead of being silently ignored.
 """
 
+import ipaddress
 import re
 from pathlib import Path
 from typing import Literal
@@ -80,6 +81,13 @@ class Settings(BaseSettings):
     # after the lifetime.
     session_idle_minutes: int = Field(default=480, ge=5, le=24 * 60)
     session_lifetime_hours: int = Field(default=24, ge=1, le=24 * 30)
+    # Rate limits (ADR-035), per minute; 0 disables a limit. Sign-in attempts per
+    # client address; model calls (answers, conversation questions, the agent) per user.
+    rate_limit_login_per_minute: int = Field(default=20, ge=0, le=10_000)
+    rate_limit_model_per_minute: int = Field(default=10, ge=0, le=10_000)
+    # Proxies whose X-Forwarded-For is trusted for the client address (e.g. a
+    # reverse proxy that overwrites the header). Empty: the TCP peer is the client.
+    trusted_proxies: list[str] = Field(default_factory=list)
     # scrypt cost (a power of two). Production requires at least the default;
     # tests lower it for speed.
     password_hash_n: int = Field(default=DEFAULT_N, ge=2**10, le=2**20)
@@ -133,6 +141,14 @@ class Settings(BaseSettings):
                 "paths, queries or fragments"
             )
         return value.rstrip("/")
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, values: list[str]) -> list[str]:
+        try:
+            return [str(ipaddress.ip_address(v.strip())) for v in values]
+        except ValueError:
+            raise ValueError("trusted_proxies must be IP addresses") from None
 
     @field_validator("password_hash_n")
     @classmethod

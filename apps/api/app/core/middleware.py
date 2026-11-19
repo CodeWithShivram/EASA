@@ -162,3 +162,47 @@ class BodySizeLimitMiddleware:
         return error_response(
             HTTPStatus.CONTENT_TOO_LARGE, "request_too_large", "The request body is too large."
         )
+
+
+# Paths of the interactive API docs (development only); Swagger UI needs its own
+# scripts and styles, so the strict policy below is not applied to them.
+_DOCS_PATHS = ("/docs", "/openapi.json")
+
+
+class SecurityHeadersMiddleware:
+    """Defensive response headers for a JSON API (P8-M1).
+
+    Responses are never meant to be rendered, framed, cached or sniffed:
+    ``default-src 'none'`` and ``frame-ancestors 'none'`` stop a browser from
+    executing or embedding anything it might be tricked into loading, and
+    ``no-store`` keeps personal data out of shared caches. HSTS is added only in
+    production, where the API must be served over https.
+    """
+
+    def __init__(self, app: ASGIApp, *, hsts: bool) -> None:
+        self.app = app
+        self.hsts = hsts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        docs = scope["path"].startswith(_DOCS_PATHS)
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["Referrer-Policy"] = "no-referrer"
+                headers["X-Frame-Options"] = "DENY"
+                headers["Cross-Origin-Resource-Policy"] = "same-site"
+                if not docs:
+                    headers["Content-Security-Policy"] = (
+                        "default-src 'none'; frame-ancestors 'none'"
+                    )
+                    headers.setdefault("Cache-Control", "no-store")
+                if self.hsts:
+                    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

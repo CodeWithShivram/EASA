@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from app.api.dependencies import get_auth_service, get_bearer_token, get_identity
+from app.api.dependencies import get_auth_service, get_bearer_token, get_identity, limit_sign_in
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.core.roles import Role
@@ -29,7 +29,7 @@ def _current_user(user: User, permissions: frozenset[str]) -> CurrentUser:
     )
 
 
-@router.post("/login", responses=_UNAUTHORIZED)
+@router.post("/login", responses=_UNAUTHORIZED, dependencies=[Depends(limit_sign_in)])
 def login(body: LoginRequest, service: Service, request: Request) -> LoginResponse:
     signed_in = service.login(body.username, body.password)
     permissions = request.app.state.role_permissions.get(signed_in.user.role, frozenset())

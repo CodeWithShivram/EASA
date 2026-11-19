@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_answer_service, require
+from app.api.dependencies import get_answer_service, limit_model_calls, require
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.schemas.answers import AnswerRequest, AnswerResponse, AnswerSource
@@ -48,7 +48,9 @@ def to_answer_response(result: AnswerResult) -> AnswerResponse:
     )
 
 
-@router.post("", response_model=AnswerResponse, responses=_ERRORS)
+@router.post(
+    "", response_model=AnswerResponse, responses=_ERRORS, dependencies=[Depends(limit_model_calls)]
+)
 def answer(
     request: AnswerRequest,
     service: Annotated[AnswerService, Depends(get_answer_service)],

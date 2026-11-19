@@ -61,8 +61,10 @@ The smoke test has been run successfully; the interactive `Ctrl+C` shutdown uses
 ```powershell
 uv run alembic upgrade head   # once, and after pulling new migrations
 uv run python -m app.cli download-embedding-model   # once: 64 MB from Hugging Face, pinned revision
-uv run uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000 --no-access-log
+uv run uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000 --no-access-log --no-proxy-headers
 ```
+
+Always pass `--no-proxy-headers`: by default Uvicorn trusts `X-Forwarded-For` from 127.0.0.1 and rewrites the client address before the API sees it, which would let anyone reaching the API through the web app on the same host choose their address and evade the sign-in limit. Which proxies to trust is decided by the API's own `EASA_TRUSTED_PROXIES` ([ADR-035](ARCHITECTURE_DECISIONS.md#adr-035)).
 
 `--reload` restarts the server when Python files change. Without `--reload` the same command runs a single process. Logs are JSON on stderr; with `--reload`, the reloader's own few lines are plain text.
 
@@ -189,6 +191,8 @@ The automated checks drive the web server over HTTP; a person should also look a
 | `EASA_ANSWER_SUPPORT_CHECK` | API | `false` | Drop citations whose source shares no content words with the citing sentence (P4-M5; see EVALUATION.md section 10) |
 | `EASA_SESSION_IDLE_MINUTES`, `EASA_SESSION_LIFETIME_HOURS` | API | `480`, `24` | Sign-in sessions end after this long without use, and at the latest after the lifetime (ADR-031) |
 | `EASA_PASSWORD_HASH_N` | API | `32768` | scrypt cost (power of two); production refuses lower values. Tests use 1024 |
+| `EASA_RATE_LIMIT_LOGIN_PER_MINUTE`, `EASA_RATE_LIMIT_MODEL_PER_MINUTE` | API | `20`, `10` | Sign-in attempts per client address and model calls (answers, conversation questions, agent) per user per minute; `0` turns a limit off; per API process (ADR-035). Tests turn them off unless they test them |
+| `EASA_TRUSTED_PROXIES` | API | `[]` | JSON list of IP addresses whose `X-Forwarded-For` is believed for the sign-in limit. List a proxy only if it overwrites that header; Next.js does not, so leave it empty unless a reverse proxy sits in front |
 | `EASA_API_URL` | Web (server only) | `http://localhost:8000` | Where the web app's backend for frontend finds the API (ADR-034); never sent to the browser |
 
 Invalid API settings stop the server at startup with a validation error that never shows the submitted value.
@@ -202,7 +206,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # backend + fronten
 scripts\check.ps1 -Backend                                    # or -Frontend, -SkipBuild
 ```
 
-It runs every check even after a failure, prints a PASS/FAIL table and exits with code 1 if anything failed. The Alembic step uses a temporary SQLite database that is deleted afterwards. Dependencies must already be installed.
+It runs every check even after a failure, prints a PASS/FAIL table and exits with code 1 if anything failed. The Alembic step uses a temporary SQLite database that is deleted afterwards. Dependencies must already be installed. Since P8-M1 it also audits dependencies (`pip-audit --strict`; `npm audit --omit=dev --audit-level=high`); both need network access to the advisory databases.
 
 **CI:** [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs the same checks on GitHub Actions (Ubuntu, Python 3.14, uv 0.12.9, Node 24.13.0) for pushes to `main` and for pull requests.
 
@@ -214,7 +218,8 @@ Individual commands:
 uv sync --locked              # fails if uv.lock is out of date with pyproject.toml
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
-uv run pytest                 # 846 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pip-audit --strict     # known vulnerabilities in the locked dependencies
+uv run pytest                 # 864 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -222,7 +227,8 @@ uv run pytest                 # 846 tests: 3 real-embedding tests skip without t
 ```powershell
 npm run lint        # ESLint
 npm run typecheck   # tsc --noEmit
-npm test            # Vitest, 27 tests
+npm test            # Vitest, 133 tests
+npm audit --omit=dev --audit-level=high   # known vulnerabilities in what the app ships
 npm run build       # production build
 ```
 

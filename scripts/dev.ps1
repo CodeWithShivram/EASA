@@ -77,7 +77,7 @@ try {
     Write-Host 'Starting API on http://127.0.0.1:8000 ...' -ForegroundColor Cyan
     $api = Start-Process -FilePath 'uv' -WorkingDirectory (Join-Path $root 'apps\api') -NoNewWindow -PassThru -ArgumentList @(
         'run', 'uvicorn', 'app.main:create_app', '--factory', '--reload',
-        '--host', '127.0.0.1', '--port', '8000', '--no-access-log')
+        '--host', '127.0.0.1', '--port', '8000', '--no-access-log', '--no-proxy-headers')
 
     Write-Host 'Starting web app on http://localhost:3000 ...' -ForegroundColor Cyan
     $web = Start-Process -FilePath 'npm.cmd' -WorkingDirectory (Join-Path $root 'apps\web') -NoNewWindow -PassThru -ArgumentList @('run', 'dev')

@@ -314,7 +314,30 @@ Leakage evaluation (P6-M5, [EVALUATION.md section 12](EVALUATION.md#12-access-le
 | Support assistant (P7-M4): a proposal is confirmed or cancelled only by an explicit click, and the page shows the server-written prompt and the exact arguments, never the model's description; agent answers are labelled as not checked against sources; model text is rendered as text (live check: a second confirmation `409 action_not_pending`, a confirmation from another origin `403`) | [AssistantPage.tsx](../apps/web/src/components/assistant/AssistantPage.tsx) — tested |
 | Documents (P7-M3): the upload form and visibility selector offer only levels up to the user's role and appear only for roles that may upload, as conveniences; uploads and changes are decided by the API (live check: an employee's upload `403`, a manager raising a document to administrators `403`, a hidden document `404`) | [DocumentsPage.tsx](../apps/web/src/components/documents/DocumentsPage.tsx) — tested |
 
-Residual risks: no security response headers (CSP) yet (planned with this phase's later milestones or Phase 8); Secure cookies need https outside `localhost`; the allowlist must follow API changes.
+Residual risks: the CSP allows inline scripts (no nonces; section below); Secure cookies need https outside `localhost`; the allowlist must follow API changes.
+
+### Hardening (Phase 8, P8-M1)
+
+| Control | Where |
+|---|---|
+| API response headers: `nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy: same-site` on every response, also errors; `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` and `Cache-Control: no-store` except on the development-only docs; HSTS in production | [middleware.py](../apps/api/app/core/middleware.py) `SecurityHeadersMiddleware` — tested |
+| Web response headers: CSP (scripts, styles, connections, forms and the base URL limited to this origin; no plugins; no framing; `'unsafe-eval'` only in development), `nosniff`, `strict-origin-when-cross-origin`, `DENY`, a `Permissions-Policy`, HSTS in production | [securityHeaders.ts](../apps/web/src/lib/securityHeaders.ts), [next.config.ts](../apps/web/next.config.ts) — tested |
+| Sign-in limit per client address (`EASA_RATE_LIMIT_LOGIN_PER_MINUTE`, 20) and model call limit per user (`EASA_RATE_LIMIT_MODEL_PER_MINUTE`, 10); `429 rate_limited` with `Retry-After`; reads are never limited | [rate_limit.py](../apps/api/app/core/rate_limit.py), [dependencies.py](../apps/api/app/api/dependencies.py) — tested |
+| `X-Forwarded-For` counts only from `EASA_TRUSTED_PROXIES` and is read from the right; Uvicorn runs with `--no-proxy-headers` so that it does not rewrite the client address itself (a forged header from the same host evaded the limit without it) | [rate_limit.py](../apps/api/app/core/rate_limit.py) — tested; launch flag in [dev.ps1](../scripts/dev.ps1) and the docs; live-checked |
+| Dependency audits in CI and `check.ps1`: `pip-audit --strict`, `npm audit --omit=dev --audit-level=high`; dependency review on pull requests | [ci.yml](../.github/workflows/ci.yml), [check.ps1](../scripts/check.ps1) |
+
+The CSP has no nonces, because nonces would make Next.js render every page dynamically. Inline scripts are therefore allowed, and protection against injected markup comes from React's escaping and from no component rendering HTML (tested for answers in P7-M2). The rate limits live in one API process ([ADR-035](ARCHITECTURE_DECISIONS.md#adr-035)).
+
+<a id="secret-scanning"></a>
+### Secret scanning (repository settings)
+
+GitHub secret scanning is a setting, not a file in the repository. The repository owner enables it in the repository's **Settings**, on the **Advanced Security** page (**Code security** in older layouts):
+
+1. **Secret scanning** (part of GitHub Secret Protection; free for public repositories): scans the whole history and new pushes for known credential formats and raises alerts under **Security → Secret scanning**.
+2. **Push protection**: blocks a push that contains a recognised secret before it reaches GitHub; bypassing it needs a stated reason.
+3. Optional: **Dependabot alerts** for the lockfiles, in addition to the audits in CI.
+
+Until then, and in addition, the manual pre-commit check of the commit workflow (no `.env` files, databases, keys, tokens or company data in the staged diff) remains the control.
 
 ### Database
 - Parameterized access through SQLAlchemy. Raw SQL is limited to the constant `SELECT 1` probe, constant DDL (FTS5, migrations), the FTS5 rebuild statement, and the two keyword search queries, whose values (match expression, tenant, status, limit) are all bound parameters. The pgvector query is built with SQLAlchemy and binds the query vector.
@@ -336,7 +359,8 @@ Residual risks: no security response headers (CSP) yet (planned with this phase'
 - Container images pinned by tag: `ghcr.io/ggml-org/llama.cpp:server-b12407` (amd64 digest `sha256:4bac836a…`; P4-M3) and `pgvector/pgvector:0.8.7-pg18` (digest `sha256:38681dc6…` when pulled on 2026-11-14), in both Compose and CI. Model file added in P4-M3: `Qwen/Qwen2.5-1.5B-Instruct-GGUF` `qwen2.5-1.5b-instruct-q4_k_m.gguf` (Apache-2.0) at revision `91cad511…`, SHA-256 `6a1a2eb6…`. Python packages added in P3-M4: `psycopg[binary]` 3.3.9 (LGPL-3.0, used as an unmodified library) and `pgvector` 0.5.1 (MIT).
 - Lockfiles committed: `apps/api/uv.lock`, `apps/web/package-lock.json` (resolved only from `registry.npmjs.org`).
 - Dependencies are added only with a stated purpose, after checking compatibility with Python 3.14 and Node 24.13.
-- CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Actions are pinned to major-version tags (setup-uv to an exact release tag), not commit SHAs.
+- CI ([ci.yml](../.github/workflows/ci.yml)) installs strictly from the lockfiles (`uv sync --locked`, `npm ci`) with a read-only `GITHUB_TOKEN` (`permissions: contents: read`). Since P8-M1 every Action is pinned to a full commit SHA with its release in a comment (checkout v7.0.1, setup-python v7.1.0, setup-uv v10.3.3, setup-node v7.1.0, dependency-review-action v5.0.1).
+- Since P8-M1 CI fails on known vulnerabilities: `pip-audit --strict` (all locked Python packages, including development tools) and `npm audit --omit=dev --audit-level=high` (what the web app ships); pull requests also run GitHub's dependency review (fails on high). Development-only npm findings are reviewed by hand: at P8-M1, `npm audit fix` (without `--force`, which would downgrade packages) cleared the moderate ones; 17 high remain in build and test tooling, all from one `picomatch` ReDoS advisory (GHSA-fc5q-39xc-vjpf) that matches every published version. The lockfile now contains a prerelease (`@emnapi/runtime` 2.0.0-beta.2), an optional nested development dependency of the Rolldown WebAssembly binding.
 - Ruff runs the bandit-derived `S` security rules on all Python code (`S101`, `assert`, is allowed in tests).
 - No web fonts are fetched at build time. Next.js telemetry is not disabled by repository configuration; set `NEXT_TELEMETRY_DISABLED=1` in your shell to opt out.
 
@@ -348,11 +372,10 @@ Residual risks: no security response headers (CSP) yet (planned with this phase'
 | Prompt-injection defences; retrieved text kept separate from instructions | Phases 4, 5 |
 | Allowlisted tools with strict schemas, permission re-check before execution, confirmation for consequential actions | Phase 5 |
 | Audit logs for protected operations and tool executions (tool, user, authorization result, outcome, correlation ID) | Phases 5, 6 |
-| Rate limiting | Before any shared deployment |
+| Rate limits shared between several API instances (today per process) | Before running more than one instance |
 | Running parsers in a separate process with hard CPU, memory and time limits. Today a PDF page can still take seconds of CPU (pypdf's form-XObject limit resets per page) within the 30-second budget, and memory is bounded only by the input and budget limits | Before handling untrusted uploads from real users |
-| Security response headers on the API (e.g. CSP, `X-Content-Type-Options`) | Phase 7 / 8 |
 | TLS (HTTP and database connections) | Any non-local deployment |
-| Automated dependency review and secret scanning in CI; pinning Actions to commit SHAs and container images to digests | Phase 8 |
+| Container images pinned to digests; GitHub secret scanning and push protection enabled (a repository setting; see [Secret scanning](#secret-scanning)) | P8-M5; repository owner |
 | Reference counting before blob deletion (blobs are shared across tenants with identical content) | With a delete endpoint |
 
 ## 5. Threat notes
@@ -367,16 +390,17 @@ Residual risks: no security response headers (CSP) yet (planned with this phase'
 | Parser resource exhaustion (decompression bombs, `gridSpan`, quadratic work, huge block counts) | Stream, decoded-byte, time, character, block and chunk budgets; linear algorithms (verified before/after in P2-M5) | Parsing still runs in the API process; a slow PDF occupies a worker for up to about 30 seconds |
 | XML attacks via DOCX (XXE, entity expansion) | `resolve_entities=False`, no external DTDs or network in lxml, libxml2 amplification limit | Low |
 | Spoofed or hidden text (bidi controls, tag characters) | Removed from filenames and from normalized text | Visually confusable letters (homoglyphs) are not normalized |
-| Accidental commit of secrets or data | `.gitignore` rules; manual pre-commit diff review and secret check required by the commit workflow | Manual process; automated scanning planned for CI |
+| Accidental commit of secrets or data | `.gitignore` rules; manual pre-commit diff review and secret check required by the commit workflow | Manual process until GitHub secret scanning and push protection are enabled ([Secret scanning](#secret-scanning)) |
 | Local PostgreSQL reachable from the network | Compose binds to `127.0.0.1` only; random password in a git-ignored `.env` | Anyone with access to the machine can reach it; acceptable for synthetic data |
 | Web server reachable from the local network | npm scripts bind to `localhost` (M5) | Running `next` directly without `--hostname` still binds to all interfaces |
 | Malicious API responses reaching the UI | Zod validation; React escaping | Low |
+| Password guessing and model abuse | Per-account lockout; sign-in limit per client address; model call limit per user (ADR-035) | Limits are per API process; without a trusted proxy all web sign-ins share one bucket, so a flood can delay sign-ins for up to a minute |
 
 ## 6. Security review and testing
 
 **P2-M5 review.** An independent read-only review of the upload, processing and chunk path (with timing and fuzzing experiments) reported 11 findings. All were reproduced or reasoned through and fixed, or documented here as residual risk: quadratic chunking, `gridSpan` amplification, PDF parsing cost, documents stuck in `processing`, a weak text cap, zip exceptions causing 500s, invisible characters in chunk text and filenames, a name-only macro check, file fragments in logs, and a non-ASCII `Content-Length` edge case. Details and before/after measurements are in [PROGRESS.md](PROGRESS.md#p2-m5-hardening-and-phase-2-report).
 
-**Automated tests** (part of the 846 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
+**Automated tests** (part of the 864 backend tests; 3 real-model tests skip without the model and 49 PostgreSQL tests without `EASA_TEST_POSTGRES_URL`, but CI always runs them):
 
 - Search: another tenant's matching document never appears, even with `top_k=50`, in all three modes; failed, processing and uploaded documents are not searchable; vectors of other models are ignored; unknown request fields (`tenant_id`) and modes are rejected; the query is not logged; `503` when the model is missing (semantic and hybrid), while keyword mode still works; not mounted in production.
 - PostgreSQL: another tenant's documents never appear in any mode; failed, processing and uploaded documents are not searched; vectors of other models or dimensions are ignored; hostile `tsquery` input (`'`, `&`, `!`, `<->`, `:*`, `:A`, an SQL injection attempt) is harmless and leaves the data intact; queries of only stop words return nothing.

@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.core.correlation import get_correlation_id
 from app.core.errors import AppError
 from app.core.identity import Identity
+from app.core.rate_limit import client_address, too_many_requests
 from app.db.audit import AuditOutcome
 from app.db.probe import SqlAlchemyDatabaseProbe
 from app.db.session import iter_session
@@ -108,6 +109,26 @@ def require(permission: str) -> Callable[..., Identity]:
         )
 
     return dependency
+
+
+def limit_sign_in(request: Request) -> None:
+    """At most EASA_RATE_LIMIT_LOGIN_PER_MINUTE sign-in attempts per client address."""
+    state = request.app.state
+    address = client_address(request, state.settings.trusted_proxies)
+    retry_after = state.login_limiter.check(f"login:{address}")
+    if retry_after is not None:
+        raise too_many_requests(retry_after)
+
+
+def limit_model_calls(
+    request: Request, identity: Annotated[Identity, Depends(get_identity)]
+) -> None:
+    """At most EASA_RATE_LIMIT_MODEL_PER_MINUTE model calls per signed-in user."""
+    retry_after = request.app.state.model_limiter.check(
+        f"model:{identity.tenant_id}:{identity.user_id}"
+    )
+    if retry_after is not None:
+        raise too_many_requests(retry_after)
 
 
 def get_document_service(

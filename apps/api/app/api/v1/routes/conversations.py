@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from app.api.dependencies import get_conversation_service, require
+from app.api.dependencies import get_conversation_service, limit_model_calls, require
 from app.api.v1.routes.answers import to_answer_response
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
@@ -110,7 +110,12 @@ def get_conversation(
     )
 
 
-@router.post("/{conversation_id}/messages", response_model=AskResponse, responses=_ASK_ERRORS)
+@router.post(
+    "/{conversation_id}/messages",
+    response_model=AskResponse,
+    responses=_ASK_ERRORS,
+    dependencies=[Depends(limit_model_calls)],
+)
 def ask(
     conversation_id: uuid.UUID, request: AskRequest, service: Service, identity: CurrentIdentity
 ) -> AskResponse:

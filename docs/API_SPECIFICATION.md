@@ -45,6 +45,7 @@ Related: [LLD](LLD.md) · [Security](SECURITY.md) · [Architecture decisions](AR
 | 405 | `method_not_allowed` | Wrong method on a known path; `Allow` header included |
 | 413 | `request_too_large` | Request body over the limit (see Conventions) |
 | 422 | `validation_error` | Invalid path, query or body parameters (e.g. malformed document ID, `limit` out of range, missing `file` field) |
+| 429 | `rate_limited` | Too many sign-in attempts from one client address, or too many model calls (`POST /answers`, `POST /conversations/{id}/messages`, `POST /agent`) by one user within a minute; `Retry-After` gives the seconds to wait (P8-M1) |
 | various | document-specific codes | See section 3.4 |
 | 500 | `internal_error` | Unexpected server error; message `An unexpected error occurred.` |
 | other 4xx/5xx from the framework | HTTP reason phrase in snake case | e.g. `service_unavailable` |
@@ -412,6 +413,11 @@ Invalid parameters give `422`. Every read is itself recorded (`audit.read`, the 
 | `Accept: application/json` | request | Sent by the web client |
 | `Authorization: Bearer <token>` | request | Required on every endpoint except health and sign-in |
 | `WWW-Authenticate: Bearer` | response | On `401 not_authenticated` |
+| `Retry-After` | response | On `429 rate_limited`: whole seconds until a request would be accepted |
+| `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy: same-site` | response | Every response (P8-M1) |
+| `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `Cache-Control: no-store` | response | Every response except the development-only `/docs` and `/openapi.json`; a route's own `Cache-Control` wins |
+| `Strict-Transport-Security` | response | Production only |
+| `X-Forwarded-For` | request | Used for the sign-in limit only when the connecting address is in `EASA_TRUSTED_PROXIES` |
 
 ## 5. Planned endpoint groups (no contract yet)
 
@@ -432,7 +438,7 @@ Each will be documented here with purpose, authentication, authorization, reques
 
 ## 6. Known gaps
 
-- No rate limiting yet (only the per-account sign-in lockout).
+- Rate limits are kept per API process (ADR-035); several instances would each allow the full rate.
 - Uploads are only accepted from non-browser clients for now (CORS allows `GET` only).
 - Health endpoints are public. They expose only coarse status.
 - Only `GET` is allowed by CORS; this will widen as endpoints are added.

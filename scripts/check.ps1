@@ -3,7 +3,7 @@
     Runs the EASA quality checks for the API and the web app.
 
 .DESCRIPTION
-    Backend (apps/api): lockfile consistency, ruff format, ruff lint, pytest,
+    Backend (apps/api): lockfile consistency, dependency audit, ruff format, ruff lint, pytest,
     and Alembic upgrade + drift check against a temporary SQLite database.
     Frontend (apps/web): ESLint, TypeScript, Vitest and a production build.
 
@@ -61,6 +61,7 @@ function Invoke-Check {
 
 if ($runBackend) {
     Invoke-Check 'api: uv sync --locked' $apiDir { uv sync --locked }
+    Invoke-Check 'api: pip-audit' $apiDir { uv run pip-audit --strict --progress-spinner off }
     Invoke-Check 'api: ruff format --check' $apiDir { uv run ruff format --check . }
     Invoke-Check 'api: ruff check' $apiDir { uv run ruff check . }
     Invoke-Check 'api: pytest' $apiDir { uv run pytest }
@@ -83,6 +84,7 @@ if ($runFrontend) {
         Write-Host "apps/web/node_modules is missing; run 'npm ci' in apps/web first." -ForegroundColor Red
         $results.Add([pscustomobject]@{ Check = 'web: dependencies installed'; Result = 'FAIL'; Seconds = 0 })
     } else {
+        Invoke-Check 'web: npm audit (production)' $webDir { npm audit --omit=dev --audit-level=high }
         Invoke-Check 'web: lint' $webDir { npm run lint }
         Invoke-Check 'web: typecheck' $webDir { npm run typecheck }
         Invoke-Check 'web: test' $webDir { npm test }

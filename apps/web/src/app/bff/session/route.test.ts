@@ -65,6 +65,30 @@ describe("POST /bff/session (sign in)", () => {
     expect(init.body).toBe('{"username":"alice","password":"pw"}');
   });
 
+  it("passes the browser's forwarded address on, for the API's sign-in limit", async () => {
+    api.mockResolvedValueOnce(
+      Response.json(
+        { error: { code: "rate_limited", message: "Too many requests.", correlation_id: null } },
+        { status: 429 },
+      ),
+    );
+    const req = new NextRequest(`${ORIGIN}/bff/session`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: ORIGIN,
+        "x-forwarded-for": "198.51.100.7",
+      },
+      body: '{"username":"a","password":"b"}',
+    });
+
+    const response = await POST(req);
+
+    expect(response.status).toBe(429);
+    const init = api.mock.calls[0]?.[1] as { headers: Record<string, string> };
+    expect(init.headers["X-Forwarded-For"]).toBe("198.51.100.7");
+  });
+
   it("relays a failed sign-in without setting a cookie", async () => {
     api.mockResolvedValueOnce(
       Response.json(

@@ -74,9 +74,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   let api: Response;
   try {
+    // The browser's address as Next.js reports it. The API uses it for its sign-in
+    // limit only if it trusts this server (EASA_TRUSTED_PROXIES), which is reliable
+    // only behind a reverse proxy that overwrites X-Forwarded-For (ADR-035).
+    const forwarded = request.headers.get("x-forwarded-for");
     api = await callApi("/auth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(forwarded ? { "X-Forwarded-For": forwarded } : {}),
+      },
       body: JSON.stringify(credentials),
     });
   } catch (error) {

@@ -72,7 +72,7 @@ Routes stay thin: they resolve dependencies, call a service and map the result t
 6. Registers exception handlers and includes the `/api/v1` router.
 7. Adds middleware (see 2.4).
 
-Run with `uv run uvicorn app.main:create_app --factory` so configuration is read at startup, not at import time.
+Run with `uv run uvicorn app.main:create_app --factory --no-proxy-headers` so configuration is read at startup, not at import time, and so that Uvicorn does not rewrite the client address from `X-Forwarded-For` (proxy trust is the API's `trusted_proxies` setting; ADR-035).
 
 ### 2.3 Configuration — [app/core/config.py](../apps/api/app/core/config.py)
 
@@ -84,6 +84,8 @@ Run with `uv run uvicorn app.main:create_app --factory` so configuration is read
 | `log_level` | `DEBUG`…`CRITICAL` | `INFO` | Literal |
 | `database_url` | `SecretStr` | `sqlite:///<apps/api>/var/easa.db` | Parsed with SQLAlchemy `make_url`; driver must be `sqlite`, `sqlite+pysqlite` or `postgresql+psycopg` |
 | `cors_allowed_origins` | `list[str]` (JSON in env) | `["http://localhost:3000"]` | Each origin `http(s)://host[:port]`; no `*`, path, query or fragment; trailing `/` removed |
+| `rate_limit_login_per_minute`, `rate_limit_model_per_minute` | `int` | `20`, `10` | 0–10000; `0` turns the limit off (P8-M1) |
+| `trusted_proxies` | `list[str]` (JSON in env) | `[]` | Each must be an IP address; surrounding spaces removed |
 
 `is_production` is a convenience property. Validation errors never echo input values.
 
@@ -95,6 +97,7 @@ Starlette runs the last-added middleware first. Effective order for a request, o
 |---|---|---|
 | 1 | Starlette `ServerErrorMiddleware` | Framework fallback (rarely reached; see #4) |
 | 2 | `CorrelationIdMiddleware` | Generates `uuid4().hex` per HTTP request, stores it in a context variable, adds `X-Correlation-ID` to the response, logs `request completed` with `method`, `path`, `status_code`, `duration_ms` (query string deliberately omitted) |
+| 2a | `SecurityHeadersMiddleware` (P8-M1) | Adds the security headers of API_SPECIFICATION section 4 to every response start, including errors and CORS rejections; no CSP or `no-store` for `/docs` and `/openapi.json`; HSTS when `hsts=settings.is_production` |
 | 3 | `CORSMiddleware` | Allowed origins from settings; `allow_methods=["GET"]`, `allow_headers=["Content-Type"]`, `allow_credentials=False`, exposes `X-Correlation-ID` |
 | 4 | `UnhandledErrorMiddleware` | Catches any exception from the app, logs it with traceback, returns the standard 500 body. If the response had already started it re-raises |
 | 4a | `BodySizeLimitMiddleware` | Rejects a declared `Content-Length` over `max_upload_bytes + 64 KiB` before reading; otherwise counts body bytes as they arrive and, if the limit is crossed, replaces the app's response with `413 request_too_large`. Malformed `Content-Length` → `400 invalid_content_length` |
@@ -102,6 +105,8 @@ Starlette runs the last-added middleware first. Effective order for a request, o
 | 6 | Router | `/api/v1/health`, `/api/v1/health/ready`; outside production also `/api/v1/documents` routes |
 
 Because #4 sits inside #2 and #3, an unexpected error still returns a response carrying CORS headers and the correlation ID ([ADR-007](ARCHITECTURE_DECISIONS.md#adr-007)).
+
+**Rate limits (P8-M1, ADR-035)** — [app/core/rate_limit.py](../apps/api/app/core/rate_limit.py): `RateLimiter(limit, window=60, clock)` keeps a deque of event times per key under a lock; `check(key)` returns `None` (allowed and recorded) or the seconds until the oldest event leaves the window; `limit <= 0` allows everything; at `MAX_KEYS` (10,000) idle keys are evicted, otherwise the least recently used one. `too_many_requests(retry_after)` is the `429 rate_limited` error with `Retry-After` rounded up. `client_address(request, trusted_proxies)` is the peer, or for a trusted peer the rightmost valid `X-Forwarded-For` address that is not itself trusted (malformed: the peer). `create_app` stores `login_limiter` and `model_limiter` on `app.state`. The route dependencies in [dependencies.py](../apps/api/app/api/dependencies.py) are `limit_sign_in` (key `login:<address>`, on `POST /auth/login`) and `limit_model_calls` (key `model:<tenant>:<user>`, after authentication, on `POST /answers`, `POST /conversations/{id}/messages` and `POST /agent`).
 
 ### 2.5 Errors — [app/core/errors.py](../apps/api/app/core/errors.py)
 
@@ -366,6 +371,10 @@ The status text is inside `role="status"` / `aria-live="polite"`. The effect abo
 - [app/bff/api/v1/[...path]/route.ts](../apps/web/src/app/bff/api/v1/[...path]/route.ts): rejects suspicious segments (`.`, `..`, empty, `/ \ ? # %`), unlisted routes (`404`), non-`GET` calls from another origin (`403 bad_origin`), missing sessions on non-public routes (`401`), bodies over 10 MiB + 64 KiB (`413`); forwards method, path, `GET` query, body and content type with the bearer token; relays status, body, content type and correlation ID; clears the cookie on an API `401`.
 - [proxy.ts](../apps/web/src/proxy.ts): redirects page requests without the cookie to `/login` (not `/login`, `/bff`, `/_next`, the favicon).
 - Browser side: [lib/api/bff.ts](../apps/web/src/lib/api/bff.ts) `bffRequest(path, {method, json, formData, schema, timeoutMs})` (same-origin credentials, error envelope to `ApiError`), [lib/api/session.ts](../apps/web/src/lib/api/session.ts) (`getCurrentUser`, `signIn`, `signOut`, `currentUserSchema`), [SessionProvider](../apps/web/src/components/auth/SessionProvider.tsx) (`state`, `signOut`, `can(permission)`; a `401` sends the user to `/login`), [LoginForm](../apps/web/src/components/auth/LoginForm.tsx) (one message for every failed sign-in). The status card's readiness check goes through `/bff/api/v1/health/ready`.
+
+### 3.6a Security headers (P8-M1, ADR-035)
+
+[lib/securityHeaders.ts](../apps/web/src/lib/securityHeaders.ts): `contentSecurityPolicy(env)` and `securityHeaders(env)` (`env` is `NODE_ENV`); [next.config.ts](../apps/web/next.config.ts) `headers()` applies them to `/(.*)`. The session route passes the incoming `X-Forwarded-For` to the API's login; the API uses it only if it trusts the web server.
 
 ### 3.7 Chat (P7-M2)
 

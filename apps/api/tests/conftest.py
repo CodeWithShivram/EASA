@@ -49,6 +49,9 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         # Deterministic, offline embedder; the real model has its own tests.
         "embedding_provider": "hashing",
         "password_hash_n": TEST_HASH_N,
+        # Rate limits are tested on their own (test_hardening_api.py).
+        "rate_limit_login_per_minute": 0,
+        "rate_limit_model_per_minute": 0,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
