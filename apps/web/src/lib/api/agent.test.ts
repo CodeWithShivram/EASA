@@ -25,6 +25,7 @@ describe("agentApi", () => {
         steps: [],
         pending_action: null,
         model_id: null,
+        sources: [],
       }),
     );
     vi.stubGlobal("fetch", fetchMock);

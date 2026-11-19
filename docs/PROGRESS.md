@@ -1613,8 +1613,8 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 
 | Milestone | Scope | Status | Commit |
 |---|---|---|---|
-| P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | the commit that adds this row |
-| P8-M2 | Cited agent answers; agent and access evaluations rerun | NOT STARTED | |
+| P8-M1 | Security hardening: response headers, rate limits, dependency audits, dependency review, SHA-pinned Actions, secret-scanning instructions | COMPLETE | `83b634f` |
+| P8-M2 | Cited agent answers; agent and access evaluations rerun | COMPLETE | the commit that adds this row |
 | P8-M3 | Browser end-to-end tests (Playwright) in CI | NOT STARTED | |
 | P8-M4 | Evaluation manifest (version, SHA-256), reports with versions, tokens and latency, one command for all evaluations | NOT STARTED | |
 | P8-M5 | Load and failure tests, containers and a demo command, operations runbook, limitations, final project report | NOT STARTED | |
@@ -1653,3 +1653,42 @@ Plan approved on 2026-11-18 with the recommended options: Playwright with Chromi
 - 17 high-severity advisories remain in development-only npm tooling.
 
 **Exit criteria:** met. Both servers send the headers, sign-in and model calls are limited with a `429` that says when to retry, and CI fails on known-vulnerable dependencies and runs only pinned Actions.
+
+## P8-M2: Cited agent answers
+
+**Scope:** agent answers that cite the documents they rely on, checked by the server like grounded answers, and reruns of the agent and access evaluations.
+
+**Implemented**
+
+- `AgentService` now takes the request's `AnswerService`. When a knowledge search succeeded and no other tool did, the agent's own final answer is replaced by the grounded answer to the user's message (`AnswerService.answer`: a fresh search, cited sources, citation checks). When the documents do not answer it, the reply is "I couldn't find this in the documents available to you." with the grounded reason. The claim check (ADR-030) runs first. The agent's prompt, tool descriptions and tool results are unchanged.
+- API: `POST /api/v1/agent` returns `sources` in the grounded answers' format.
+- Web: the assistant page renders citations with the chat's `AnswerText` and `SourcePanel`, and says how many passages an answer cites or why it was replaced.
+- Evaluations: the access evaluation counts the agent's cited sources as citations. Agent task file version 2 forbids the injection documents' text (`injected_markers`) in every task. Agent reports gain "Cited" and "Replaced" columns and a reason per task.
+- Tests: backend 864 → 872 (grounded document answers and their sources, fixed replies for model_declined, no_valid_citations and no_results, ticket answers kept, claim check before any grounded call, injected markers in every task, report columns); web 133 → 135 (citation buttons and the source panel on the assistant page, the replaced-answer note).
+- Docs: ADR-036; EVALUATION section 13 (and section 12.5 marked done); API_SPECIFICATION 3.9; LLD; SECURITY; HLD; README; DEVELOPMENT_GUIDE.
+
+**Design decided during the milestone.** Two designs failed the evaluation, and the user chose each next step (ADR-036):
+1. Labels on the passages plus a prompt rule: the model never cited (success 0.54).
+2. The grounded pipeline over the agent's own passages: an injected reply (success 0.65).
+3. The grounded pipeline exactly as in Chat: adopted (success 0.77).
+
+**Verification (executed 2026-11-19)**
+
+| Command / check | Result |
+|---|---|
+| `scripts\check.ps1 -Backend` with `EASA_TEST_POSTGRES_URL`, `EASA_REQUIRE_POSTGRES_TESTS=1` and `EASA_TEST_LLM_URL` | All checks passed; 872 tests, none skipped; `pip-audit`: no known vulnerabilities |
+| `scripts\check.ps1 -Frontend` | All checks passed; 135 web tests; production audit: 0 vulnerabilities |
+| `evaluate-agent`, local model, three runs (EVALUATION section 13) | Adopted run: success 0.77 (Phase 5: 0.85); 19 of 26 acceptable after manual review (Phase 5: 20); all 5 knowledge answers cited; no injected or forbidden text in any answer; tickets 7 before and after; no consequential tool succeeded |
+| `evaluate-access`, local model, three runs | Adopted run: 0 leaks in 90 checks; agent found 15 of 17 permitted facts (Phase 6: 16); it declined 12 of the 13 questions above the role (Phase 6: 9); the one wrong reply is the codename mix-up grounded answers also make |
+| Probe: the inline-label design, three knowledge tasks, raw model replies recorded | Correct answers, never a label. With a schema-limited `sources` field, all three passages were listed every time |
+| Probe: Chat with run 2's injected-reply message | Declined (`insufficient_evidence`) |
+| First full check | 1 failure: a document-access test whose fake model echoed the search result as the agent's answer; the grounded step now replaces that answer, so the fake model answers the grounded call too. Then 872 passed |
+
+**Known limitations**
+
+- Knowledge answers cost one more model call. Their sources come from the answer's own search.
+- Answers that also use ticket results are uncited.
+- The agent still proposes draft tickets for unsupported requests and once for a knowledge question (i3). The confirmation gate stops them.
+- The local model varies between runs at temperature 0 (EVALUATION section 13.3).
+
+**Exit criteria:** met. The agent's answers from documents are cited and checked by the server like grounded answers, and both evaluations were rerun with the local model: no leaks, no injected text, and fewer invented answers.

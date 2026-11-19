@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+import { AnswerText } from "@/components/chat/AnswerText";
+import { SourcePanel, sourceKey } from "@/components/chat/SourcePanel";
 import { ApiError } from "@/lib/api/client";
 import {
   MAX_MESSAGE_CHARS,
@@ -11,6 +13,7 @@ import {
   type AgentResult,
   type PendingAction,
 } from "@/lib/api/agent";
+import { chatApi, type ChatApi, type Source } from "@/lib/api/conversations";
 
 const TOOL_LABELS: Record<string, string> = {
   search_knowledge_base: "Searched your documents",
@@ -66,10 +69,18 @@ interface Turn {
   decision?: Decision;
 }
 
-export function AssistantPage({ api = agentApi }: { api?: AgentApi }) {
+export function AssistantPage({
+  api = agentApi,
+  sourcesApi = chatApi,
+}: {
+  api?: AgentApi;
+  sourcesApi?: Pick<ChatApi, "chunkText">;
+}) {
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [pending, setPending] = useState<{ started: number } | null>(null);
+  // The passage shown below a reply, after its citation was chosen.
+  const [shown, setShown] = useState<{ turn: number; source: Source } | null>(null);
 
   const update = (id: number, change: Partial<Turn>) =>
     setTurns((all) => all.map((t) => (t.id === id ? { ...t, ...change } : t)));
@@ -138,7 +149,8 @@ export function AssistantPage({ api = agentApi }: { api?: AgentApi }) {
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
           Ask about your support tickets or company policies, or ask for a new ticket. The assistant
           acts as you, with your role&apos;s permissions, and changes nothing without your
-          confirmation. Its answers are not checked against sources; for cited answers use Chat.
+          confirmation. Answers from your documents cite their passages, checked by the server;
+          other answers are not checked against sources.
         </p>
       </div>
       {turns.length === 0 && !pending && (
@@ -163,6 +175,16 @@ export function AssistantPage({ api = agentApi }: { api?: AgentApi }) {
                 turn={turn}
                 result={turn.result}
                 onDecide={(a, c) => void decide(turn, a, c)}
+                onCite={(source) => setShown({ turn: turn.id, source })}
+              />
+            )}
+            {shown?.turn === turn.id && (
+              <SourcePanel
+                source={shown.source}
+                key={sourceKey(shown.source)}
+                knownText={shown.source.text}
+                api={sourcesApi}
+                onClose={() => setShown(null)}
               />
             )}
           </li>
@@ -174,15 +196,27 @@ export function AssistantPage({ api = agentApi }: { api?: AgentApi }) {
   );
 }
 
+const REPLACED: Record<string, string> = {
+  unsupported_claim:
+    "The assistant's reply claimed a change that did not happen, so it was replaced.",
+  no_valid_citations: "No cited answer could be written from the documents the assistant found.",
+  model_declined: "The documents the assistant found do not answer this.",
+  no_results: "No documents available to you match this request.",
+};
+
 function Reply({
   turn,
   result,
   onDecide,
+  onCite,
 }: {
   turn: Turn;
   result: AgentResult;
   onDecide: (action: PendingAction, confirm: boolean) => void;
+  onCite: (source: Source) => void;
 }) {
+  const replaced = result.reason ? REPLACED[result.reason] : undefined;
+  const cited = result.sources.length;
   const steps = result.steps.map(
     (s) => `${TOOL_LABELS[s.tool] ?? s.tool} (${OUTCOME_LABELS[s.outcome] ?? s.outcome})`,
   );
@@ -201,10 +235,13 @@ function Reply({
         />
       ) : (
         <>
-          <p className="whitespace-pre-wrap">{result.answer}</p>
-          {result.reason === "unsupported_claim" ? (
+          <AnswerText text={result.answer ?? ""} sources={result.sources} onCite={onCite} />
+          {replaced ? (
+            <p className="text-xs text-slate-500 dark:text-slate-400">{replaced}</p>
+          ) : cited > 0 ? (
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              The assistant&apos;s reply claimed a change that did not happen, so it was replaced.
+              Cites {cited === 1 ? "1 passage" : `${cited} passages`} from your documents, checked
+              by the server. Choose a label such as S1 to read it.
             </p>
           ) : (
             <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -213,7 +250,9 @@ function Reply({
           )}
         </>
       )}
-      {steps.length > 0 && <p className="text-xs text-slate-500 dark:text-slate-400">Steps: {steps.join("; ")}</p>}
+      {steps.length > 0 && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">Steps: {steps.join("; ")}</p>
+      )}
     </div>
   );
 }

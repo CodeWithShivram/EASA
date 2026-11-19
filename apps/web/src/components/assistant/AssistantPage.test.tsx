@@ -33,6 +33,7 @@ function result(overrides: Partial<AgentResult>): AgentResult {
     steps: [],
     pending_action: null,
     model_id: "m",
+    sources: [],
     ...overrides,
   };
 }
@@ -82,6 +83,56 @@ describe("AssistantPage", () => {
     expect(await screen.findByText("Your ticket 2 is in progress.")).toBeInTheDocument();
     expect(screen.getByText(/Not checked against sources/)).toBeInTheDocument();
     expect(screen.getByText("Steps: Checked a ticket's status (done)")).toBeInTheDocument();
+  });
+
+  it("turns citations into buttons that show the cited passage", async () => {
+    const source = {
+      label: "S1",
+      text: "Employees get 25 days of annual leave.",
+      citation: {
+        document_id: "d1",
+        filename: "leave.txt",
+        page_number: null,
+        section: "Leave",
+        chunk_index: 0,
+        char_start: 0,
+        char_end: 38,
+      },
+    };
+    const api = fakeApi({
+      run: vi.fn(async () =>
+        result({
+          answer: "You get 25 days [S1].",
+          sources: [source],
+          steps: [{ tool: "search_knowledge_base", outcome: "succeeded", detail: null }],
+        }),
+      ),
+    });
+    const user = await send(api, "How many leave days do I get?");
+
+    await user.click(await screen.findByRole("button", { name: "Show source S1: leave.txt" }));
+
+    expect(screen.getByText(/Cites 1 passage from your documents/)).toBeInTheDocument();
+    expect(screen.queryByText(/Not checked against sources/)).toBeNull();
+    const panel = screen.getByRole("complementary", { name: "Source S1" });
+    expect(within(panel).getByText(source.text)).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "Close source" }));
+    expect(screen.queryByRole("complementary", { name: "Source S1" })).toBeNull();
+  });
+
+  it("explains answers replaced for lack of support in the documents", async () => {
+    await send(
+      fakeApi({
+        run: vi.fn(async () =>
+          result({
+            answer: "I couldn't find this in the documents available to you.",
+            reason: "no_valid_citations",
+          }),
+        ),
+      }),
+    );
+
+    expect(await screen.findByText(/No cited answer could be written/)).toBeInTheDocument();
   });
 
   it("shows a proposal with the server's prompt and exact arguments, and confirms it", async () => {

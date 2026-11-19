@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BFF_API, bffRequest } from "./bff";
+import { sourceSchema } from "./conversations";
 
 /** The support assistant (API section 3.9) through the backend for frontend. */
 
@@ -29,6 +30,8 @@ export const agentResultSchema = z.object({
   ),
   pending_action: pendingActionSchema.nullable(),
   model_id: z.string().nullable(),
+  // Sources a document answer cites (P8-M2), written and checked like grounded answers.
+  sources: z.array(sourceSchema),
 });
 
 export type AgentResult = z.infer<typeof agentResultSchema>;

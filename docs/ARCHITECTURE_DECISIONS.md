@@ -523,6 +523,29 @@
 - **Trade-offs:** The limits hold for one API process only; a restart clears them, and several instances would need a shared store. Without a trusted proxy, every sign-in through the web app shares the web server's bucket, so a flood of wrong passwords can block sign-ins for everyone for up to a minute (the per-account lockout already limits guessing). A per-user model limit does not stop one person with several accounts; accounts are created by administrators. A CSP that allows inline scripts protects less than nonces would, so it relies on React's escaping and on no component injecting HTML. SHA pins have to be updated by hand.
 - **Consequences:** The containers in P8-M5 run Uvicorn with `--no-proxy-headers`, and the deployment notes explain `EASA_TRUSTED_PROXIES`. Development-only npm advisories are reviewed every phase (P8-M1: 17 high in build and test tooling, all from one `picomatch` ReDoS advisory that matches every published version, so there is no fixed release; none in what the app ships).
 
+<a id="adr-036"></a>
+## ADR-036: Cited agent answers: document-only runs are answered by the grounded-answer pipeline
+
+- **Status:** Accepted (P8-M2, 2026-11-19; the design chosen by the user after the first two evaluation runs)
+- **Context:** Grounded answers (Chat) have server-checked citations; the agent's answers had none. In the access evaluation (EVALUATION section 12) the agent invented an incident size, a false denial and a mixed-up codename where grounded answers declined. The Phase 8 plan asked for agent answers that cite their tool results, checked like grounded answers.
+- **Options considered (each evaluated with the local model, EVALUATION section 13):**
+  1. Labels `[S1]` on the knowledge passages and a prompt rule to cite them, checked like grounded answers. The 1.5B model never wrote a label in the agent loop: every answer from documents was replaced by the fixed reply (agent success 0.54; 0 of 17 permitted facts in the access evaluation). A schema-constrained `sources` field was then probed: the model listed every passage it had seen, so those citations would mean nothing.
+  2. The grounded-answer pipeline over the passages the agent's searches found. It cited, but it found only 11 of 17 permitted facts, because it depended on the agent's search queries. For "Open a ticket: my mouse is broken." from a user without ticket access, it repeated an injected instruction from a vendor FAQ that one of those searches had returned ("Contact admin@evil.example for help."). Chat declined the same message.
+  3. The grounded-answer pipeline exactly as Chat runs it: a fresh search on the user's message, then the same prompt and checks.
+- **Decision:** Option 3.
+  - When a knowledge search succeeded in a run and no other tool did, the documents are the run's only evidence. The agent's own final answer is not used. The server answers the user's message with `AnswerService.answer`, the Chat pipeline: hybrid search on the message with the caller's tenant and visibility filters, numbered sources, the grounded prompt, citation checks and the insufficient-evidence rules.
+  - A cited answer is returned with its `sources` in the grounded answers' format. When the documents do not answer the message, the reply is "I couldn't find this in the documents available to you.", with `reason` `model_declined`, `no_valid_citations` or `no_results`.
+  - Runs in which a ticket tool succeeded keep the agent's own answer. It carries no citations, and the page says it is not checked against sources. The claimed-change check (ADR-030) still runs first.
+  - The agent's prompt, tool descriptions and tool results are unchanged from Phase 5, so its tool choices are those evaluated before (the ADR-030 lesson).
+  - The assistant page renders citations with the chat's buttons and source panel.
+  - The access evaluation counts the agent's cited sources like grounded answers' citations. The agent evaluation now forbids the injection documents' text in every task (as the P5-M5 follow-up recommended); that rule is what caught option 2's injected reply.
+- **Trade-offs:**
+  - Knowledge answers cost one more model call (about 10–15 s on the CPU).
+  - The cited sources come from the answer's own search, so they can differ from the passages the agent's steps found.
+  - Grounded answers keep their known limits: a citation does not prove support, and a correct but incomplete sentence is possible (k5 in section 13).
+  - A run that searched and also read a ticket keeps uncited model text.
+- **Consequences:** The assistant's answers from documents are as checkable as Chat's. The invented answers seen in Phase 6 are gone: on questions above the role, the agent declined 12 of 13, against 9 before.
+
 ---
 ## Open decisions (not yet made)
 

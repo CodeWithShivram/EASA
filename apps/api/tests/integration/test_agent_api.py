@@ -18,6 +18,7 @@ from app.main import create_app
 from app.repositories.pending_actions import PendingActionRepository
 from app.repositories.tickets import TicketRepository
 from app.services.agent_actions import AgentActionService
+from app.services.documents import DocumentService
 from app.tools.seed import seed_tickets
 from tests.conftest import (
     DEV_TENANT_ID,
@@ -404,3 +405,132 @@ def test_the_model_cannot_choose_the_priority(
     assert isinstance(pending, dict)
     assert pending["arguments"] == {**DRAFT, "priority": priority}
     assert f'priority="{priority}"' in str(body["answer"])
+
+
+# --- grounded answers (P8-M2) ------------------------------------------------
+
+
+def upload(app: FastAPI, name: str, text: str) -> None:
+    identity = Identity(DEV_TENANT_ID, DEV_USER_ID, frozenset({"documents:upload"}))
+    with app.state.session_factory() as session:
+        DocumentService(
+            session, app.state.blob_store, max_upload_bytes=10_000_000, embedder=app.state.embedder
+        ).upload(identity, name, text.encode())
+
+
+LEAVE = "Employees get 25 days of annual leave. Unused days expire in March."
+NO_EVIDENCE = "I couldn't find this in the documents available to you."
+
+
+def test_document_answers_are_written_and_cited_by_the_grounded_pipeline(
+    client: TestClient, app: FastAPI
+) -> None:
+    upload(app, "leave.txt", LEAVE)
+    model = use_model(
+        app,
+        step("search_knowledge_base", query="annual leave days"),
+        step("final_answer", answer="You get 30 days."),  # not used: documents are the evidence
+        "You get 25 days of annual leave [S1].",  # the answer Chat would give
+    )
+
+    body = ask(client, "How many leave days do I get?")
+
+    assert (body["status"], body["reason"]) == ("answered", None)
+    assert body["answer"] == "You get 25 days of annual leave [S1]."
+    sources = body["sources"]
+    assert isinstance(sources, list)
+    assert [s["label"] for s in sources] == ["S1"]
+    assert sources[0]["text"] == LEAVE
+    assert sources[0]["citation"]["filename"] == "leave.txt"
+    # The agent's model sees the tool result as in Phase 5; the grounded call, made like
+    # Chat's with a fresh search on the message, sees the passage as a source.
+    observation = model.calls[1][-1].content
+    assert '"filename": "leave.txt"' in observation
+    assert "document_id" not in observation
+    assert "score" not in observation
+    grounded = model.calls[2]
+    assert grounded[0].content.startswith("You answer employee questions using only")
+    assert '<source id="S1" document="leave.txt"' in grounded[1].content
+    assert "Question: How many leave days do I get?" in grounded[1].content
+
+
+@pytest.mark.parametrize(
+    ("grounded", "reason"),
+    [
+        ("INSUFFICIENT_EVIDENCE", "model_declined"),
+        ("You get 30 days of annual leave.", "no_valid_citations"),  # uncited
+        ("You get 30 days [S7].", "no_valid_citations"),  # a source that was not given
+    ],
+)
+def test_document_answers_without_support_get_a_fixed_reply(
+    client: TestClient, app: FastAPI, grounded: str, reason: str
+) -> None:
+    upload(app, "leave.txt", LEAVE)
+    use_model(
+        app,
+        step("search_knowledge_base", query="leave"),
+        step("final_answer", answer="Employees get 99 days."),
+        grounded,
+    )
+
+    body = ask(client, "How many leave days do I get?")
+
+    assert (body["status"], body["answer"], body["reason"], body["sources"]) == (
+        "answered",
+        NO_EVIDENCE,
+        reason,
+        [],
+    )
+
+
+def test_ticket_answers_keep_the_agents_own_text(client: TestClient, app: FastAPI) -> None:
+    upload(app, "leave.txt", LEAVE)
+    model = use_model(
+        app,
+        step("search_knowledge_base", query="ticket 2"),
+        step("get_ticket_status", number=2),
+        step("final_answer", answer="Your ticket 2 is in progress."),
+    )
+
+    body = ask(client, "What is the status of my ticket 2?")
+
+    assert (body["answer"], body["reason"], body["sources"]) == (
+        "Your ticket 2 is in progress.",
+        None,
+        [],
+    )
+    assert len(model.calls) == 3  # no grounded call
+
+
+def test_claimed_changes_are_replaced_before_any_grounded_call(
+    client: TestClient, app: FastAPI
+) -> None:
+    upload(app, "leave.txt", LEAVE)
+    model = use_model(
+        app,
+        step("search_knowledge_base", query="leave"),
+        step("final_answer", answer="Your leave request has been approved."),
+    )
+
+    body = ask(client, "Approve my leave")
+
+    assert (body["answer"], body["reason"]) == (
+        "I can't do that, and nothing has been changed.",
+        "unsupported_claim",
+    )
+    assert len(model.calls) == 2
+
+
+def test_a_search_without_results_still_gets_the_grounded_reply(
+    client: TestClient, app: FastAPI
+) -> None:
+    model = use_model(
+        app,
+        step("search_knowledge_base", query="parking"),
+        step("final_answer", answer="Parking is free for everyone."),  # invented
+    )
+
+    body = ask(client, "Is parking free?")
+
+    assert (body["answer"], body["reason"]) == (NO_EVIDENCE, "no_results")
+    assert len(model.calls) == 2  # nothing to answer from: no grounded model call

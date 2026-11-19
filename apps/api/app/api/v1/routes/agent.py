@@ -9,13 +9,21 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db_session, get_identity, limit_model_calls
+from app.api.dependencies import (
+    get_answer_service,
+    get_db_session,
+    get_identity,
+    limit_model_calls,
+)
 from app.api.v1.routes.tools import ToolResultResponse
 from app.core.errors import ErrorResponse
 from app.core.identity import Identity
 from app.db.pending_actions import PendingAction
+from app.schemas.answers import AnswerSource
+from app.schemas.search import Citation
 from app.services.agent import MAX_MESSAGE_CHARS, AgentService
 from app.services.agent_actions import AgentActionService
+from app.services.answers import AnswerService, Source
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -58,10 +66,14 @@ class PendingActionResponse(BaseModel):
 class AgentResponse(BaseModel):
     status: str  # answered, confirmation_required or failed
     answer: str | None
+    # Why it failed, or why the model's answer was replaced: unsupported_claim,
+    # no_valid_citations or model_declined.
     reason: str | None
     steps: list[AgentStepResponse]
     pending_action: PendingActionResponse | None
     model_id: str | None
+    # The document passages the answer cites, in order of first citation (P8-M2).
+    sources: list[AnswerSource]
 
 
 class ConfirmResponse(BaseModel):
@@ -82,10 +94,30 @@ def _action(action: PendingAction) -> PendingActionResponse:
     )
 
 
+def _source(source: Source) -> AnswerSource:
+    hit = source.hit
+    return AnswerSource(
+        label=source.label,
+        text=source.text,
+        citation=Citation(
+            document_id=hit.document_id,
+            filename=hit.filename,
+            page_number=hit.page_number,
+            section=hit.section,
+            chunk_index=hit.chunk_index,
+            char_start=hit.char_start,
+            char_end=hit.char_end,
+        ),
+    )
+
+
 def get_agent_service(
-    request: Request, session: Annotated[Session, Depends(get_db_session)]
+    request: Request,
+    session: Annotated[Session, Depends(get_db_session)],
+    answers: Annotated[AnswerService, Depends(get_answer_service)],
 ) -> AgentService:
-    return AgentService(session, request.app.state.tool_executor, request.app.state.chat_model)
+    state = request.app.state
+    return AgentService(session, state.tool_executor, state.chat_model, answers)
 
 
 def get_action_service(
@@ -120,6 +152,7 @@ def run_agent(
         ],
         pending_action=_action(result.pending_action) if result.pending_action else None,
         model_id=result.model_id,
+        sources=[_source(s) for s in result.sources],
     )
 
 

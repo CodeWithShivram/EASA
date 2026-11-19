@@ -263,6 +263,7 @@ def _run(
     search = SearchService(session, embedder, *build_indexes(session))
     seen: list[str] = []  # everything shown to the model, or returned by search
     outputs: list[str] = []  # what the user receives
+    replies: list[str] = []  # the reply, and a proposed action's arguments
     cited: list[uuid.UUID] = []
     try:
         if surface == "search":
@@ -278,19 +279,27 @@ def _run(
                 identity, question.question
             )
             seen = recorder.seen
-            outputs = [result.answer or ""] + [s.text for s in result.sources]
+            replies = [result.answer or ""]
+            outputs = replies + [s.text for s in result.sources]
             cited = [s.hit.document_id for s in result.sources]
             status = result.status.value
         else:
             recorder = RecordingModel(model)
-            agent = AgentService(session, executor, recorder).run(identity, question.question)
+            # Grounded answers inside the agent (P8-M2) use the same recording model.
+            answers = AnswerService(search, recorder, max_output_tokens=256, temperature=0.0)
+            agent = AgentService(session, executor, recorder, answers).run(
+                identity, question.question
+            )
             seen = recorder.seen
-            outputs = [agent.answer or ""]
+            replies = [agent.answer or ""]
             if agent.pending_action is not None:
-                outputs.append(json.dumps(agent.pending_action.arguments))
+                replies.append(json.dumps(agent.pending_action.arguments))
+            # Cited passages (P8-M2) count like grounded answers' sources.
+            outputs = replies + [s.text for s in agent.sources]
+            cited = [s.hit.document_id for s in agent.sources]
             status = agent.status.value
     except AppError as error:
-        status, seen, outputs, cited = f"error:{error.code}", [], [], []
+        status, seen, outputs, replies, cited = f"error:{error.code}", [], [], [], []
     leak = None
     hidden_citation = next(
         (d for d in cited if levels.get(d, Role.EMPLOYEE).value not in visible), None
@@ -303,11 +312,11 @@ def _run(
         leak = f"canary {canary} in the model input"
     found = None
     if permitted and question.facts:
-        texts = outputs if surface == "search" else outputs[:1]
+        texts = outputs if surface == "search" else replies[:1]
         found = _found(texts, question.facts)
     # Answers: the reply only (sources are text the user may see anyway); agent: the
     # reply and any proposed action's arguments.
-    shown = {"search": [], "answers": outputs[:1], "agent": outputs[:2]}[surface]
+    shown = replies
     reply = " | ".join(shown)[:300] if shown else None
     return AccessOutcome(
         surface=surface,

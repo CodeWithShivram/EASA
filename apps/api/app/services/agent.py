@@ -13,6 +13,14 @@ model is told so and may only answer next.
 Safeguards from the P5-M5 evaluation (ADR-030): arguments only the user may
 choose are dropped unless the user's message states them, and an answer that
 claims a change no tool result reports is replaced by a fixed message.
+Grounded answers (P8-M2, ADR-036): when a knowledge search succeeded and no
+other tool did, the documents are the run's only evidence and the model's own
+final answer is not used. The server answers the user's message exactly as
+Chat does (AnswerService: a fresh search on the message, cited sources checked
+by the server, or a fixed reply when the documents do not answer it). The 1.5B
+model did not cite reliably inside the agent loop, and answering from the
+agent's own search passages let an injected instruction through. The agent's
+prompt and tool results are unchanged.
 Messages, tool arguments and answers are never logged.
 """
 
@@ -35,9 +43,11 @@ from app.db.pending_actions import PendingAction
 from app.db.types import utc_now
 from app.llm.base import ChatMessage, ChatModel, ModelResponseError, ModelUnavailableError
 from app.repositories.pending_actions import PendingActionRepository
+from app.services.answers import AnswerService, AnswerStatus, Source
 from app.services.normalization import normalize_text
 from app.tools.base import Tool
 from app.tools.executor import ToolExecutor
+from app.tools.support import SearchKnowledgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +84,9 @@ _CLAIM = re.compile(
     re.IGNORECASE,
 )
 NO_CHANGE_ANSWER = "I can't do that, and nothing has been changed."
+# When the documents do not answer the message (P8-M2).
+NO_EVIDENCE_ANSWER = "I couldn't find this in the documents available to you."
+KNOWLEDGE_TOOL = SearchKnowledgeBase.name
 
 SYSTEM_PROMPT = """You are a company support assistant that can use tools.
 Reply with exactly one JSON step: call a tool with {"action": "<tool name>", "arguments": {...}}, \
@@ -111,9 +124,12 @@ class AgentResult:
     answer: str | None
     steps: list[AgentStep] = field(default_factory=list)
     pending_action: PendingAction | None = None
-    # Why it failed, or "unsupported_claim" when an answer was replaced.
+    # Why it failed, "unsupported_claim" when an answer was replaced, or why a
+    # grounded answer found no support ("model_declined", "no_valid_citations").
     reason: str | None = None
     model_id: str | None = None
+    # The passages a grounded answer cites, in order of first citation (P8-M2).
+    sources: list[Source] = field(default_factory=list)
 
 
 def _neutralize(text: str) -> str:
@@ -223,10 +239,18 @@ def parse_step(text: str) -> Step | None:
 
 
 class AgentService:
-    def __init__(self, session: Session, executor: ToolExecutor, model: ChatModel | None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        executor: ToolExecutor,
+        model: ChatModel | None,
+        answers: AnswerService,
+    ) -> None:
         self._actions = PendingActionRepository(session)
         self._executor = executor
         self._model = model
+        # Writes the answer when documents are a run's only evidence.
+        self._answers = answers
 
     def run(self, identity: Identity, message: str) -> AgentResult:
         started = time.perf_counter()
@@ -254,6 +278,8 @@ class AgentService:
         ]
         steps: list[AgentStep] = []
         evidence: list[str] = []  # tool results of this run
+        searched = False  # a knowledge search succeeded
+        other_evidence = False  # another tool succeeded
         seen: set[str] = set()
         must_answer = False
         for index in range(MAX_TOOL_STEPS + 1):
@@ -271,6 +297,8 @@ class AgentService:
                         AgentStatus.ANSWERED, NO_CHANGE_ANSWER, steps, reason="unsupported_claim"
                     )
                     return self._finish(started, replaced)
+                if searched and not other_evidence:
+                    return self._finish(started, self._grounded(identity, text, steps))
                 return self._finish(started, AgentResult(AgentStatus.ANSWERED, step.answer, steps))
             action = step.action
             arguments = drop_unstated(self._executor.registry.get(action), step.arguments, text)
@@ -319,8 +347,10 @@ class AgentService:
                     ),
                 )
             observation = {"outcome": result.outcome.value}
-            if result.output is not None:
+            if result.output is not None:  # present only when the tool succeeded
                 observation["output"] = result.output
+                searched = searched or action == KNOWLEDGE_TOOL
+                other_evidence = other_evidence or action != KNOWLEDGE_TOOL
             else:
                 observation["message"] = result.message or ""
             data = _neutralize(json.dumps(observation, default=str))[:MAX_RESULT_CHARS]
@@ -334,6 +364,16 @@ class AgentService:
                 )
             )
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _grounded(self, identity: Identity, message: str, steps: list[AgentStep]) -> AgentResult:
+        """The answer to the message as Chat gives it: retrieved, cited and checked."""
+        grounded = self._answers.answer(identity, message)
+        if grounded.status is AnswerStatus.ANSWERED and grounded.answer:
+            return AgentResult(
+                AgentStatus.ANSWERED, grounded.answer, steps, sources=grounded.sources
+            )
+        reason = grounded.reason.value if grounded.reason else None
+        return AgentResult(AgentStatus.ANSWERED, NO_EVIDENCE_ANSWER, steps, reason=reason)
 
     def _generate(self, messages: list[ChatMessage], schema: dict[str, Any]) -> str:
         if self._model is None:  # checked in run(); keeps the type checker informed
@@ -368,6 +408,7 @@ class AgentService:
                 "status": result.status.value,
                 "reason": result.reason,
                 "steps": [f"{s.tool}:{s.outcome}" for s in result.steps],
+                "cited": len(result.sources),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             },
         )

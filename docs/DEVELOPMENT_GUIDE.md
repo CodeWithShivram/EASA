@@ -219,7 +219,7 @@ uv sync --locked              # fails if uv.lock is out of date with pyproject.t
 uv run ruff format --check .  # formatting (use `uv run ruff format .` to fix)
 uv run ruff check .           # lint, including security rules
 uv run pip-audit --strict     # known vulnerabilities in the locked dependencies
-uv run pytest                 # 864 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
+uv run pytest                 # 872 tests: 3 real-embedding tests skip without the model, 49 PostgreSQL tests without EASA_TEST_POSTGRES_URL, 4 live chat model tests without EASA_TEST_LLM_URL; warnings are errors
 ```
 
 **Frontend** (from `apps/web`):
@@ -227,7 +227,7 @@ uv run pytest                 # 864 tests: 3 real-embedding tests skip without t
 ```powershell
 npm run lint        # ESLint
 npm run typecheck   # tsc --noEmit
-npm test            # Vitest, 133 tests
+npm test            # Vitest, 135 tests
 npm audit --omit=dev --audit-level=high   # known vulnerabilities in what the app ships
 npm run build       # production build
 ```

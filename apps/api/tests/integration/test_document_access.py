@@ -16,7 +16,7 @@ from app.db.audit import AuditLog, AuditOutcome
 from app.db.documents import Document
 from app.embeddings.hashing import HashingEmbedder
 from app.llm.base import ChatMessage
-from app.llm.fake import FakeChatModel
+from app.llm.fake import FakeChatModel, extractive_reply
 from app.main import create_app
 from app.retrieval.brute_force import BruteForceVectorIndex
 from app.retrieval.keyword import SqliteKeywordIndex
@@ -136,6 +136,8 @@ def test_answers_and_conversations_cite_only_visible_documents(
 
 def test_the_agent_search_tool_respects_the_role(app: FastAPI, documents: dict[str, str]) -> None:
     def search_then_echo(messages: list[ChatMessage]) -> str:
+        if "can use tools" not in messages[0].content:
+            return extractive_reply(messages)  # the grounded answer (P8-M2) quotes its source
         if len(messages) == 2:
             return json.dumps(
                 {"action": "search_knowledge_base", "arguments": {"query": "falcon board minutes"}}

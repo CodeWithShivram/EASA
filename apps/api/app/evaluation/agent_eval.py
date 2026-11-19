@@ -7,6 +7,12 @@ seeded tickets and some documents; each task runs through AgentService as
 the development identity (or with its own permissions). **Nothing is ever
 confirmed**: the safety invariants are that no ticket appears and no
 consequential tool succeeds during the run.
+
+Since P8-M2 the text of the injection documents (``injected_markers``) is
+forbidden in every task, and each outcome records how many document passages
+the answer cites and whether the server replaced or declined it. Answers to
+tasks whose only evidence is documents are written by the grounded-answer
+pipeline (256 tokens, temperature 0, as in the access evaluation).
 """
 
 import json
@@ -36,14 +42,19 @@ from app.evaluation.metrics import mean
 from app.evaluation.runner import DatabaseFactory
 from app.llm.base import ChatModel
 from app.repositories.audit import AuditRepository
+from app.retrieval.factory import build_indexes
 from app.services.agent import AgentService, AgentStatus
+from app.services.answers import AnswerService
 from app.services.documents import DocumentService
+from app.services.search import SearchService
 from app.storage.blob_store import LocalBlobStore
 from app.tools.executor import ToolExecutor
 from app.tools.seed import seed_tickets
 from app.tools.support import build_tool_registry
 
 KINDS = ("lookup", "create", "knowledge", "unsupported", "cross_user", "injection", "limited")
+# Reasons for which the server replaced the model's answer.
+WITHHELD = frozenset({"unsupported_claim", "no_valid_citations", "model_declined"})
 # Synthetic identity of the evaluation database.
 EVAL_TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000e1")
 EVAL_USER = uuid.UUID("00000000-0000-4000-8000-0000000000e2")
@@ -71,6 +82,7 @@ class AgentOutcome:
     steps: tuple[str, ...]  # "tool:outcome"
     pending_tool: str | None
     pending_arguments: dict[str, Any] | None
+    cited: int  # document passages the answer cites (P8-M2)
     success: bool
     tool_ok: bool | None  # an expected tool was called (None when no tool is expected)
     leaked: bool  # forbidden content in the answer
@@ -90,6 +102,7 @@ class AgentEvalReport:
 
 def load_agent_cases(root: Path = EVAL_ROOT) -> tuple[list[AgentCase], list[Path]]:
     raw = json.loads((root / "agent.json").read_text(encoding="utf-8"))
+    injected = tuple(raw.get("injected_markers", ()))
     cases = [
         AgentCase(
             id=item["id"],
@@ -97,7 +110,7 @@ def load_agent_cases(root: Path = EVAL_ROOT) -> tuple[list[AgentCase], list[Path
             message=item["message"],
             tools=tuple(item.get("tools", ())),
             facts=tuple(item.get("facts", ())),
-            forbidden=tuple(item.get("forbidden", ())),
+            forbidden=tuple(item.get("forbidden", ())) + injected,
             permissions=tuple(item["permissions"]) if "permissions" in item else None,
         )
         for item in raw["cases"]
@@ -187,7 +200,15 @@ def run_agent_evaluation(
                     else owner
                 )
                 with sessions() as session:
-                    outcome = _run_case(AgentService(session, executor, model), identity, case)
+                    # Writes the answer when documents are a task's only evidence (P8-M2).
+                    answers = AnswerService(
+                        SearchService(session, embedder, *build_indexes(session)),
+                        model,
+                        max_output_tokens=256,
+                        temperature=0.0,
+                    )
+                    agent = AgentService(session, executor, model, answers)
+                    outcome = _run_case(agent, identity, case)
                 report.outcomes.append(outcome)
                 if progress:
                     progress(f"{case.id} {outcome.status} success={outcome.success}")
@@ -220,8 +241,10 @@ def _run_case(service: AgentService, identity: Identity, case: AgentCase) -> Age
         status, reason, answer = result.status.value, result.reason, result.answer
         steps = tuple(f"{s.tool}:{s.outcome}" for s in result.steps)
         pending = result.pending_action
+        cited = len(result.sources)
     except AppError as error:
         status, reason, answer, steps, pending = "error", error.code, None, (), None
+        cited = 0
     latency = (time.perf_counter() - started) * 1000
     pending_tool = pending.tool if pending else None
     success, tool_ok, leaked, unnecessary = score(case, status, answer, steps, pending_tool)
@@ -234,6 +257,7 @@ def _run_case(service: AgentService, identity: Identity, case: AgentCase) -> Age
         steps=steps,
         pending_tool=pending_tool,
         pending_arguments=pending.arguments if pending else None,
+        cited=cited,
         success=success,
         tool_ok=tool_ok,
         leaked=leaked,
@@ -257,6 +281,8 @@ def summarize_agent(report: AgentEvalReport) -> list[dict[str, Any]]:
                 "tool_ok": mean([float(v) for v in tool_checks]) if tool_checks else None,
                 "unnecessary_proposals": sum(o.unnecessary_proposal for o in group),
                 "leaked": sum(o.leaked for o in group),
+                "cited": sum(o.cited > 0 for o in group),
+                "withheld": sum(o.reason in WITHHELD for o in group),
                 "statuses": dict(Counter(o.status for o in group)),
                 "median_s": sorted(o.latency_ms for o in group)[len(group) // 2] / 1000,
             }
@@ -287,28 +313,33 @@ def agent_report_to_markdown(report: AgentEvalReport) -> str:
         f"Tickets before/after: {report.tickets_before}/{report.tickets_after}. "
         f"Consequential tool successes: {report.consequential_successes}.",
         "",
-        "| Kind (n) | Success | Right tool | Unneeded proposals | Leaked | Statuses | Median s |",
-        "|---|---|---|---|---|---|---|",
+        "| Kind (n) | Success | Right tool | Unneeded proposals | Leaked | Cited | Replaced "
+        "| Statuses | Median s |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in summarize_agent(report):
         tool_ok = "-" if row["tool_ok"] is None else f"{row['tool_ok']:.2f}"
         statuses = ", ".join(f"{k} {v}" for k, v in sorted(row["statuses"].items()))
         lines.append(
             f"| {row['kind']} ({row['cases']}) | {row['success']:.2f} | {tool_ok} | "
-            f"{row['unnecessary_proposals']} | {row['leaked']} | {statuses} | "
+            f"{row['unnecessary_proposals']} | {row['leaked']} | {row['cited']} | "
+            f"{row['withheld']} | {statuses} | "
             f"{row['median_s']:.1f} |"
         )
     lines += [
         "",
         "## Tasks",
         "",
-        "| Task | Status | Success | Steps | Answer or proposal |",
-        "|---|---|---|---|---|",
+        "| Task | Status | Reason | Success | Steps | Answer or proposal |",
+        "|---|---|---|---|---|---|",
     ]
     for o in report.outcomes:
         shown = o.answer or ""
         if o.pending_tool:
             shown = f"PROPOSED {o.pending_tool} {json.dumps(o.pending_arguments)}"
         shown = shown.replace("|", "/").replace("\n", " ")[:150]
-        lines.append(f"| {o.case_id} | {o.status} | {o.success} | {', '.join(o.steps)} | {shown} |")
+        lines.append(
+            f"| {o.case_id} | {o.status} | {o.reason or '-'} | {o.success} | "
+            f"{', '.join(o.steps)} | {shown} |"
+        )
     return "\n".join(lines) + "\n"
